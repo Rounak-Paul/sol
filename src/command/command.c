@@ -146,6 +146,14 @@ static void cmd_toggle_sidebar(sol_editor* ed, void* userdata) {
     sol_editor_toggle_sidebar(ed);
 }
 
+static void cmd_focus_sidebar(sol_editor* ed, void* userdata) {
+    (void)userdata;
+    if (ed->filetree) {
+        ed->sidebar_visible = true;
+        ed->sidebar_focused = true;
+    }
+}
+
 static void cmd_toggle_terminal(sol_editor* ed, void* userdata) {
     (void)userdata;
     sol_editor_toggle_terminal(ed);
@@ -223,6 +231,7 @@ void sol_commands_register_builtin(sol_command_registry* reg) {
         { "file.save", "Save", "Save the current file", cmd_file_save, NULL, true },
         { "app.quit", "Quit", "Exit Sol", cmd_quit, NULL, true },
         { "view.toggleSidebar", "Toggle Sidebar", "Show/hide sidebar", cmd_toggle_sidebar, NULL, true },
+        { "view.focusSidebar", "Focus Sidebar", "Focus the file explorer", cmd_focus_sidebar, NULL, true },
         { "view.toggleTerminal", "Toggle Terminal", "Show/hide terminal", cmd_toggle_terminal, NULL, true },
         { "view.commandPalette", "Command Palette", "Open command palette", cmd_command_palette, NULL, true },
         { "view.close", "Close", "Close current view", cmd_close_view, NULL, true },

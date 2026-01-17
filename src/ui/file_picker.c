@@ -345,9 +345,9 @@ void sol_file_picker_draw(tui_context* tui, sol_editor* ed) {
     /* Draw hints at bottom */
     tui_set_bg(tui, theme->widget_bg);
     tui_set_fg(tui, theme->syntax_comment);
-    const char* hints = "Up/Down Navigate  Enter Open  Backspace Up  Esc Cancel";
+    const char* hints = "Enter Open  Backspace Up  Esc Cancel";
     if (ed->file_picker_select_folder) {
-        hints = "Up/Down Navigate  Enter Select  Backspace Up  Esc Cancel";
+        hints = "Enter Navigate  Tab Select Folder  Backspace Up  Esc Cancel";
     }
     int hints_x = x + (width - (int)strlen(hints)) / 2;
     tui_label(tui, hints_x, y + height - 1, hints);
@@ -439,14 +439,8 @@ bool sol_file_picker_handle_key(sol_editor* ed, tui_event* event) {
                 picker_entry* entry = &s_entries[s_selected];
                 
                 if (entry->is_dir) {
-                    if (ed->file_picker_select_folder && strcmp(entry->name, "..") != 0) {
-                        /* Select this folder */
-                        sol_editor_open_workspace(ed, entry->path);
-                        sol_file_picker_close(ed);
-                    } else {
-                        /* Navigate into directory */
-                        picker_load_directory(entry->path);
-                    }
+                    /* Always navigate into directories with Enter */
+                    picker_load_directory(entry->path);
                 } else {
                     /* Open the file */
                     if (!ed->file_picker_select_folder) {
@@ -454,6 +448,14 @@ bool sol_file_picker_handle_key(sol_editor* ed, tui_event* event) {
                         sol_file_picker_close(ed);
                     }
                 }
+            }
+            return true;
+        
+        case TUI_KEY_TAB:
+            /* In folder select mode, Tab selects the current folder */
+            if (ed->file_picker_select_folder) {
+                sol_editor_open_workspace(ed, s_current_path);
+                sol_file_picker_close(ed);
             }
             return true;
             

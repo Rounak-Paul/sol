@@ -84,6 +84,7 @@ set(SOL_SOURCES
     src/view/view.c
     src/keybind/keymap.c
     src/keybind/keybind.c
+    src/keybind/flow.c
     src/command/command.c
     src/ui/filetree.c
     src/ui/editor_view.c

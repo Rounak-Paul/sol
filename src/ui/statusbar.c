@@ -4,6 +4,7 @@
 
 #include "tui.h"
 #include "sol.h"
+#include "keybind/flow.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -23,7 +24,26 @@ void sol_statusbar_draw(tui_context* tui, sol_editor* ed, int x, int y, int widt
     char right_text[256] = "";
     char center_text[256] = "";
     
-    /* Left side: file info */
+    /* Left side: flow mode indicator or file info */
+    int left_offset = 0;
+    
+    if (ed->flow_active) {
+        /* Show flow mode indicator */
+        char flow_status[64];
+        sol_flow_status_string(ed, flow_status, sizeof(flow_status));
+        
+        /* Draw flow mode with accent color */
+        tui_set_bg(tui, theme->cursor);  /* Accent background */
+        tui_set_fg(tui, theme->statusbar_bg);  /* Dark text */
+        tui_fill(tui, x, y, (int)strlen(flow_status) + 2, 1, ' ');
+        tui_label(tui, x + 1, y, flow_status);
+        left_offset = (int)strlen(flow_status) + 2;
+        
+        /* Reset colors */
+        tui_set_bg(tui, theme->statusbar_bg);
+        tui_set_fg(tui, theme->statusbar_fg);
+    }
+    
     if (ed->active_view && ed->active_view->buffer) {
         sol_buffer* buf = ed->active_view->buffer;
         
@@ -64,11 +84,11 @@ void sol_statusbar_draw(tui_context* tui, sol_editor* ed, int x, int y, int widt
     }
     
     /* Draw left text */
-    tui_label(tui, x, y, left_text);
+    tui_label(tui, x + left_offset, y, left_text);
     
     /* Draw center text */
     int center_x = x + (width - (int)strlen(center_text)) / 2;
-    if (center_x > x + (int)strlen(left_text)) {
+    if (center_x > x + left_offset + (int)strlen(left_text)) {
         tui_set_fg(tui, theme->cursor);  /* Use cursor color as accent */
         tui_label(tui, center_x, y, center_text);
     }
@@ -86,7 +106,7 @@ void sol_statusbar_draw(tui_context* tui, sol_editor* ed, int x, int y, int widt
         if (branch) {
             char git_text[64];
             snprintf(git_text, sizeof(git_text), "  %s", branch);
-            int git_x = x + (int)strlen(left_text);
+            int git_x = x + left_offset + (int)strlen(left_text);
             tui_set_fg(tui, theme->git_modified);
             tui_label(tui, git_x, y, git_text);
         }

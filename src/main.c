@@ -6,6 +6,7 @@
 #define TUI_IMPLEMENTATION
 #include "tui.h"
 #include "sol.h"
+#include "keybind/flow.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -236,6 +237,20 @@ static void handle_input(sol_editor* ed, tui_event* event) {
         return;
     }
     
+    /* Tab key toggles focus between sidebar and editor */
+    if (event->key == TUI_KEY_TAB && !event->ctrl && !event->alt && 
+        ed->sidebar_visible && ed->filetree) {
+        ed->sidebar_focused = !ed->sidebar_focused;
+        return;
+    }
+    
+    /* Handle sidebar input when focused */
+    if (ed->sidebar_visible && ed->sidebar_focused && ed->filetree) {
+        if (sol_filetree_handle_key(ed, event)) {
+            return;
+        }
+    }
+    
     /* Build key chord from event */
     sol_keychord chord = {0};
     chord.mods = 0;
@@ -249,6 +264,7 @@ static void handle_input(sol_editor* ed, tui_event* event) {
             /* For character keys, use the character code (lowercase for letters) */
             if (event->ch >= 'A' && event->ch <= 'Z') {
                 chord.key = event->ch + 32;  /* to lowercase */
+                chord.mods |= SOL_MOD_SHIFT; /* Mark as shifted */
             } else if (event->ch >= 'a' && event->ch <= 'z') {
                 chord.key = event->ch;
             } else if (event->ch >= 1 && event->ch <= 26) {
@@ -285,8 +301,16 @@ static void handle_input(sol_editor* ed, tui_event* event) {
         case TUI_KEY_F10: chord.key = SOL_KEY_F10; break;
         case TUI_KEY_F11: chord.key = SOL_KEY_F11; break;
         case TUI_KEY_F12: chord.key = SOL_KEY_F12; break;
-        case TUI_KEY_SPACE: chord.key = ' '; break;
+        case TUI_KEY_SPACE: 
+            chord.key = ' '; 
+            if (event->ctrl) chord.mods |= SOL_MOD_CTRL;
+            break;
         default: chord.key = (sol_key)event->key; break;
+    }
+    
+    /* Handle command flow mode (Vim-like leader key system) */
+    if (sol_flow_handle_key(ed, &chord)) {
+        return;
     }
     
     /* Look up keybinding */
@@ -405,8 +429,12 @@ static void draw_ui(sol_editor* ed) {
     int editor_width = width - sidebar_width - 1;
     int editor_height = height - status_height;
     
-    /* Draw sidebar border */
+    /* Draw sidebar with file tree */
     if (ed->sidebar_visible) {
+        /* Draw file tree */
+        sol_filetree_draw(tui, ed, 0, 0, sidebar_width, height - status_height);
+        
+        /* Draw sidebar border */
         tui_set_fg(tui, theme->panel_border);
         for (int y = 0; y < height - status_height; y++) {
             tui_set_cell(tui, sidebar_width, y, 0x2502);  /* │ */
@@ -435,15 +463,21 @@ static void draw_ui(sol_editor* ed) {
             "",
             "Welcome to Sol IDE",
             "",
-            "Ctrl+N  New file",
-            "Ctrl+O  Open file",
-            "Alt+O   Open folder",
-            "Ctrl+Q  Quit",
+            "Press Ctrl+Space to enter command mode, then:",
+            "",
+            "  n  New file        s  Save",
+            "  o  Open file       w  Close",
+            "  O  Open folder     q  Quit",
+            "",
+            "  x  Undo (4x = undo 4 times)",
+            "  r  Redo",
+            "",
+            "Ctrl+Q  Quit directly",
             NULL
         };
         
         int center_x = editor_x + editor_width / 2;
-        int center_y = editor_y + editor_height / 2 - 6;
+        int center_y = editor_y + editor_height / 2 - 8;
         
         for (int i = 0; welcome[i]; i++) {
             int x = center_x - (int)strlen(welcome[i]) / 2;
@@ -494,11 +528,37 @@ void sol_editor_run(sol_editor* ed) {
             } else if (event.type == TUI_EVENT_KEY) {
                 handle_input(ed, &event);
             } else if (event.type == TUI_EVENT_MOUSE) {
-                /* Handle mouse click to position cursor */
-                if (event.mouse_button == TUI_MOUSE_LEFT && ed->active_view) {
-                    sol_position pos = sol_view_screen_to_buffer(ed->active_view, 
-                                                                  event.mouse_x, event.mouse_y);
-                    sol_view_move_cursor_to(ed->active_view, pos);
+                int sidebar_width = ed->sidebar_visible ? ed->sidebar_width : 0;
+                
+                /* Handle mouse click */
+                if (event.mouse_button == TUI_MOUSE_LEFT) {
+                    /* Check if clicking in sidebar */
+                    if (ed->sidebar_visible && event.mouse_x < sidebar_width && ed->filetree) {
+                        ed->sidebar_focused = true;
+                        
+                        /* Calculate which item was clicked */
+                        int content_y = 2;  /* After header and folder name */
+                        if (event.mouse_y >= content_y) {
+                            int clicked_idx = (event.mouse_y - content_y) + 0;  /* Add scroll offset */
+                            sol_file_node* node = sol_filetree_get_visible(ed->filetree, clicked_idx);
+                            if (node) {
+                                ed->filetree->selected = node;
+                                /* Single click opens file or toggles folder */
+                                if (node->type == SOL_FILE_NODE_DIRECTORY) {
+                                    sol_filetree_toggle_expand(ed->filetree, node);
+                                } else {
+                                    sol_editor_open_file(ed, node->path);
+                                    ed->sidebar_focused = false;
+                                }
+                            }
+                        }
+                    } else if (ed->active_view) {
+                        /* Clicking in editor area */
+                        ed->sidebar_focused = false;
+                        sol_position pos = sol_view_screen_to_buffer(ed->active_view, 
+                                                                      event.mouse_x, event.mouse_y);
+                        sol_view_move_cursor_to(ed->active_view, pos);
+                    }
                 }
                 /* Handle mouse scroll */
                 else if (event.mouse_button == TUI_MOUSE_WHEEL_UP) {
@@ -538,8 +598,13 @@ void sol_editor_open_workspace(sol_editor* ed, const char* path) {
     }
     ed->filetree = sol_filetree_create(path);
     
+    /* Show sidebar when opening a workspace */
+    ed->sidebar_visible = true;
+    
     /* Create plugin manager */
     ed->plugins = sol_plugin_manager_create(ed);
+    
+    sol_editor_status(ed, "Opened: %s", path);
 }
 
 /* Main entry point */

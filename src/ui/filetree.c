@@ -2,9 +2,14 @@
  * Sol IDE - File Tree Implementation
  */
 
+#include "tui.h"
 #include "sol.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+
+/* Static scroll position for filetree */
+static int s_filetree_scroll = 0;
 
 /* Sort comparison for file nodes */
 static int compare_nodes(const void* a, const void* b) {
@@ -310,4 +315,227 @@ void sol_filetree_select_prev(sol_filetree* tree) {
 void sol_filetree_add_ignore(sol_filetree* tree, const char* pattern) {
     if (!tree || !pattern) return;
     sol_array_push(tree->ignore_patterns, sol_strdup(pattern));
+}
+
+/* Get file icon based on extension */
+static const char* get_file_icon(const char* name) {
+    const char* ext = strrchr(name, '.');
+    if (!ext) return " ";  /* nf-fa-file_o */
+    
+    if (strcmp(ext, ".c") == 0 || strcmp(ext, ".h") == 0) return " ";
+    if (strcmp(ext, ".py") == 0) return " ";
+    if (strcmp(ext, ".js") == 0) return " ";
+    if (strcmp(ext, ".ts") == 0) return " ";
+    if (strcmp(ext, ".rs") == 0) return " ";
+    if (strcmp(ext, ".go") == 0) return " ";
+    if (strcmp(ext, ".md") == 0) return " ";
+    if (strcmp(ext, ".json") == 0) return " ";
+    if (strcmp(ext, ".yaml") == 0 || strcmp(ext, ".yml") == 0) return " ";
+    if (strcmp(ext, ".txt") == 0) return " ";
+    if (strcmp(ext, ".sh") == 0) return " ";
+    if (strcmp(ext, ".lua") == 0) return " ";
+    
+    return " ";  /* Default file icon */
+}
+
+/* Draw file tree */
+void sol_filetree_draw(void* tui_ctx, sol_editor* ed, int x, int y, int width, int height) {
+    if (!tui_ctx || !ed) return;
+    
+    tui_context* tui = (tui_context*)tui_ctx;
+    sol_theme* theme = ed->theme;
+    if (!theme) theme = sol_theme_default_dark();
+    sol_filetree* tree = ed->filetree;
+    
+    /* Clear sidebar area */
+    tui_set_bg(tui, theme->panel_bg);
+    tui_set_fg(tui, theme->fg);
+    tui_fill(tui, x, y, width, height, ' ');
+    
+    /* Draw header with focus indicator */
+    if (ed->sidebar_focused) {
+        tui_set_bg(tui, theme->accent);
+        tui_set_fg(tui, theme->panel_bg);
+        tui_fill(tui, x, y, width, 1, ' ');
+    } else {
+        tui_set_fg(tui, theme->accent);
+    }
+    const char* title = ed->sidebar_focused ? " EXPLORER (focused)" : " EXPLORER";
+    tui_label(tui, x, y, title);
+    tui_set_bg(tui, theme->panel_bg);
+    
+    if (!tree || !tree->root) {
+        tui_set_fg(tui, theme->syntax_comment);
+        tui_label(tui, x + 1, y + 2, "No folder open");
+        tui_label(tui, x + 1, y + 3, "Ctrl+Space O to open");
+        return;
+    }
+    
+    /* Draw folder name */
+    tui_set_fg(tui, theme->fg);
+    char folder_name[64];
+    snprintf(folder_name, sizeof(folder_name), " %s", tree->root->name);
+    if ((int)strlen(folder_name) > width - 2) {
+        folder_name[width - 5] = '.';
+        folder_name[width - 4] = '.';
+        folder_name[width - 3] = '.';
+        folder_name[width - 2] = '\0';
+    }
+    tui_label(tui, x + 1, y + 1, folder_name);
+    
+    /* Calculate visible area */
+    int content_y = y + 2;
+    int content_height = height - 2;
+    
+    int visible_count = sol_filetree_visible_count(tree);
+    
+    /* Adjust scroll if selected is out of view */
+    if (tree->selected) {
+        int idx = 0;
+        int selected_idx = find_node_index(tree->root, tree->selected, &idx);
+        if (selected_idx >= 0) {
+            if (selected_idx < s_filetree_scroll) {
+                s_filetree_scroll = selected_idx;
+            } else if (selected_idx >= s_filetree_scroll + content_height) {
+                s_filetree_scroll = selected_idx - content_height + 1;
+            }
+        }
+    }
+    
+    /* Clamp scroll */
+    if (s_filetree_scroll > visible_count - content_height) {
+        s_filetree_scroll = visible_count - content_height;
+    }
+    if (s_filetree_scroll < 0) s_filetree_scroll = 0;
+    
+    /* Draw visible nodes */
+    for (int i = 0; i < content_height; i++) {
+        int node_idx = i + s_filetree_scroll;
+        if (node_idx >= visible_count) break;
+        
+        sol_file_node* node = sol_filetree_get_visible(tree, node_idx);
+        if (!node) continue;
+        
+        int row_y = content_y + i;
+        
+        /* Highlight selected row */
+        if (node == tree->selected) {
+            tui_set_bg(tui, theme->selection);
+            tui_fill(tui, x, row_y, width, 1, ' ');
+        } else {
+            tui_set_bg(tui, theme->panel_bg);
+        }
+        
+        /* Indentation */
+        int indent = node->depth * 2;
+        int text_x = x + 1 + indent;
+        
+        /* Draw expand/collapse indicator for directories */
+        if (node->type == SOL_FILE_NODE_DIRECTORY) {
+            tui_set_fg(tui, theme->syntax_comment);
+            const char* arrow = node->expanded ? "" : "";  /* nf-fa-angle_down/right */
+            tui_label(tui, text_x, row_y, arrow);
+            text_x += 2;
+            
+            /* Folder icon */
+            tui_set_fg(tui, theme->syntax_function);
+            const char* folder_icon = node->expanded ? " " : " ";  /* nf-fa-folder_open/folder */
+            tui_label(tui, text_x, row_y, folder_icon);
+            text_x += 2;
+        } else {
+            /* File icon */
+            text_x += 2;  /* Skip arrow space */
+            tui_set_fg(tui, theme->syntax_string);
+            tui_label(tui, text_x, row_y, get_file_icon(node->name));
+            text_x += 2;
+        }
+        
+        /* Draw name */
+        if (node->type == SOL_FILE_NODE_DIRECTORY) {
+            tui_set_fg(tui, theme->syntax_function);
+        } else {
+            tui_set_fg(tui, theme->fg);
+        }
+        
+        /* Truncate name if too long */
+        int max_name_len = width - (text_x - x) - 1;
+        if (max_name_len > 0) {
+            char name_buf[256];
+            if ((int)strlen(node->name) > max_name_len) {
+                snprintf(name_buf, sizeof(name_buf), "%.*s...", max_name_len - 3, node->name);
+            } else {
+                strncpy(name_buf, node->name, sizeof(name_buf) - 1);
+                name_buf[sizeof(name_buf) - 1] = '\0';
+            }
+            tui_label(tui, text_x, row_y, name_buf);
+        }
+    }
+    
+    /* Reset background */
+    tui_set_bg(tui, theme->bg);
+}
+
+/* Handle filetree keyboard input */
+bool sol_filetree_handle_key(sol_editor* ed, void* event_ptr) {
+    if (!ed || !ed->filetree || !event_ptr) return false;
+    
+    tui_event* event = (tui_event*)event_ptr;
+    if (event->type != TUI_EVENT_KEY) return false;
+    
+    sol_filetree* tree = ed->filetree;
+    
+    switch (event->key) {
+        case TUI_KEY_UP:
+            sol_filetree_select_prev(tree);
+            return true;
+            
+        case TUI_KEY_DOWN:
+            sol_filetree_select_next(tree);
+            return true;
+            
+        case TUI_KEY_LEFT:
+            /* Collapse directory or go to parent */
+            if (tree->selected) {
+                if (tree->selected->type == SOL_FILE_NODE_DIRECTORY && tree->selected->expanded) {
+                    tree->selected->expanded = false;
+                } else if (tree->selected->parent) {
+                    tree->selected = tree->selected->parent;
+                }
+            }
+            return true;
+            
+        case TUI_KEY_RIGHT:
+            /* Expand directory */
+            if (tree->selected && tree->selected->type == SOL_FILE_NODE_DIRECTORY) {
+                if (!tree->selected->expanded) {
+                    sol_filetree_toggle_expand(tree, tree->selected);
+                } else if (tree->selected->child_count > 0) {
+                    /* Move to first child */
+                    tree->selected = tree->selected->children[0];
+                }
+            }
+            return true;
+            
+        case TUI_KEY_ENTER:
+            if (tree->selected) {
+                if (tree->selected->type == SOL_FILE_NODE_DIRECTORY) {
+                    sol_filetree_toggle_expand(tree, tree->selected);
+                } else {
+                    /* Open file and switch focus to editor */
+                    sol_editor_open_file(ed, tree->selected->path);
+                    ed->sidebar_focused = false;
+                }
+            }
+            return true;
+        
+        case TUI_KEY_ESC:
+            /* Switch focus back to editor */
+            ed->sidebar_focused = false;
+            return true;
+            
+        default:
+            break;
+    }
+    
+    return false;
 }

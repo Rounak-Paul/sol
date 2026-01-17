@@ -628,6 +628,8 @@ SOL_API void sol_filetree_select_prev(sol_filetree* tree);
 SOL_API sol_file_node* sol_filetree_get_visible(sol_filetree* tree, int index);
 SOL_API int sol_filetree_visible_count(sol_filetree* tree);
 SOL_API void sol_filetree_add_ignore(sol_filetree* tree, const char* pattern);
+SOL_API void sol_filetree_draw(void* tui, sol_editor* ed, int x, int y, int width, int height);
+SOL_API bool sol_filetree_handle_key(sol_editor* ed, void* event);
 
 /* ============================================================================
  * Panel System
@@ -1074,6 +1076,7 @@ struct sol_editor {
     int statusbar_height;
     int tabbar_height;
     bool sidebar_visible;
+    bool sidebar_focused;
     bool terminal_visible;
     int terminal_height;
     /* Subsystems */
@@ -1091,6 +1094,12 @@ struct sol_editor {
     /* Message/Status */
     char status_message[256];
     uint64_t status_time;
+    /* Command flow (Vim-like leader key system) */
+    bool flow_active;           /* Command flow mode is active */
+    int flow_count;             /* Numeric prefix (0 = none, use 1) */
+    char flow_keys[16];         /* Pending key sequence */
+    int flow_key_count;         /* Number of keys in sequence */
+    uint64_t flow_start_time;   /* For timeout */
     /* Command palette */
     bool palette_open;
     char palette_query[256];
