@@ -225,17 +225,16 @@ void sol_editor_open_palette(sol_editor* ed) {
     sol_editor_status(ed, "Command palette not yet implemented");
 }
 
-/* Open file picker */
-void sol_editor_open_file_picker(sol_editor* ed) {
-    if (!ed) return;
-    /* TODO: Implement file picker popup */
-    sol_editor_status(ed, "File picker not yet implemented");
-}
-
 /* Handle keyboard input */
 static void handle_input(sol_editor* ed, tui_event* event) {
     if (!ed || !event) return;
     if (event->type != TUI_EVENT_KEY) return;
+    
+    /* Handle file picker input first if open */
+    if (ed->file_picker_open) {
+        sol_file_picker_handle_key(ed, event);
+        return;
+    }
     
     /* Build key chord from event */
     sol_keychord chord = {0};
@@ -372,9 +371,6 @@ static void handle_input(sol_editor* ed, tui_event* event) {
             case TUI_KEY_PAGEDOWN:
                 sol_view_page_down(view);
                 break;
-            case TUI_KEY_ESC:
-                ed->running = false;
-                break;
                 
             default:
                 break;
@@ -440,9 +436,9 @@ static void draw_ui(sol_editor* ed) {
             "Welcome to Sol IDE",
             "",
             "Ctrl+N  New file",
-            "Ctrl+O  Open file", 
+            "Ctrl+O  Open file",
+            "Alt+O   Open folder",
             "Ctrl+Q  Quit",
-            "Esc     Quit",
             NULL
         };
         
@@ -474,6 +470,11 @@ static void draw_ui(sol_editor* ed) {
         tui_label(tui, 0, height - 1, info);
     } else {
         tui_label(tui, 1, height - 1, "Sol IDE");
+    }
+    
+    /* Draw file picker overlay if open */
+    if (ed->file_picker_open) {
+        sol_file_picker_draw(tui, ed);
     }
     
     /* Flush to screen */

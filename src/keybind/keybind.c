@@ -11,6 +11,7 @@ void sol_keybind_defaults(sol_keymap* km) {
     sol_keymap_bind(km, "ctrl+s", "file.save", NULL);
     sol_keymap_bind(km, "ctrl+shift+s", "file.saveAs", NULL);
     sol_keymap_bind(km, "ctrl+o", "file.open", NULL);
+    sol_keymap_bind(km, "alt+o", "file.openFolder", NULL);
     sol_keymap_bind(km, "ctrl+n", "file.new", NULL);
     sol_keymap_bind(km, "ctrl+w", "view.close", NULL);
     sol_keymap_bind(km, "ctrl+q", "app.quit", NULL);

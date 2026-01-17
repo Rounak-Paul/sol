@@ -1101,6 +1101,9 @@ struct sol_editor {
     char find_query[256];
     char replace_query[256];
     int find_selection;
+    /* File picker */
+    bool file_picker_open;
+    bool file_picker_select_folder;  /* true = select folder, false = select file */
     /* Arena for temporary allocations per frame */
     sol_arena* frame_arena;
     /* TUI context */
@@ -1115,6 +1118,9 @@ SOL_API sol_editor* sol_editor_create(void);
 SOL_API void sol_editor_destroy(sol_editor* ed);
 SOL_API void sol_editor_run(sol_editor* ed);
 SOL_API void sol_editor_quit(sol_editor* ed);
+
+/* Workspace management */
+SOL_API void sol_editor_open_workspace(sol_editor* ed, const char* path);
 
 /* Buffer management */
 SOL_API sol_buffer* sol_editor_open_file(sol_editor* ed, const char* path);
@@ -1137,6 +1143,12 @@ SOL_API void sol_editor_toggle_terminal(sol_editor* ed);
 SOL_API void sol_editor_open_palette(sol_editor* ed);
 SOL_API void sol_editor_open_find(sol_editor* ed);
 SOL_API void sol_editor_open_file_picker(sol_editor* ed);
+SOL_API void sol_editor_open_folder_picker(sol_editor* ed);
+
+/* File picker */
+SOL_API void sol_file_picker_draw(tui_context* tui, sol_editor* ed);
+SOL_API bool sol_file_picker_handle_key(sol_editor* ed, tui_event* event);
+SOL_API void sol_file_picker_close(sol_editor* ed);
 
 /* Dialog utilities */
 SOL_API void sol_dialog_message(tui_context* tui, sol_theme* theme, 

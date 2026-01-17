@@ -123,6 +123,11 @@ static void cmd_file_open(sol_editor* ed, void* userdata) {
     sol_editor_open_file_picker(ed);
 }
 
+static void cmd_file_open_folder(sol_editor* ed, void* userdata) {
+    (void)userdata;
+    sol_editor_open_folder_picker(ed);
+}
+
 static void cmd_file_save(sol_editor* ed, void* userdata) {
     (void)userdata;
     if (ed->active_view && ed->active_view->buffer) {
@@ -214,6 +219,7 @@ void sol_commands_register_builtin(sol_command_registry* reg) {
     sol_command cmds[] = {
         { "file.new", "New File", "Create a new file", cmd_file_new, NULL, true },
         { "file.open", "Open File", "Open an existing file", cmd_file_open, NULL, true },
+        { "file.openFolder", "Open Folder", "Open a folder as workspace", cmd_file_open_folder, NULL, true },
         { "file.save", "Save", "Save the current file", cmd_file_save, NULL, true },
         { "app.quit", "Quit", "Exit Sol", cmd_quit, NULL, true },
         { "view.toggleSidebar", "Toggle Sidebar", "Show/hide sidebar", cmd_toggle_sidebar, NULL, true },

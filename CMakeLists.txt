@@ -91,6 +91,7 @@ set(SOL_SOURCES
     src/ui/tabbar.c
     src/ui/palette.c
     src/ui/dialog.c
+    src/ui/file_picker.c
     src/ui/panel.c
     src/terminal/terminal.c
     src/terminal/terminal_ui.c
