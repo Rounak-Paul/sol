@@ -46,6 +46,7 @@ static const sol_flow_command s_flow_commands[] = {
     {'p', false, false, "view.commandPalette", "Command palette"},
     {'b', false, false, "view.toggleSidebar",  "Toggle sidebar"},
     {'t', false, false, "view.toggleTerminal", "Toggle terminal"},
+    {'k', false, false, "view.keybindings",    "Edit keybindings"},
     
     /* App control */
     {'q', false, false, "app.quit",         "Quit"},

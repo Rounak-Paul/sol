@@ -221,6 +221,11 @@ static void cmd_close_view(sol_editor* ed, void* userdata) {
     }
 }
 
+static void cmd_keybindings(sol_editor* ed, void* userdata) {
+    (void)userdata;
+    sol_keybindings_open(ed);
+}
+
 void sol_commands_register_builtin(sol_command_registry* reg) {
     if (!reg) return;
     
@@ -234,6 +239,7 @@ void sol_commands_register_builtin(sol_command_registry* reg) {
         { "view.focusSidebar", "Focus Sidebar", "Focus the file explorer", cmd_focus_sidebar, NULL, true },
         { "view.toggleTerminal", "Toggle Terminal", "Show/hide terminal", cmd_toggle_terminal, NULL, true },
         { "view.commandPalette", "Command Palette", "Open command palette", cmd_command_palette, NULL, true },
+        { "view.keybindings", "Keybindings", "Edit keybindings", cmd_keybindings, NULL, true },
         { "view.close", "Close", "Close current view", cmd_close_view, NULL, true },
         { "edit.undo", "Undo", "Undo last edit", cmd_undo, NULL, true },
         { "edit.redo", "Redo", "Redo last undone edit", cmd_redo, NULL, true },

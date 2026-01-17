@@ -258,3 +258,27 @@ bool sol_hashmap_set_string(sol_hashmap* map, const char* key, const void* value
 void* sol_hashmap_get_string(sol_hashmap* map, const char* key) {
     return sol_hashmap_get(map, key);
 }
+
+/* Iterator implementation */
+void sol_hashmap_iter_init(sol_hashmap_iter* iter, sol_hashmap* map) {
+    iter->map = map;
+    iter->index = 0;
+}
+
+bool sol_hashmap_iter_next(sol_hashmap_iter* iter, const void** key, void** value) {
+    sol_hashmap* map = iter->map;
+    if (!map) return false;
+    
+    while (iter->index < map->capacity) {
+        hashmap_entry* entry = &map->entries[iter->index];
+        iter->index++;
+        
+        if (entry->occupied && !entry->deleted) {
+            if (key) *key = entry->key;
+            if (value) *value = entry->value;
+            return true;
+        }
+    }
+    
+    return false;
+}

@@ -94,6 +94,7 @@ set(SOL_SOURCES
     src/ui/dialog.c
     src/ui/file_picker.c
     src/ui/panel.c
+    src/ui/keybindings.c
     src/terminal/terminal.c
     src/terminal/terminal_ui.c
     src/lsp/lsp.c
@@ -113,6 +114,7 @@ set(SOL_HEADERS
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/vendors/tuih
+    ${CMAKE_SOURCE_DIR}/vendors/json
 )
 
 # Main executable

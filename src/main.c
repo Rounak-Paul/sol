@@ -49,8 +49,8 @@ sol_editor* sol_editor_create(void) {
     /* Enable mouse capture to prevent scroll events from leaking to outer terminal */
     tui_enable_mouse(ed->tui);
     
-    /* Load configuration */
-    ed->config = sol_config_create();
+    /* Load user configuration from ~/.sol/config.json */
+    ed->config = sol_config_load_user();
     
     /* Get theme */
     ed->theme = sol_theme_default_dark();
@@ -65,13 +65,15 @@ sol_editor* sol_editor_create(void) {
     ed->keymap = sol_keymap_create();
     if (ed->keymap) {
         sol_keybind_defaults(ed->keymap);
+        /* Load user keybindings from ~/.sol/keybindings.json */
+        sol_config_load_keybindings(ed->keymap, ed->config);
     }
     
-    /* Initialize panel layout */
-    ed->sidebar_visible = true;
-    ed->sidebar_width = 30;
+    /* Apply settings from config */
+    ed->sidebar_visible = sol_config_get_bool(ed->config, "sidebar.visible", true);
+    ed->sidebar_width = (int)sol_config_get_int(ed->config, "sidebar.width", 30);
     ed->terminal_visible = false;
-    ed->terminal_height = 15;
+    ed->terminal_height = (int)sol_config_get_int(ed->config, "terminal.height", 15);
     
     ed->running = true;
     
@@ -230,6 +232,12 @@ void sol_editor_open_palette(sol_editor* ed) {
 static void handle_input(sol_editor* ed, tui_event* event) {
     if (!ed || !event) return;
     if (event->type != TUI_EVENT_KEY) return;
+    
+    /* Handle keybindings editor input first if open */
+    if (ed->keybind_editor_open) {
+        sol_keybindings_handle_key(ed, event);
+        return;
+    }
     
     /* Handle file picker input first if open */
     if (ed->file_picker_open) {
@@ -468,11 +476,12 @@ static void draw_ui(sol_editor* ed) {
             "  n  New file        s  Save",
             "  o  Open file       w  Close",
             "  O  Open folder     q  Quit",
+            "  k  Edit keybindings",
             "",
             "  x  Undo (4x = undo 4 times)",
             "  r  Redo",
             "",
-            "Ctrl+Q  Quit directly",
+            "Config: ~/.sol/config.json",
             NULL
         };
         
@@ -509,6 +518,11 @@ static void draw_ui(sol_editor* ed) {
     /* Draw file picker overlay if open */
     if (ed->file_picker_open) {
         sol_file_picker_draw(tui, ed);
+    }
+    
+    /* Draw keybindings editor overlay if open */
+    if (ed->keybind_editor_open) {
+        sol_keybindings_draw(tui, ed);
     }
     
     /* Flush to screen */

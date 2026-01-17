@@ -236,6 +236,15 @@ SOL_API void sol_hashmap_clear(sol_hashmap* map);
 SOL_API bool sol_hashmap_set_string(sol_hashmap* map, const char* key, const void* value);
 SOL_API void* sol_hashmap_get_string(sol_hashmap* map, const char* key);
 
+/* Iterator for iterating over hashmap entries */
+typedef struct {
+    sol_hashmap* map;
+    size_t index;
+} sol_hashmap_iter;
+
+SOL_API void sol_hashmap_iter_init(sol_hashmap_iter* iter, sol_hashmap* map);
+SOL_API bool sol_hashmap_iter_next(sol_hashmap_iter* iter, const void** key, void** value);
+
 /* ============================================================================
  * Text Position and Range
  * ============================================================================ */
@@ -785,16 +794,23 @@ struct sol_config {
 SOL_API sol_config* sol_config_create(void);
 SOL_API void sol_config_load_file(sol_config* cfg, const char* path);
 SOL_API sol_config* sol_config_load(const char* path);
+SOL_API sol_config* sol_config_load_user(void);  /* Load from ~/.sol/config.json */
 SOL_API void sol_config_destroy(sol_config* cfg);
 SOL_API sol_result sol_config_save(sol_config* cfg);
 SOL_API sol_config_value* sol_config_get(sol_config* cfg, const char* key);
 SOL_API void sol_config_set(sol_config* cfg, const char* key, sol_config_value* value);
+SOL_API void sol_config_set_string(sol_config* cfg, const char* key, const char* value);
+SOL_API void sol_config_set_int(sol_config* cfg, const char* key, int64_t value);
+SOL_API void sol_config_set_bool(sol_config* cfg, const char* key, bool value);
 SOL_API const char* sol_config_get_string(sol_config* cfg, const char* key, const char* default_val);
 SOL_API int64_t sol_config_get_int(sol_config* cfg, const char* key, int64_t default_val);
 SOL_API bool sol_config_get_bool(sol_config* cfg, const char* key, bool default_val);
 SOL_API int sol_config_get_tab_width(sol_config* cfg);
 SOL_API sol_theme* sol_config_get_theme(sol_config* cfg);
 SOL_API void sol_config_add_recent_file(sol_config* cfg, const char* path);
+SOL_API char* sol_config_get_default_path(void);      /* ~/.sol/config.json path */
+SOL_API char* sol_config_get_keybindings_path(void);  /* ~/.sol/keybindings.json path */
+SOL_API void sol_config_load_keybindings(sol_keymap* km, sol_config* cfg);
 
 /* ============================================================================
  * Plugin System
@@ -1113,6 +1129,11 @@ struct sol_editor {
     /* File picker */
     bool file_picker_open;
     bool file_picker_select_folder;  /* true = select folder, false = select file */
+    /* Keybindings editor */
+    bool keybind_editor_open;
+    int keybind_selection;
+    int keybind_scroll;
+    bool keybind_rebinding;  /* Currently capturing new key */
     /* Arena for temporary allocations per frame */
     sol_arena* frame_arena;
     /* TUI context */
@@ -1172,6 +1193,12 @@ SOL_API bool sol_dialog_is_active(void);
 /* Command palette */
 SOL_API void sol_palette_draw(tui_context* tui, sol_editor* ed);
 SOL_API void sol_palette_handle_key(sol_editor* ed, tui_event* event);
+
+/* Keybindings editor */
+SOL_API void sol_keybindings_open(sol_editor* ed);
+SOL_API void sol_keybindings_close(sol_editor* ed);
+SOL_API void sol_keybindings_draw(tui_context* tui, sol_editor* ed);
+SOL_API bool sol_keybindings_handle_key(sol_editor* ed, tui_event* event);
 
 /* Tab bar */
 SOL_API void sol_tabbar_draw(tui_context* tui, sol_editor* ed, int x, int y, int width);
