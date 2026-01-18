@@ -795,10 +795,12 @@ SOL_API sol_config* sol_config_create(void);
 SOL_API void sol_config_load_file(sol_config* cfg, const char* path);
 SOL_API sol_config* sol_config_load(const char* path);
 SOL_API sol_config* sol_config_load_user(void);  /* Load from ~/.sol/config.json */
+SOL_API sol_config* sol_config_load_keybindings_config(void);  /* Load from ~/.sol/keybindings.json */
 SOL_API void sol_config_destroy(sol_config* cfg);
 SOL_API sol_result sol_config_save(sol_config* cfg);
 SOL_API sol_config_value* sol_config_get(sol_config* cfg, const char* key);
 SOL_API void sol_config_set(sol_config* cfg, const char* key, sol_config_value* value);
+SOL_API void sol_config_remove(sol_config* cfg, const char* key);
 SOL_API void sol_config_set_string(sol_config* cfg, const char* key, const char* value);
 SOL_API void sol_config_set_int(sol_config* cfg, const char* key, int64_t value);
 SOL_API void sol_config_set_bool(sol_config* cfg, const char* key, bool value);
@@ -1100,6 +1102,7 @@ struct sol_editor {
     sol_keymap* keymap;
     sol_key_state key_state;
     sol_config* config;
+    sol_config* keybind_config;
     sol_theme* theme;
     sol_plugin_manager* plugins;
     sol_git* git;

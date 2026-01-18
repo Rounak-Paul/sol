@@ -25,9 +25,73 @@ typedef struct {
 static keybind_entry s_keybindings[64];
 static int s_keybind_count = 0;
 
+static bool keybind_entry_exists(const char* command, bool is_flow) {
+    if (!command) return false;
+    for (int i = 0; i < s_keybind_count; i++) {
+        if (s_keybindings[i].is_flow == is_flow &&
+            strcmp(s_keybindings[i].command, command) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool find_key_for_command(sol_config* cfg, const char* prefix,
+                                 const char* command, char* out_key, size_t len) {
+    if (!cfg || !prefix || !command || !out_key || len == 0) return false;
+    
+    sol_hashmap_iter iter;
+    sol_hashmap_iter_init(&iter, cfg->values);
+    const char* key;
+    sol_config_value** val;
+    
+    while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&val)) {
+        if (!key || !val || !*val) continue;
+        if (strncmp(key, prefix, strlen(prefix)) != 0) continue;
+        if ((*val)->type != SOL_CONFIG_STRING) continue;
+        if (strcmp((*val)->data.string, command) != 0) continue;
+        
+        const char* suffix = key + strlen(prefix);
+        if (!suffix || !*suffix) continue;
+        
+        strncpy(out_key, suffix, len - 1);
+        out_key[len - 1] = '\0';
+        return true;
+    }
+    
+    return false;
+}
+
+static const char* description_for_command(const char* command) {
+    if (!command) return "";
+    if (strcmp(command, "file.open") == 0) return "Open file";
+    if (strcmp(command, "file.openFolder") == 0) return "Open folder";
+    if (strcmp(command, "file.new") == 0) return "New file";
+    if (strcmp(command, "file.save") == 0) return "Save file";
+    if (strcmp(command, "file.saveAll") == 0) return "Save all";
+    if (strcmp(command, "view.close") == 0) return "Close buffer";
+    if (strcmp(command, "edit.undo") == 0) return "Undo";
+    if (strcmp(command, "edit.undoAll") == 0) return "Undo all";
+    if (strcmp(command, "edit.redo") == 0) return "Redo";
+    if (strcmp(command, "edit.redoAll") == 0) return "Redo all";
+    if (strcmp(command, "edit.copy") == 0) return "Copy";
+    if (strcmp(command, "edit.paste") == 0) return "Paste";
+    if (strcmp(command, "edit.cut") == 0) return "Cut";
+    if (strcmp(command, "find.open") == 0) return "Find";
+    if (strcmp(command, "goto.line") == 0) return "Go to line";
+    if (strcmp(command, "view.focusSidebar") == 0) return "Focus sidebar";
+    if (strcmp(command, "view.commandPalette") == 0) return "Command palette";
+    if (strcmp(command, "view.toggleSidebar") == 0) return "Toggle sidebar";
+    if (strcmp(command, "view.toggleTerminal") == 0) return "Toggle terminal";
+    if (strcmp(command, "view.keybindings") == 0) return "Edit keybindings";
+    if (strcmp(command, "app.quit") == 0) return "Quit";
+    return "Custom binding";
+}
+
 /* Populate keybindings list from config */
 static void populate_keybindings(sol_editor* ed) {
     s_keybind_count = 0;
+    sol_config* cfg = ed ? ed->keybind_config : NULL;
     
     /* Flow commands */
     static const struct {
@@ -59,13 +123,22 @@ static void populate_keybindings(sol_editor* ed) {
         {NULL, NULL, NULL}
     };
     
-    /* Add flow commands */
+    /* Add flow commands (override keys from config if present) */
     for (int i = 0; flow_defaults[i].key && s_keybind_count < 64; i++) {
         keybind_entry* e = &s_keybindings[s_keybind_count++];
-        snprintf(e->key, sizeof(e->key), "%s", flow_defaults[i].key);
         snprintf(e->command, sizeof(e->command), "%s", flow_defaults[i].command);
         snprintf(e->description, sizeof(e->description), "%s", flow_defaults[i].desc);
         e->is_flow = true;
+        
+        if (cfg) {
+            char override_key[32];
+            if (find_key_for_command(cfg, "flow.commands.", flow_defaults[i].command,
+                                     override_key, sizeof(override_key))) {
+                snprintf(e->key, sizeof(e->key), "%s", override_key);
+                continue;
+            }
+        }
+        snprintf(e->key, sizeof(e->key), "%s", flow_defaults[i].key);
     }
     
     /* Direct keybindings */
@@ -81,16 +154,57 @@ static void populate_keybindings(sol_editor* ed) {
         {NULL, NULL, NULL}
     };
     
-    /* Add direct keybindings */
+    /* Add direct keybindings (override keys from config if present) */
     for (int i = 0; direct_defaults[i].key && s_keybind_count < 64; i++) {
         keybind_entry* e = &s_keybindings[s_keybind_count++];
-        snprintf(e->key, sizeof(e->key), "%s", direct_defaults[i].key);
         snprintf(e->command, sizeof(e->command), "%s", direct_defaults[i].command);
         snprintf(e->description, sizeof(e->description), "%s", direct_defaults[i].desc);
         e->is_flow = false;
+        
+        if (cfg) {
+            char override_key[32];
+            if (find_key_for_command(cfg, "direct.", direct_defaults[i].command,
+                                     override_key, sizeof(override_key))) {
+                snprintf(e->key, sizeof(e->key), "%s", override_key);
+                continue;
+            }
+        }
+        snprintf(e->key, sizeof(e->key), "%s", direct_defaults[i].key);
     }
     
-    (void)ed;
+    /* Append any custom keybindings not in defaults */
+    if (cfg) {
+        sol_hashmap_iter iter;
+        sol_hashmap_iter_init(&iter, cfg->values);
+        const char* key;
+        sol_config_value** val;
+        
+        while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&val)) {
+            if (!key || !val || !*val || (*val)->type != SOL_CONFIG_STRING) continue;
+            
+            if (strncmp(key, "flow.commands.", 14) == 0) {
+                const char* cmd = (*val)->data.string;
+                if (!keybind_entry_exists(cmd, true) && s_keybind_count < 64) {
+                    keybind_entry* e = &s_keybindings[s_keybind_count++];
+                    snprintf(e->key, sizeof(e->key), "%s", key + 14);
+                    snprintf(e->command, sizeof(e->command), "%s", cmd);
+                    snprintf(e->description, sizeof(e->description), "%s",
+                             description_for_command(cmd));
+                    e->is_flow = true;
+                }
+            } else if (strncmp(key, "direct.", 7) == 0) {
+                const char* cmd = (*val)->data.string;
+                if (!keybind_entry_exists(cmd, false) && s_keybind_count < 64) {
+                    keybind_entry* e = &s_keybindings[s_keybind_count++];
+                    snprintf(e->key, sizeof(e->key), "%s", key + 7);
+                    snprintf(e->command, sizeof(e->command), "%s", cmd);
+                    snprintf(e->description, sizeof(e->description), "%s",
+                             description_for_command(cmd));
+                    e->is_flow = false;
+                }
+            }
+        }
+    }
 }
 
 void sol_keybindings_open(sol_editor* ed) {
@@ -283,11 +397,27 @@ bool sol_keybindings_handle_key(sol_editor* ed, tui_event* event) {
         
         if (new_key[0] && ed->keybind_selection < s_keybind_count) {
             keybind_entry* e = &s_keybindings[ed->keybind_selection];
+            const char* prefix = e->is_flow ? "flow.commands." : "direct.";
+            
+            if (ed->keybind_config) {
+                char old_full[96];
+                char new_full[96];
+                snprintf(old_full, sizeof(old_full), "%s%s", prefix, e->key);
+                snprintf(new_full, sizeof(new_full), "%s%s", prefix, new_key);
+                
+                sol_config_remove(ed->keybind_config, old_full);
+                sol_config_set_string(ed->keybind_config, new_full, e->command);
+                sol_config_save(ed->keybind_config);
+            }
+            
+            if (!e->is_flow && ed->keymap) {
+                sol_keymap_unbind(ed->keymap, e->key);
+                sol_keymap_bind(ed->keymap, new_key, e->command, NULL);
+            }
+            
             strncpy(e->key, new_key, sizeof(e->key) - 1);
             e->key[sizeof(e->key) - 1] = '\0';
-            
-            /* TODO: Save to keybindings.json */
-            sol_editor_status(ed, "Rebound to '%s' (restart to apply)", new_key);
+            sol_editor_status(ed, "Rebound to '%s'", new_key);
         }
         
         ed->keybind_rebinding = false;

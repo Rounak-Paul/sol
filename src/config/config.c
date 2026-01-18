@@ -352,6 +352,20 @@ sol_config* sol_config_load_user(void) {
     return cfg;
 }
 
+/* Load keybindings config from ~/.sol/keybindings.json */
+sol_config* sol_config_load_keybindings_config(void) {
+    sol_config* cfg = sol_config_create();
+    if (!cfg) return NULL;
+    
+    char* path = sol_config_get_keybindings_path();
+    if (path) {
+        sol_config_load_file(cfg, path);
+        free(path);
+    }
+    
+    return cfg;
+}
+
 static void config_value_destroy(sol_config_value* val) {
     if (!val) return;
     
@@ -422,29 +436,154 @@ static void write_json_value(FILE* f, sol_config_value* val) {
     }
 }
 
+typedef struct config_node {
+    char* name;
+    sol_config_value* value;
+    sol_hashmap* children; /* name -> config_node* */
+} config_node;
+
+static config_node* config_node_create(const char* name) {
+    config_node* node = calloc(1, sizeof(config_node));
+    if (!node) return NULL;
+    if (name) node->name = sol_strdup(name);
+    node->children = sol_hashmap_create_string(sizeof(config_node*));
+    return node;
+}
+
+static config_node* config_node_get_child(config_node* node, const char* name) {
+    if (!node || !node->children || !name) return NULL;
+    config_node** child = sol_hashmap_get_string(node->children, name);
+    return child ? *child : NULL;
+}
+
+static config_node* config_node_add_child(config_node* node, const char* name) {
+    if (!node || !name) return NULL;
+    config_node* existing = config_node_get_child(node, name);
+    if (existing) return existing;
+    
+    config_node* child = config_node_create(name);
+    if (!child) return NULL;
+    sol_hashmap_set_string(node->children, name, &child);
+    return child;
+}
+
+static void config_node_destroy(config_node* node) {
+    if (!node) return;
+    
+    if (node->children) {
+        sol_hashmap_iter iter;
+        sol_hashmap_iter_init(&iter, node->children);
+        const char* key;
+        config_node** child;
+        while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&child)) {
+            if (child && *child) {
+                config_node_destroy(*child);
+            }
+        }
+        sol_hashmap_destroy(node->children);
+    }
+    
+    free(node->name);
+    free(node);
+}
+
+static config_node* build_config_tree(sol_config* cfg) {
+    if (!cfg || !cfg->values) return NULL;
+    
+    config_node* root = config_node_create(NULL);
+    if (!root) return NULL;
+    
+    sol_hashmap_iter iter;
+    sol_hashmap_iter_init(&iter, cfg->values);
+    const char* key;
+    sol_config_value** val;
+    
+    while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&val)) {
+        if (!key || !val || !*val) continue;
+        
+        char key_buf[512];
+        strncpy(key_buf, key, sizeof(key_buf) - 1);
+        key_buf[sizeof(key_buf) - 1] = '\0';
+        
+        config_node* current = root;
+        char* segment = key_buf;
+        while (segment && *segment) {
+            char* dot = strchr(segment, '.');
+            if (dot) *dot = '\0';
+            
+            config_node* child = config_node_add_child(current, segment);
+            if (!child) break;
+            
+            if (!dot) {
+                child->value = *val;
+                break;
+            }
+            
+            current = child;
+            segment = dot + 1;
+        }
+    }
+    
+    return root;
+}
+
+static void write_indent(FILE* f, int indent) {
+    for (int i = 0; i < indent; i++) {
+        fputc(' ', f);
+    }
+}
+
+static void write_json_object(FILE* f, config_node* node, int indent) {
+    if (!node || !node->children || sol_hashmap_count(node->children) == 0) {
+        fprintf(f, "{}");
+        return;
+    }
+    
+    fprintf(f, "{\n");
+    
+    sol_hashmap_iter iter;
+    sol_hashmap_iter_init(&iter, node->children);
+    const char* key;
+    config_node** child;
+    bool first = true;
+    
+    while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&child)) {
+        if (!child || !*child) continue;
+        
+        if (!first) fprintf(f, ",\n");
+        first = false;
+        
+        write_indent(f, indent + 4);
+        fprintf(f, "\"%s\": ", (*child)->name ? (*child)->name : "");
+        
+        if ((*child)->children && sol_hashmap_count((*child)->children) > 0) {
+            write_json_object(f, *child, indent + 4);
+        } else {
+            write_json_value(f, (*child)->value);
+        }
+    }
+    
+    fprintf(f, "\n");
+    write_indent(f, indent);
+    fprintf(f, "}");
+}
+
 sol_result sol_config_save(sol_config* cfg) {
     if (!cfg || !cfg->path) return SOL_ERROR_INVALID_ARG;
     
     FILE* f = fopen(cfg->path, "w");
     if (!f) return SOL_ERROR_IO;
     
-    fprintf(f, "{\n");
-    
-    sol_hashmap_iter iter;
-    sol_hashmap_iter_init(&iter, cfg->values);
-    const char* key;
-    sol_config_value** val;
-    bool first = true;
-    
-    while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&val)) {
-        if (!first) fprintf(f, ",\n");
-        first = false;
-        
-        fprintf(f, "    \"%s\": ", key);
-        write_json_value(f, *val);
+    config_node* root = build_config_tree(cfg);
+    if (!root) {
+        fclose(f);
+        return SOL_ERROR_MEMORY;
     }
     
-    fprintf(f, "\n}\n");
+    write_json_object(f, root, 0);
+    fprintf(f, "\n");
+    config_node_destroy(root);
+    
     fclose(f);
     
     cfg->modified = false;
@@ -468,6 +607,18 @@ void sol_config_set(sol_config* cfg, const char* key, sol_config_value* value) {
     }
     
     sol_hashmap_set_string(cfg->values, key, &value);
+    cfg->modified = true;
+}
+
+void sol_config_remove(sol_config* cfg, const char* key) {
+    if (!cfg || !key || !cfg->values) return;
+    
+    sol_config_value** val = sol_hashmap_get_string(cfg->values, key);
+    if (val && *val) {
+        config_value_destroy(*val);
+    }
+    
+    sol_hashmap_remove(cfg->values, key);
     cfg->modified = true;
 }
 
@@ -537,45 +688,22 @@ void sol_config_add_recent_file(sol_config* cfg, const char* path) {
 
 /* Load keybindings from config file */
 void sol_config_load_keybindings(sol_keymap* km, sol_config* cfg) {
-    if (!km) return;
+    if (!km || !cfg || !cfg->values) return;
     
-    char* keybind_path = sol_config_get_keybindings_path();
-    if (!keybind_path) return;
+    sol_hashmap_iter iter;
+    sol_hashmap_iter_init(&iter, cfg->values);
+    const char* key;
+    sol_config_value** val;
     
-    char* content = read_file_contents(keybind_path);
-    free(keybind_path);
-    if (!content) return;
-    
-    /* Parse JSON */
-    struct json_value_s* root = json_parse(content, strlen(content));
-    free(content);
-    
-    if (!root || root->type != json_type_object) {
-        free(root);
-        return;
-    }
-    
-    struct json_object_s* obj = (struct json_object_s*)root->payload;
-    struct json_object_element_s* elem = obj->start;
-    
-    while (elem) {
-        if (strcmp(elem->name->string, "direct") == 0 && 
-            elem->value->type == json_type_object) {
-            /* Direct keybindings like "ctrl+s": "file.save" */
-            struct json_object_s* direct = (struct json_object_s*)elem->value->payload;
-            struct json_object_element_s* binding = direct->start;
+    while (sol_hashmap_iter_next(&iter, (const void**)&key, (void**)&val)) {
+        if (!key || !val || !*val) continue;
+        
+        if (strncmp(key, "direct.", 7) == 0 && (*val)->type == SOL_CONFIG_STRING) {
+            const char* keys = key + 7;
+            if (!keys || !*keys) continue;
             
-            while (binding) {
-                if (binding->value->type == json_type_string) {
-                    struct json_string_s* cmd = (struct json_string_s*)binding->value->payload;
-                    sol_keymap_bind(km, binding->name->string, cmd->string, NULL);
-                }
-                binding = binding->next;
-            }
+            sol_keymap_unbind(km, keys);
+            sol_keymap_bind(km, keys, (*val)->data.string, NULL);
         }
-        elem = elem->next;
     }
-    
-    free(root);
-    (void)cfg;
 }

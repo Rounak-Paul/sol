@@ -258,6 +258,7 @@ sol_result sol_piece_table_insert(sol_piece_table* pt, size_t offset,
             /* Insert new piece and right split */
             piece_insert_after(pt, piece, new_piece);
             piece_insert_after(pt, new_piece, right);
+            pt->total_lines += right->line_count;
         }
     }
     

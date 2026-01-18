@@ -51,6 +51,8 @@ sol_editor* sol_editor_create(void) {
     
     /* Load user configuration from ~/.sol/config.json */
     ed->config = sol_config_load_user();
+    /* Load keybindings configuration from ~/.sol/keybindings.json */
+    ed->keybind_config = sol_config_load_keybindings_config();
     
     /* Get theme */
     ed->theme = sol_theme_default_dark();
@@ -66,7 +68,7 @@ sol_editor* sol_editor_create(void) {
     if (ed->keymap) {
         sol_keybind_defaults(ed->keymap);
         /* Load user keybindings from ~/.sol/keybindings.json */
-        sol_config_load_keybindings(ed->keymap, ed->config);
+        sol_config_load_keybindings(ed->keymap, ed->keybind_config);
     }
     
     /* Apply settings from config */
@@ -114,6 +116,9 @@ void sol_editor_destroy(sol_editor* ed) {
     }
     if (ed->config) {
         sol_config_destroy(ed->config);
+    }
+    if (ed->keybind_config) {
+        sol_config_destroy(ed->keybind_config);
     }
     
     sol_array_free(ed->palette_results);
@@ -340,11 +345,26 @@ static void handle_input(sol_editor* ed, tui_event* event) {
         switch (event->key) {
             case TUI_KEY_CHAR:
                 if (!event->ctrl && !event->alt) {
-                    char text[8];
-                    int len = sol_utf8_encode(event->ch, text);
-                    text[len] = '\0';
-                    sol_buffer_insert(buf, view->cursor.pos, text, (size_t)len);
-                    view->cursor.pos.column += 1;
+                    if (event->ch == '\n' || event->ch == '\r') {
+                        sol_buffer_insert(buf, view->cursor.pos, "\n", 1);
+                        view->cursor.pos.line++;
+                        view->cursor.pos.column = 0;
+                    } else if (event->ch == '\t') {
+                        int tab_width = sol_config_get_tab_width(ed->config);
+                        if (tab_width < 1) tab_width = 1;
+                        if (tab_width > 16) tab_width = 16;
+                        char spaces[17];
+                        memset(spaces, ' ', (size_t)tab_width);
+                        spaces[tab_width] = '\0';
+                        sol_buffer_insert(buf, view->cursor.pos, spaces, (size_t)tab_width);
+                        view->cursor.pos.column += tab_width;
+                    } else if (event->ch >= 32) {
+                        char text[8];
+                        int len = sol_utf8_encode(event->ch, text);
+                        text[len] = '\0';
+                        sol_buffer_insert(buf, view->cursor.pos, text, (size_t)len);
+                        view->cursor.pos.column += 1;
+                    }
                 }
                 break;
                 
@@ -353,10 +373,17 @@ static void handle_input(sol_editor* ed, tui_event* event) {
                 view->cursor.pos.column += 1;
                 break;
                 
-            case TUI_KEY_TAB:
-                sol_buffer_insert(buf, view->cursor.pos, "    ", 4);
-                view->cursor.pos.column += 4;
+            case TUI_KEY_TAB: {
+                int tab_width = sol_config_get_tab_width(ed->config);
+                if (tab_width < 1) tab_width = 1;
+                if (tab_width > 16) tab_width = 16;
+                char spaces[17];
+                memset(spaces, ' ', (size_t)tab_width);
+                spaces[tab_width] = '\0';
+                sol_buffer_insert(buf, view->cursor.pos, spaces, (size_t)tab_width);
+                view->cursor.pos.column += tab_width;
                 break;
+            }
                 
             case TUI_KEY_ENTER:
                 sol_buffer_insert(buf, view->cursor.pos, "\n", 1);

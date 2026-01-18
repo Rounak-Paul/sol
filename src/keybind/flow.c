@@ -55,6 +55,21 @@ static const sol_flow_command s_flow_commands[] = {
     {0, false, false, NULL, NULL}
 };
 
+static bool flow_command_supports_count(const char* command) {
+    if (!command) return false;
+    return strcmp(command, "edit.undo") == 0 || strcmp(command, "edit.redo") == 0;
+}
+
+static const char* flow_command_description(const char* command) {
+    if (!command) return "";
+    for (int i = 0; s_flow_commands[i].command != NULL; i++) {
+        if (strcmp(s_flow_commands[i].command, command) == 0) {
+            return s_flow_commands[i].description;
+        }
+    }
+    return command;
+}
+
 /* Timeout for flow mode (ms) */
 #define FLOW_TIMEOUT_MS 3000
 
@@ -65,9 +80,30 @@ bool sol_flow_is_leader(sol_keychord* chord) {
 }
 
 /* Find command in flow table */
-static const sol_flow_command* find_flow_command(char key, bool shift) {
-    char lower_key = (key >= 'A' && key <= 'Z') ? key + 32 : key;
+static const sol_flow_command* find_flow_command(sol_editor* ed, char key, bool shift) {
+    char normalized = key;
+    if (normalized >= 'a' && normalized <= 'z') {
+        normalized = shift ? (char)(normalized - 32) : normalized;
+    } else if (normalized >= 'A' && normalized <= 'Z') {
+        normalized = shift ? normalized : (char)(normalized + 32);
+    }
     
+    if (ed && ed->keybind_config) {
+        char lookup_key[32];
+        snprintf(lookup_key, sizeof(lookup_key), "flow.commands.%c", normalized);
+        const char* cmd = sol_config_get_string(ed->keybind_config, lookup_key, NULL);
+        if (cmd) {
+            static sol_flow_command override;
+            override.key = (char)tolower((unsigned char)normalized);
+            override.shift = shift;
+            override.supports_count = flow_command_supports_count(cmd);
+            override.command = cmd;
+            override.description = flow_command_description(cmd);
+            return &override;
+        }
+    }
+    
+    char lower_key = (normalized >= 'A' && normalized <= 'Z') ? normalized + 32 : normalized;
     for (int i = 0; s_flow_commands[i].command != NULL; i++) {
         if (s_flow_commands[i].key == lower_key && 
             s_flow_commands[i].shift == shift) {
@@ -168,7 +204,7 @@ bool sol_flow_handle_key(sol_editor* ed, sol_keychord* chord) {
     bool shift = (chord->mods & SOL_MOD_SHIFT) != 0;
     
     /* Look up command */
-    const sol_flow_command* cmd = find_flow_command(key, shift);
+    const sol_flow_command* cmd = find_flow_command(ed, key, shift);
     
     if (cmd) {
         /* Execute the command */
