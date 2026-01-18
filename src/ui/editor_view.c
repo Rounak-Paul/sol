@@ -13,7 +13,6 @@ static void draw_line_numbers(tui_context* tui, sol_view* view, sol_theme* theme
     if (!view->line_numbers) return;
     
     int32_t line_count = sol_buffer_line_count(view->buffer);
-    int gutter_width = 5;
     
     tui_set_bg(tui, theme->panel_bg);
     
