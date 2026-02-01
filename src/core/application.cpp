@@ -2,6 +2,7 @@
 #include "logger.h"
 #include "../ui/layers/menu_bar.h"
 #include "../ui/layers/workspace.h"
+#include "../ui/layers/panel.h"
 
 using sol::Logger;
 using sol::EventSystem;
@@ -52,6 +53,9 @@ void Application::SetupUILayers() {
     
     auto workspace = std::make_shared<Workspace>();
     m_UISystem.RegisterLayer(workspace);
+
+    auto pannel = std::make_shared<Panel>();
+    m_UISystem.RegisterLayer(pannel);
 }
 
 } // namespace sol
