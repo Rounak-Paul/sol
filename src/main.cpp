@@ -2,6 +2,6 @@
 
 int main() {
     sol::Application app;
-    app.Run("Sol", 1600, 900);
+    app.Run("Sol", 800, 600);
     return 0;
 }
