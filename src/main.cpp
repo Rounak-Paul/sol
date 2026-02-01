@@ -1,13 +1,15 @@
 #include "core/application.h"
 #include "core/logger.h"
 
+using sol::Logger;
+
 int main() {
-    sol::Logger::GetInstance().SetLogFilePath("sol.log");
-    sol::Logger::GetInstance().Info("Sol application starting");
+    Logger::SetLogFile("sol.log");
+    Logger::Info("Sol application starting");
     
     sol::Application app;
     app.Run("Sol", 800, 600);
     
-    sol::Logger::GetInstance().Info("Sol application terminated");
+    Logger::Info("Sol application terminated");
     return 0;
 }

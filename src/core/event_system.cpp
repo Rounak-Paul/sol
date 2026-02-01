@@ -43,7 +43,7 @@ void EventSystem::UnregisterEvent(const EventId& id) {
     m_Events.erase(id);
 }
 
-bool EventSystem::Execute(const EventId& id, const EventData& data) {
+bool EventSystem::ExecuteEvent(const EventId& id, const EventData& data) {
     std::lock_guard<std::mutex> lock(m_Mutex);
 
     auto it = m_Events.find(id);

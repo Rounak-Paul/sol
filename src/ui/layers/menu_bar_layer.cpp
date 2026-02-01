@@ -1,6 +1,8 @@
 #include "menu_bar_layer.h"
 #include <imgui.h>
 
+using sol::EventSystem;
+
 namespace sol {
 
 MenuBarLayer::MenuBarLayer(const Id& id)
@@ -12,7 +14,7 @@ void MenuBarLayer::OnUI() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Sol")) {
             if (ImGui::MenuItem("Exit", "Esc")) {
-                EventSystem::GetInstance().Execute("exit");
+                EventSystem::Execute("exit");
             }
             ImGui::EndMenu();
         }

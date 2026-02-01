@@ -73,13 +73,18 @@ public:
     EventSystem(EventSystem&&) = delete;
     EventSystem& operator=(EventSystem&&) = delete;
 
-    void RegisterEvent(std::shared_ptr<Event> event);
-    void UnregisterEvent(const EventId& id);
-    bool Execute(const EventId& id, const EventData& data = {});
+    // Static convenience methods
+    static void Register(std::shared_ptr<Event> event) { GetInstance().RegisterEvent(event); }
+    static void Unregister(const EventId& id) { GetInstance().UnregisterEvent(id); }
+    static bool Execute(const EventId& id, const EventData& data = {}) { return GetInstance().ExecuteEvent(id, data); }
 
 private:
     EventSystem() = default;
     ~EventSystem() = default;
+
+    void RegisterEvent(std::shared_ptr<Event> event);
+    void UnregisterEvent(const EventId& id);
+    bool ExecuteEvent(const EventId& id, const EventData& data = {});
 
     std::map<EventId, std::shared_ptr<Event>> m_Events;
     mutable std::mutex m_Mutex;

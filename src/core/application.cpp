@@ -2,6 +2,9 @@
 #include "logger.h"
 #include "../ui/layers/menu_bar_layer.h"
 
+using sol::Logger;
+using sol::EventSystem;
+
 namespace sol {
 
 Application::Application() {
@@ -11,10 +14,10 @@ Application::~Application() {
 }
 
 void Application::OnStart() {
-    Logger::GetInstance().Info("Application starting...");
+    Logger::Info("Application starting...");
     SetupEvents();
     SetupUILayers();
-    Logger::GetInstance().Info("Application initialized successfully");
+    Logger::Info("Application initialized successfully");
 }
 
 void Application::OnUpdate() {
@@ -30,21 +33,21 @@ void Application::OnUI() {
 }
 
 void Application::SetupEvents() {
-    Logger::GetInstance().Info("Setting up events...");
+    Logger::Info("Setting up events...");
     auto exitEvent = std::make_shared<Event>("exit");
     exitEvent->SetHandler([this](const EventData& data) {
-        Logger::GetInstance().Info("Exit event triggered");
+        Logger::Info("Exit event triggered");
         Quit();
         return true;
     })
     .SetSuccessCallback([](const EventData& data) {
-        Logger::GetInstance().Info("Exit event completed successfully");
+        Logger::Info("Exit event completed successfully");
     })
     .SetFailureCallback([](const std::string& error) {
-        Logger::GetInstance().Error("Exit event failed: " + error);
+        Logger::Error("Exit event failed: " + error);
     });
     
-    EventSystem::GetInstance().RegisterEvent(exitEvent);
+    EventSystem::Register(exitEvent);
 }
 
 void Application::SetupUILayers() {

@@ -23,18 +23,19 @@ public:
     Logger(Logger&&) = delete;
     Logger& operator=(Logger&&) = delete;
 
-    void SetLogFilePath(const std::string& filePath);
-    void Log(Level level, const std::string& message);
-
-    // Convenience methods
-    void Debug(const std::string& message) { Log(Level::Debug, message); }
-    void Info(const std::string& message) { Log(Level::Info, message); }
-    void Warning(const std::string& message) { Log(Level::Warning, message); }
-    void Error(const std::string& message) { Log(Level::Error, message); }
+    // Static convenience methods
+    static void SetLogFile(const std::string& filePath) { GetInstance().SetLogFilePath(filePath); }
+    static void Debug(const std::string& message) { GetInstance().Log(Level::Debug, message); }
+    static void Info(const std::string& message) { GetInstance().Log(Level::Info, message); }
+    static void Warning(const std::string& message) { GetInstance().Log(Level::Warning, message); }
+    static void Error(const std::string& message) { GetInstance().Log(Level::Error, message); }
 
 private:
     Logger() = default;
     ~Logger();
+
+    void SetLogFilePath(const std::string& filePath);
+    void Log(Level level, const std::string& message);
 
     std::string LevelToString(Level level) const;
     std::string FormatMessage(Level level, const std::string& message) const;

@@ -2,6 +2,8 @@
 #include "../../core/event_system.h"
 #include <imgui.h>
 
+using sol::EventSystem;
+
 namespace sol {
 
 MainWindowLayer::MainWindowLayer(const Id& id)
@@ -15,7 +17,7 @@ void MainWindowLayer::OnUI() {
     ImGui::Text("Counter: %.2f", m_Counter);
     
     if (ImGui::Button("Quit")) {
-        EventSystem::GetInstance().Execute("exit");
+        EventSystem::Execute("exit");
     }
     
     ImGui::End();
