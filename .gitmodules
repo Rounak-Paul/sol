@@ -1,0 +1,3 @@
+[submodule "src/vendors/tvk"]
+	path = src/vendors/tvk
+	url = https://github.com/Rounak-Paul/tinyvk.git
