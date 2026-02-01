@@ -12,6 +12,7 @@ set(SRCS
     src/core/application.cpp
     src/core/event_system.cpp
     src/core/logger.cpp
+    src/core/job_system.cpp
     src/ui/ui_system.cpp
     src/ui/layers/menu_bar_layer.cpp
     src/ui/layers/main_window_layer.cpp
