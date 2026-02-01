@@ -1,6 +1,7 @@
 #include "application.h"
 #include "logger.h"
-#include "../ui/layers/menu_bar_layer.h"
+#include "../ui/layers/menu_bar.h"
+#include "../ui/layers/workspace.h"
 
 using sol::Logger;
 using sol::EventSystem;
@@ -21,11 +22,6 @@ void Application::OnStart() {
 }
 
 void Application::OnUpdate() {
-    m_Counter += DeltaTime();
-    if (m_MainWindow) {
-        m_MainWindow->SetCounter(m_Counter);
-        m_MainWindow->SetDeltaTime(DeltaTime());
-    }
 }
 
 void Application::OnUI() {
@@ -51,11 +47,11 @@ void Application::SetupEvents() {
 }
 
 void Application::SetupUILayers() {
-    auto menuBar = std::make_shared<MenuBarLayer>();
+    auto menuBar = std::make_shared<MenuBar>();
     m_UISystem.RegisterLayer(menuBar);
     
-    m_MainWindow = std::make_shared<MainWindowLayer>();
-    m_UISystem.RegisterLayer(m_MainWindow);
+    auto workspace = std::make_shared<Workspace>();
+    m_UISystem.RegisterLayer(workspace);
 }
 
 } // namespace sol

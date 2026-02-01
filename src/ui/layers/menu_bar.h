@@ -5,10 +5,10 @@
 
 namespace sol {
 
-class MenuBarLayer : public UILayer {
+class MenuBar : public UILayer {
 public:
-    explicit MenuBarLayer(const Id& id = "menu_bar");
-    ~MenuBarLayer() override = default;
+    explicit MenuBar(const Id& id = "menu_bar");
+    ~MenuBar() override = default;
 
     void OnUI() override;
 

@@ -1,16 +1,16 @@
-#include "menu_bar_layer.h"
+#include "menu_bar.h"
 #include <imgui.h>
 
 using sol::EventSystem;
 
 namespace sol {
 
-MenuBarLayer::MenuBarLayer(const Id& id)
+MenuBar::MenuBar(const Id& id)
     : UILayer(id) {
     SetupMenuBar();
 }
 
-void MenuBarLayer::OnUI() {
+void MenuBar::OnUI() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Sol")) {
             if (ImGui::MenuItem("Exit", "Esc")) {
@@ -22,7 +22,7 @@ void MenuBarLayer::OnUI() {
     }
 }
 
-void MenuBarLayer::SetupMenuBar() {
+void MenuBar::SetupMenuBar() {
     // MenuBar setup if needed in the future
 }
 

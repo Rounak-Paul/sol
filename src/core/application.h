@@ -2,9 +2,8 @@
 
 #include <tinyvk/tinyvk.h>
 #include "event_system.h"
-#include "../ui/ui_system.h"
-#include "../ui/layers/main_window_layer.h"
 #include <memory>
+#include "../ui/ui_system.h"
 
 namespace sol {
 
@@ -19,9 +18,7 @@ protected:
     void OnUI() override;
 
 private:
-    float m_Counter = 0.0f;
     UISystem m_UISystem;
-    std::shared_ptr<MainWindowLayer> m_MainWindow;
 
     void SetupEvents();
     void SetupUILayers();
