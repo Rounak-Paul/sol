@@ -31,14 +31,6 @@ void MenuBar::SetupMenuBar() {
 
 void MenuBar::RenderViewMenu() {
     if (ImGui::BeginMenu("View")) {
-        auto workspace = m_UISystem->GetLayer("workspace");
-        if (workspace) {
-            bool enabled = workspace->IsEnabled();
-            if (ImGui::MenuItem("Workspace", nullptr, &enabled)) {
-                EventSystem::Execute("toggle_window", {{"window_id", std::string("workspace")}});
-            }
-        }
-        
         auto explorer = m_UISystem->GetLayer("Explorer");
         if (explorer) {
             bool enabled = explorer->IsEnabled();
