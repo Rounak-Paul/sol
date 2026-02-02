@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../ui_system.h"
-#include "../../core/event_system.h"
+#include "ui/ui_system.h"
+#include "core/event_system.h"
 
 namespace sol {
 

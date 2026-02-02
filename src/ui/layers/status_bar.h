@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../ui_system.h"
+#include "ui/ui_system.h"
 
 namespace sol {
 

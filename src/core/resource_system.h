@@ -6,6 +6,9 @@
 #include <map>
 #include <filesystem>
 #include <functional>
+#include <mutex>
+
+struct ImGuiInputTextCallbackData;
 
 namespace sol {
 
@@ -52,7 +55,11 @@ public:
     bool Save() override;
     
     const std::string& GetContent() const { return m_Content; }
+    std::string& GetEditableContent() { return m_Content; }
     void SetContent(const std::string& content);
+    
+    // For ImGui InputText - provides a resizable buffer
+    static int InputTextCallback(ImGuiInputTextCallbackData* data);
     
 private:
     std::string m_Content;
@@ -119,6 +126,7 @@ private:
     std::shared_ptr<Resource> CreateResource(const std::filesystem::path& path);
     ResourceType DetectResourceType(const std::filesystem::path& path);
     
+    mutable std::recursive_mutex m_Mutex;
     std::filesystem::path m_WorkingDirectory;
     std::vector<std::shared_ptr<Buffer>> m_Buffers;
     std::map<std::filesystem::path, std::shared_ptr<Resource>> m_ResourceCache;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(sol LANGUAGES CXX)
+project(sol LANGUAGES CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,11 +21,25 @@ set(SRCS
     src/ui/layers/workspace.cpp
 )
 
+# Platform-specific file dialog implementation
+if(APPLE)
+    list(APPEND SRCS src/core/platform/file_dialog_macos.mm)
+elseif(WIN32)
+    list(APPEND SRCS src/core/platform/file_dialog_windows.cpp)
+else()
+    list(APPEND SRCS src/core/platform/file_dialog_linux.cpp)
+endif()
+
 add_executable(sol ${SRCS})
 
 target_include_directories(sol PRIVATE 
+    src
     src/vendors/tvk/include
-    src/core
 )
 
 target_link_libraries(sol PRIVATE tinyvk)
+
+# Platform-specific frameworks for file dialogs
+if(APPLE)
+    target_link_libraries(sol PRIVATE "-framework UniformTypeIdentifiers")
+endif()

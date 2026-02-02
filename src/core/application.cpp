@@ -1,10 +1,12 @@
 #include "application.h"
-#include "logger.h"
-#include "resource_system.h"
-#include "../ui/layers/menu_bar.h"
-#include "../ui/layers/workspace.h"
-#include "../ui/layers/explorer.h"
-#include "../ui/layers/status_bar.h"
+#include "core/event_system.h"
+#include "core/logger.h"
+#include "core/resource_system.h"
+#include "core/file_dialog.h"
+#include "ui/layers/menu_bar.h"
+#include "ui/layers/workspace.h"
+#include "ui/layers/explorer.h"
+#include "ui/layers/status_bar.h"
 #include <imgui.h>
 
 using sol::Logger;
@@ -73,24 +75,31 @@ void Application::SetupEvents() {
     // File events
     auto openFileEvent = std::make_shared<Event>("open_file_dialog");
     openFileEvent->SetHandler([](const EventData& data) {
-        // For now, open a test file - actual file dialog to be implemented
-        Logger::Info("Open file dialog triggered");
-        return true;
+        auto path = FileDialog::OpenFile("Open File");
+        if (path) {
+            ResourceSystem::GetInstance().OpenFile(*path);
+            Logger::Info("Opened file: " + path->string());
+            return true;
+        }
+        return false;
     });
     EventSystem::Register(openFileEvent);
     
     auto openFolderEvent = std::make_shared<Event>("open_folder_dialog");
     openFolderEvent->SetHandler([this](const EventData& data) {
-        // For now, set current working directory as default
-        auto cwd = std::filesystem::current_path();
-        ResourceSystem::GetInstance().SetWorkingDirectory(cwd);
-        
-        // Refresh explorer
-        auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
-        if (explorer) {
-            explorer->Refresh();
+        auto path = FileDialog::OpenFolder("Open Folder");
+        if (path) {
+            ResourceSystem::GetInstance().SetWorkingDirectory(*path);
+            Logger::Info("Opened folder: " + path->string());
+            
+            // Refresh explorer
+            auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
+            if (explorer) {
+                explorer->Refresh();
+            }
+            return true;
         }
-        return true;
+        return false;
     });
     EventSystem::Register(openFolderEvent);
     

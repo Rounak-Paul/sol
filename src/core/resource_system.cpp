@@ -2,6 +2,7 @@
 #include "logger.h"
 #include <fstream>
 #include <sstream>
+#include <imgui.h>
 
 namespace sol {
 
@@ -58,6 +59,15 @@ void TextResource::SetContent(const std::string& content) {
     }
 }
 
+int TextResource::InputTextCallback(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        std::string* str = static_cast<std::string*>(data->UserData);
+        str->resize(data->BufTextLen);
+        data->Buf = str->data();
+    }
+    return 0;
+}
+
 // Buffer implementation
 Buffer::Id Buffer::GenerateId() {
     static Id nextId = 1;
@@ -75,6 +85,8 @@ ResourceSystem& ResourceSystem::GetInstance() {
 }
 
 std::shared_ptr<Buffer> ResourceSystem::OpenFile(const std::filesystem::path& path) {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
     // Check if already open
     for (auto& buffer : m_Buffers) {
         if (buffer->GetResource()->GetPath() == path) {
@@ -102,6 +114,8 @@ std::shared_ptr<Buffer> ResourceSystem::OpenFile(const std::filesystem::path& pa
 }
 
 void ResourceSystem::CloseBuffer(Buffer::Id id) {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
     auto it = std::find_if(m_Buffers.begin(), m_Buffers.end(),
         [id](const auto& b) { return b->GetId() == id; });
     
@@ -132,6 +146,8 @@ void ResourceSystem::CloseAllBuffers() {
 }
 
 bool ResourceSystem::SaveBuffer(Buffer::Id id) {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
     auto buffer = GetBuffer(id);
     if (buffer) {
         return buffer->GetResource()->Save();
@@ -140,6 +156,8 @@ bool ResourceSystem::SaveBuffer(Buffer::Id id) {
 }
 
 bool ResourceSystem::SaveAllBuffers() {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
     bool allSaved = true;
     for (auto& buffer : m_Buffers) {
         if (buffer->GetResource()->IsModified()) {
@@ -152,6 +170,8 @@ bool ResourceSystem::SaveAllBuffers() {
 }
 
 void ResourceSystem::SetWorkingDirectory(const std::filesystem::path& path) {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
     if (std::filesystem::exists(path) && std::filesystem::is_directory(path)) {
         m_WorkingDirectory = path;
         Logger::Info("Working directory set to: " + path.string());
@@ -174,6 +194,8 @@ std::shared_ptr<Buffer> ResourceSystem::GetActiveBuffer() {
 }
 
 void ResourceSystem::SetActiveBuffer(Buffer::Id id) {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
     if (m_ActiveBufferId != id) {
         // Deactivate old buffer
         if (auto oldBuffer = GetBuffer(m_ActiveBufferId)) {

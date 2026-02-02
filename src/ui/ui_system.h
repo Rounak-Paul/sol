@@ -27,7 +27,12 @@ private:
 
 class UISystem {
 public:
+    // Layout constants
     static constexpr float StatusBarHeight = 16.0f;
+    
+    // Dockspace IDs
+    static constexpr const char* MainDockSpaceId = "MainDockSpace";
+    static constexpr const char* EditorTabBarId = "EditorTabs";
 
     UISystem() = default;
     ~UISystem() = default;

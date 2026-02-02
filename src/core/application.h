@@ -1,9 +1,7 @@
 #pragma once
 
 #include <tinyvk/tinyvk.h>
-#include "event_system.h"
-#include <memory>
-#include "../ui/ui_system.h"
+#include "ui/ui_system.h"
 
 namespace sol {
 

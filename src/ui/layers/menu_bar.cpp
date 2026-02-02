@@ -1,5 +1,5 @@
 #include "menu_bar.h"
-#include "../../core/resource_system.h"
+#include "core/resource_system.h"
 #include <imgui.h>
 
 using sol::EventSystem;

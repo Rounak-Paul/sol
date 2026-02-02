@@ -1,5 +1,5 @@
 #include "workspace.h"
-#include "../../core/resource_system.h"
+#include "core/resource_system.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -14,7 +14,7 @@ void Workspace::OnUI() {
     ProcessPendingActions();
     
     // Get or create the main dockspace ID
-    m_DockspaceID = ImGui::GetID("MainDockSpace");
+    m_DockspaceID = ImGui::GetID(UISystem::MainDockSpaceId);
     
     // Set window class to hide tab bar for this window (it's always there)
     ImGuiWindowClass windowClass;
@@ -54,7 +54,7 @@ void Workspace::RenderTabBar() {
                                     ImGuiTabBarFlags_AutoSelectNewTabs |
                                     ImGuiTabBarFlags_FittingPolicyScroll;
     
-    if (ImGui::BeginTabBar("EditorTabs", tabBarFlags)) {
+    if (ImGui::BeginTabBar(UISystem::EditorTabBarId, tabBarFlags)) {
         for (const auto& buffer : buffers) {
             // Skip floating buffers
             if (m_FloatingBufferIds.count(buffer->GetId())) {
@@ -123,14 +123,16 @@ void Workspace::RenderBufferContent() {
     if (resource->GetType() == ResourceType::Text) {
         auto textResource = std::dynamic_pointer_cast<TextResource>(resource);
         if (textResource) {
-            const auto& content = textResource->GetContent();
+            auto& content = textResource->GetEditableContent();
             
             ImVec2 available = ImGui::GetContentRegionAvail();
             ImGui::InputTextMultiline("##editor_content", 
-                const_cast<char*>(content.c_str()), 
-                content.size() + 1,
+                content.data(), 
+                content.capacity() + 1,
                 available,
-                ImGuiInputTextFlags_ReadOnly);
+                ImGuiInputTextFlags_CallbackResize,
+                TextResource::InputTextCallback,
+                &content);
         }
     } else {
         ImGui::TextDisabled("Unsupported file type");
@@ -173,15 +175,17 @@ void Workspace::RenderFloatingBuffers() {
             if (resource->GetType() == ResourceType::Text) {
                 auto textResource = std::dynamic_pointer_cast<TextResource>(resource);
                 if (textResource) {
-                    const auto& content = textResource->GetContent();
+                    auto& content = textResource->GetEditableContent();
                     
                     ImVec2 available = ImGui::GetContentRegionAvail();
                     std::string id = "##float_content_" + std::to_string(bufferId);
                     ImGui::InputTextMultiline(id.c_str(), 
-                        const_cast<char*>(content.c_str()), 
-                        content.size() + 1,
+                        content.data(), 
+                        content.capacity() + 1,
                         available,
-                        ImGuiInputTextFlags_ReadOnly);
+                        ImGuiInputTextFlags_CallbackResize,
+                        TextResource::InputTextCallback,
+                        &content);
                 }
             }
         }

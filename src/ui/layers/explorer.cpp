@@ -1,6 +1,6 @@
 #include "explorer.h"
-#include "../../core/resource_system.h"
-#include "../../core/event_system.h"
+#include "core/resource_system.h"
+#include "core/event_system.h"
 #include <imgui.h>
 #include <algorithm>
 

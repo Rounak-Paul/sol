@@ -1,5 +1,5 @@
 #include "status_bar.h"
-#include "../ui_system.h"
+#include "ui/ui_system.h"
 #include <imgui.h>
 
 namespace sol {
