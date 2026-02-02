@@ -1,3 +1,15 @@
 [submodule "src/vendors/tvk"]
 	path = src/vendors/tvk
 	url = https://github.com/Rounak-Paul/tinyvk.git
+[submodule "src/vendors/tree-sitter"]
+	path = src/vendors/tree-sitter
+	url = https://github.com/Rounak-Paul/tree-sitter.git
+[submodule "src/vendors/tree-sitter-c"]
+	path = src/vendors/tree-sitter-c
+	url = https://github.com/Rounak-Paul/tree-sitter-c.git
+[submodule "src/vendors/tree-sitter-cpp"]
+	path = src/vendors/tree-sitter-cpp
+	url = https://github.com/Rounak-Paul/tree-sitter-cpp.git
+[submodule "src/vendors/tree-sitter-python"]
+	path = src/vendors/tree-sitter-python
+	url = https://github.com/Rounak-Paul/tree-sitter-python.git
