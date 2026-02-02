@@ -1,4 +1,5 @@
 #include "ui_system.h"
+#include <algorithm>
 
 namespace sol {
 
