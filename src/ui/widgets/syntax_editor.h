@@ -86,6 +86,7 @@ private:
     size_t m_SelectionStart = 0;
     size_t m_SelectionEnd = 0;
     bool m_HasSelection = false;
+    bool m_IsDragging = false;
     
     // Scroll state
     float m_ScrollX = 0.0f;

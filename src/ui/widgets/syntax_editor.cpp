@@ -99,34 +99,56 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         RenderCursor(buffer, textPos, lineHeight, firstVisibleLine);
     }
     
-    // Handle mouse input for clicking
+    // Handle mouse input for clicking and dragging
     ImVec2 mousePos = ImGui::GetMousePos();
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
-        // Calculate clicked position
-        float relX = mousePos.x - textPos.x + m_ScrollX;
-        float relY = mousePos.y - textPos.y;
+    
+    // Helper lambda to convert mouse position to buffer position
+    auto mouseToBufPos = [&](ImVec2 pos) -> size_t {
+        float relX = pos.x - textPos.x + m_ScrollX;
+        float relY = pos.y - textPos.y;
         
-        size_t clickedLine = firstVisibleLine + static_cast<size_t>(relY / lineHeight);
+        size_t clickedLine = firstVisibleLine + static_cast<size_t>(std::max(0.0f, relY) / lineHeight);
         clickedLine = std::min(clickedLine, lineCount > 0 ? lineCount - 1 : 0);
         
-        size_t clickedCol = static_cast<size_t>(relX / m_CharWidth);
-        
-        // Convert to position
+        size_t clickedCol = static_cast<size_t>(std::max(0.0f, relX) / m_CharWidth);
         std::string line = buffer.Line(clickedLine);
         clickedCol = std::min(clickedCol, line.length());
-        m_CursorPos = buffer.LineColToPos(clickedLine, clickedCol);
         
-        // Handle selection
-        if (ImGui::GetIO().KeyShift && m_SelectionStart != m_SelectionEnd) {
+        return buffer.LineColToPos(clickedLine, clickedCol);
+    };
+    
+    // Mouse click - start selection or set cursor
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+        m_CursorPos = mouseToBufPos(mousePos);
+        
+        // Handle selection with shift
+        if (ImGui::GetIO().KeyShift) {
             m_SelectionEnd = m_CursorPos;
-            m_HasSelection = true;
+            m_HasSelection = m_SelectionStart != m_SelectionEnd;
         } else {
             m_SelectionStart = m_CursorPos;
             m_SelectionEnd = m_CursorPos;
             m_HasSelection = false;
         }
         
+        m_IsDragging = true;
         m_CursorBlinkTimer = 0.0f;
+    }
+    
+    // Mouse drag - extend selection
+    if (m_IsDragging && ImGui::IsMouseDown(0)) {
+        size_t newPos = mouseToBufPos(mousePos);
+        if (newPos != m_CursorPos) {
+            m_CursorPos = newPos;
+            m_SelectionEnd = m_CursorPos;
+            m_HasSelection = m_SelectionStart != m_SelectionEnd;
+            m_CursorBlinkTimer = 0.0f;
+        }
+    }
+    
+    // Mouse release - stop dragging
+    if (ImGui::IsMouseReleased(0)) {
+        m_IsDragging = false;
     }
     
     // Handle keyboard input
