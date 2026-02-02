@@ -17,6 +17,7 @@ set(SRCS
     src/ui/layers/menu_bar.cpp
     src/ui/layers/workspace.cpp
     src/ui/layers/explorer.cpp
+    src/ui/layers/status_bar.cpp
 )
 
 add_executable(sol ${SRCS})

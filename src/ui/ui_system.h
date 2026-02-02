@@ -27,6 +27,8 @@ private:
 
 class UISystem {
 public:
+    static constexpr float StatusBarHeight = 16.0f;
+
     UISystem() = default;
     ~UISystem() = default;
 

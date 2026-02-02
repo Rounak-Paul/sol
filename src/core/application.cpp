@@ -3,6 +3,7 @@
 #include "../ui/layers/menu_bar.h"
 #include "../ui/layers/workspace.h"
 #include "../ui/layers/explorer.h"
+#include "../ui/layers/status_bar.h"
 #include <imgui.h>
 
 using sol::Logger;
@@ -78,10 +79,17 @@ void Application::SetupUILayers() {
 
     auto explorer = std::make_shared<Explorer>();
     m_UISystem.RegisterLayer(explorer);
+    
+    auto statusBar = std::make_shared<StatusBar>();
+    m_UISystem.RegisterLayer(statusBar);
 }
 
 int Application::GetDockspaceFlags() {
     return ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
+}
+
+float Application::GetDockspaceBottomOffset() {
+    return UISystem::StatusBarHeight;
 }
 
 } // namespace sol
