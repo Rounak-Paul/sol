@@ -29,6 +29,7 @@ set(SRCS
     src/ui/layers/explorer.cpp
     src/ui/layers/status_bar.cpp
     src/ui/layers/workspace.cpp
+    src/ui/widgets/syntax_editor.cpp
 )
 
 # Platform-specific file dialog implementation

@@ -1,13 +1,14 @@
 #include "workspace.h"
 #include "core/resource_system.h"
 #include "core/text/text_buffer.h"
+#include "ui/widgets/syntax_editor.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 
 namespace sol {
 
 Workspace::Workspace(const Id& id)
-    : UILayer(id), m_DockspaceID(0), m_PendingFloatBuffer(std::nullopt) {
+    : UILayer(id), m_DockspaceID(0), m_PendingFloatBuffer(std::nullopt), m_Editor(std::make_unique<SyntaxEditor>()) {
 }
 
 void Workspace::OnUI() {
@@ -126,16 +127,10 @@ void Workspace::RenderBufferContent() {
         if (textResource) {
             TextBuffer& buffer = textResource->GetBuffer();
             
-            TextResource::EditState editState{textResource.get()};
-            
             ImVec2 available = ImGui::GetContentRegionAvail();
-            ImGui::InputTextMultiline("##editor_content", 
-                buffer.Data(), 
-                buffer.Capacity() + 1,
-                available,
-                ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_AllowTabInput,
-                TextResource::InputTextCallback,
-                &editState);
+            if (m_Editor->Render("##editor_content", buffer, available)) {
+                textResource->SetModified(true);
+            }
         }
     } else {
         ImGui::TextDisabled("Unsupported file type");
@@ -180,17 +175,10 @@ void Workspace::RenderFloatingBuffers() {
                 if (textResource) {
                     TextBuffer& textBuf = textResource->GetBuffer();
                     
-                    TextResource::EditState editState{textResource.get()};
-                    
                     ImVec2 available = ImGui::GetContentRegionAvail();
-                    std::string id = "##float_content_" + std::to_string(bufferId);
-                    ImGui::InputTextMultiline(id.c_str(), 
-                        textBuf.Data(), 
-                        textBuf.Capacity() + 1,
-                        available,
-                        ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_AllowTabInput,
-                        TextResource::InputTextCallback,
-                        &editState);
+                    if (m_Editor->Render("##float_editor", textBuf, available)) {
+                        textResource->SetModified(true);
+                    }
                 }
             }
         }
