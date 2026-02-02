@@ -3,6 +3,7 @@
 #include "../ui/layers/menu_bar.h"
 #include "../ui/layers/workspace.h"
 #include "../ui/layers/explorer.h"
+#include <imgui.h>
 
 using sol::Logger;
 using sol::EventSystem;
@@ -56,6 +57,11 @@ void Application::SetupUILayers() {
 
     auto explorer = std::make_shared<Explorer>();
     m_UISystem.RegisterLayer(explorer);
+    
+}
+
+int Application::GetDockspaceFlags() {
+    return ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode;
 }
 
 } // namespace sol

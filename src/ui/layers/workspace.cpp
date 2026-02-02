@@ -48,6 +48,8 @@ void Workspace::OnUI() {
     drawList->AddRectFilled(clipMin, clipMax, IM_COL32(10, 10, 12, 255));
     
     drawList->PopClipRect();
+
+    ImGui::Text("Workspace Area");
     
     ImGui::End();
 }

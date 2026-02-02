@@ -16,6 +16,7 @@ protected:
     void OnStart() override;
     void OnUpdate() override;
     void OnUI() override;
+    int GetDockspaceFlags() override;
 
 private:
     UISystem m_UISystem;
