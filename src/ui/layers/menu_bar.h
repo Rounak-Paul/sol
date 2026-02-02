@@ -14,6 +14,7 @@ public:
 
 private:
     void SetupMenuBar();
+    void RenderFileMenu();
     void RenderViewMenu();
     
     UISystem* m_UISystem;

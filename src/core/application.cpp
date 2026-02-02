@@ -1,5 +1,6 @@
 #include "application.h"
 #include "logger.h"
+#include "resource_system.h"
 #include "../ui/layers/menu_bar.h"
 #include "../ui/layers/workspace.h"
 #include "../ui/layers/explorer.h"
@@ -68,17 +69,68 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(toggleWindowEvent);
+    
+    // File events
+    auto openFileEvent = std::make_shared<Event>("open_file_dialog");
+    openFileEvent->SetHandler([](const EventData& data) {
+        // For now, open a test file - actual file dialog to be implemented
+        Logger::Info("Open file dialog triggered");
+        return true;
+    });
+    EventSystem::Register(openFileEvent);
+    
+    auto openFolderEvent = std::make_shared<Event>("open_folder_dialog");
+    openFolderEvent->SetHandler([this](const EventData& data) {
+        // For now, set current working directory as default
+        auto cwd = std::filesystem::current_path();
+        ResourceSystem::GetInstance().SetWorkingDirectory(cwd);
+        
+        // Refresh explorer
+        auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
+        if (explorer) {
+            explorer->Refresh();
+        }
+        return true;
+    });
+    EventSystem::Register(openFolderEvent);
+    
+    auto saveFileEvent = std::make_shared<Event>("save_file");
+    saveFileEvent->SetHandler([](const EventData& data) {
+        auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
+        if (activeBuffer) {
+            return ResourceSystem::GetInstance().SaveBuffer(activeBuffer->GetId());
+        }
+        return false;
+    });
+    EventSystem::Register(saveFileEvent);
+    
+    auto saveAllEvent = std::make_shared<Event>("save_all_files");
+    saveAllEvent->SetHandler([](const EventData& data) {
+        return ResourceSystem::GetInstance().SaveAllBuffers();
+    });
+    EventSystem::Register(saveAllEvent);
+    
+    auto closeBufferEvent = std::make_shared<Event>("close_buffer");
+    closeBufferEvent->SetHandler([](const EventData& data) {
+        auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
+        if (activeBuffer) {
+            ResourceSystem::GetInstance().CloseBuffer(activeBuffer->GetId());
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(closeBufferEvent);
 }
 
 void Application::SetupUILayers() {
     auto menuBar = std::make_shared<MenuBar>(&m_UISystem);
     m_UISystem.RegisterLayer(menuBar);
     
-    auto workspace = std::make_shared<Workspace>();
-    m_UISystem.RegisterLayer(workspace);
-
     auto explorer = std::make_shared<Explorer>();
     m_UISystem.RegisterLayer(explorer);
+    
+    auto workspace = std::make_shared<Workspace>();
+    m_UISystem.RegisterLayer(workspace);
     
     auto statusBar = std::make_shared<StatusBar>();
     m_UISystem.RegisterLayer(statusBar);

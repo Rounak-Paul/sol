@@ -1,4 +1,5 @@
 #include "menu_bar.h"
+#include "../../core/resource_system.h"
 #include <imgui.h>
 
 using sol::EventSystem;
@@ -19,6 +20,7 @@ void MenuBar::OnUI() {
             ImGui::EndMenu();
         }
         
+        RenderFileMenu();
         RenderViewMenu();
         
         ImGui::EndMainMenuBar();
@@ -27,6 +29,29 @@ void MenuBar::OnUI() {
 
 void MenuBar::SetupMenuBar() {
     // MenuBar setup if needed in the future
+}
+
+void MenuBar::RenderFileMenu() {
+    if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("Open", "Ctrl+O")) {
+            EventSystem::Execute("open_file_dialog");
+        }
+        if (ImGui::MenuItem("Open Folder", "Ctrl+Shift+O")) {
+            EventSystem::Execute("open_folder_dialog");
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save", "Ctrl+S")) {
+            EventSystem::Execute("save_file");
+        }
+        if (ImGui::MenuItem("Save All", "Ctrl+Shift+S")) {
+            EventSystem::Execute("save_all_files");
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Close Buffer", "Ctrl+W")) {
+            EventSystem::Execute("close_buffer");
+        }
+        ImGui::EndMenu();
+    }
 }
 
 void MenuBar::RenderViewMenu() {

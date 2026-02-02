@@ -13,11 +13,12 @@ set(SRCS
     src/core/event_system.cpp
     src/core/logger.cpp
     src/core/job_system.cpp
+    src/core/resource_system.cpp
     src/ui/ui_system.cpp
     src/ui/layers/menu_bar.cpp
-    src/ui/layers/workspace.cpp
     src/ui/layers/explorer.cpp
     src/ui/layers/status_bar.cpp
+    src/ui/layers/workspace.cpp
 )
 
 add_executable(sol ${SRCS})
