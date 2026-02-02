@@ -9,13 +9,46 @@ Workspace::Workspace(const Id& id)
 }
 
 void Workspace::OnUI() {
-    if (ImGui::Begin("Workspace")) {
-        ImVec2 size = ImGui::GetContentRegionAvail();
-        m_viewportWidth = size.x;
-        m_viewportHeight = size.y;
-        
-        ImGui::Text("Workspace Area %fx%f", m_viewportWidth, m_viewportHeight);
-    }
+    // Get or create the main dockspace ID
+    m_dockspaceID = ImGui::GetID("MainDockSpace");
+    
+    // Set window class to hide tab bar for this window
+    ImGuiWindowClass windowClass;
+    windowClass.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
+    ImGui::SetNextWindowClass(&windowClass);
+    
+    // Window flags - no decorations, permanent
+    ImGuiWindowFlags workspaceFlags = ImGuiWindowFlags_NoTitleBar | 
+                                      ImGuiWindowFlags_NoCollapse |
+                                      ImGuiWindowFlags_NoScrollbar |
+                                      ImGuiWindowFlags_NoScrollWithMouse |
+                                      ImGuiWindowFlags_NoBringToFrontOnFocus;
+    
+    // Always dock to the main dockspace
+    ImGui::SetNextWindowDockID(m_dockspaceID, ImGuiCond_Always);
+    
+    ImGui::Begin("Workspace", nullptr, workspaceFlags);
+    
+    // Update viewport size from available content region
+    ImVec2 size = ImGui::GetContentRegionAvail();
+    m_viewportWidth = size.x;
+    m_viewportHeight = size.y;
+    
+    // Render content area (empty for now)
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 windowPos = ImGui::GetWindowPos();
+    ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
+    ImVec2 contentMax = ImGui::GetWindowContentRegionMax();
+    
+    ImVec2 clipMin(windowPos.x + contentMin.x, windowPos.y + contentMin.y);
+    ImVec2 clipMax(windowPos.x + contentMax.x, windowPos.y + contentMax.y);
+    drawList->PushClipRect(clipMin, clipMax, true);
+    
+    // Draw background
+    drawList->AddRectFilled(clipMin, clipMax, IM_COL32(10, 10, 12, 255));
+    
+    drawList->PopClipRect();
+    
     ImGui::End();
 }
 
