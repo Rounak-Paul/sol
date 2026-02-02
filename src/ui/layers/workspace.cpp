@@ -1,5 +1,6 @@
 #include "workspace.h"
 #include "core/resource_system.h"
+#include "core/text/text_buffer.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -123,16 +124,18 @@ void Workspace::RenderBufferContent() {
     if (resource->GetType() == ResourceType::Text) {
         auto textResource = std::dynamic_pointer_cast<TextResource>(resource);
         if (textResource) {
-            auto& content = textResource->GetEditableContent();
+            TextBuffer& buffer = textResource->GetBuffer();
+            
+            TextResource::EditState editState{textResource.get()};
             
             ImVec2 available = ImGui::GetContentRegionAvail();
             ImGui::InputTextMultiline("##editor_content", 
-                content.data(), 
-                content.capacity() + 1,
+                buffer.Data(), 
+                buffer.Capacity() + 1,
                 available,
-                ImGuiInputTextFlags_CallbackResize,
+                ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_AllowTabInput,
                 TextResource::InputTextCallback,
-                &content);
+                &editState);
         }
     } else {
         ImGui::TextDisabled("Unsupported file type");
@@ -175,17 +178,19 @@ void Workspace::RenderFloatingBuffers() {
             if (resource->GetType() == ResourceType::Text) {
                 auto textResource = std::dynamic_pointer_cast<TextResource>(resource);
                 if (textResource) {
-                    auto& content = textResource->GetEditableContent();
+                    TextBuffer& textBuf = textResource->GetBuffer();
+                    
+                    TextResource::EditState editState{textResource.get()};
                     
                     ImVec2 available = ImGui::GetContentRegionAvail();
                     std::string id = "##float_content_" + std::to_string(bufferId);
                     ImGui::InputTextMultiline(id.c_str(), 
-                        content.data(), 
-                        content.capacity() + 1,
+                        textBuf.Data(), 
+                        textBuf.Capacity() + 1,
                         available,
-                        ImGuiInputTextFlags_CallbackResize,
+                        ImGuiInputTextFlags_CallbackResize | ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_AllowTabInput,
                         TextResource::InputTextCallback,
-                        &content);
+                        &editState);
                 }
             }
         }

@@ -3,6 +3,7 @@
 #include "core/logger.h"
 #include "core/resource_system.h"
 #include "core/file_dialog.h"
+#include "core/text/text_buffer.h"
 #include "ui/layers/menu_bar.h"
 #include "ui/layers/workspace.h"
 #include "ui/layers/explorer.h"
@@ -22,6 +23,11 @@ Application::~Application() {
 
 void Application::OnStart() {
     Logger::Info("Application starting...");
+    
+    // Initialize language registry for syntax highlighting
+    LanguageRegistry::GetInstance().InitializeBuiltins();
+    Logger::Info("Language registry initialized");
+    
     SetupEvents();
     SetupUILayers();
     Logger::Info("Application initialized successfully");

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include "text/text_buffer.h"
 
 struct ImGuiInputTextCallbackData;
 
@@ -54,15 +55,22 @@ public:
     bool Load() override;
     bool Save() override;
     
-    const std::string& GetContent() const { return m_Content; }
-    std::string& GetEditableContent() { return m_Content; }
+    // TextBuffer access (nvim-like rope + tree-sitter)
+    TextBuffer& GetBuffer() { return m_Buffer; }
+    const TextBuffer& GetBuffer() const { return m_Buffer; }
+    
+    // Legacy compatibility
+    std::string GetContent() const { return m_Buffer.ToString(); }
     void SetContent(const std::string& content);
     
     // For ImGui InputText - provides a resizable buffer
+    struct EditState {
+        TextResource* resource;
+    };
     static int InputTextCallback(ImGuiInputTextCallbackData* data);
     
 private:
-    std::string m_Content;
+    TextBuffer m_Buffer;
 };
 
 class Buffer {

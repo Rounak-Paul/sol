@@ -1,0 +1,386 @@
+#include "rope.h"
+#include <algorithm>
+#include <cassert>
+#include <cstring>
+
+namespace sol {
+
+// Leaf implementation
+Rope::Leaf::Leaf(std::string_view t) : text(t) {
+    UpdateNewlineCount();
+}
+
+void Rope::Leaf::UpdateNewlineCount() {
+    newlineCount = std::count(text.begin(), text.end(), '\n');
+}
+
+std::unique_ptr<Rope::Node> Rope::Leaf::Clone() const {
+    return std::make_unique<Leaf>(text);
+}
+
+// Branch implementation
+Rope::Branch::Branch(std::unique_ptr<Node> l, std::unique_ptr<Node> r)
+    : left(std::move(l)), right(std::move(r)) {
+    UpdateMetrics();
+}
+
+void Rope::Branch::UpdateMetrics() {
+    leftLen = left ? left->Length() : 0;
+    leftLines = left ? left->LineCount() : 0;
+}
+
+size_t Rope::Branch::Length() const {
+    return leftLen + (right ? right->Length() : 0);
+}
+
+size_t Rope::Branch::LineCount() const {
+    return leftLines + (right ? right->LineCount() : 0);
+}
+
+char Rope::Branch::At(size_t pos) const {
+    if (pos < leftLen) {
+        return left->At(pos);
+    }
+    return right->At(pos - leftLen);
+}
+
+void Rope::Branch::CollectString(std::string& out) const {
+    if (left) left->CollectString(out);
+    if (right) right->CollectString(out);
+}
+
+std::unique_ptr<Rope::Node> Rope::Branch::Clone() const {
+    return std::make_unique<Branch>(
+        left ? left->Clone() : nullptr,
+        right ? right->Clone() : nullptr
+    );
+}
+
+size_t Rope::Branch::Depth() const {
+    size_t ld = left ? left->Depth() : 0;
+    size_t rd = right ? right->Depth() : 0;
+    return 1 + std::max(ld, rd);
+}
+
+// Rope implementation
+Rope::Rope() : m_Root(std::make_unique<Leaf>("")) {}
+
+Rope::Rope(std::string_view text) {
+    if (text.empty()) {
+        m_Root = std::make_unique<Leaf>("");
+    } else {
+        m_Root = BuildFromText(text);
+    }
+}
+
+Rope::Rope(const Rope& other) {
+    if (other.m_Root) {
+        m_Root = other.m_Root->Clone();
+    }
+    m_LastEdit = other.m_LastEdit;
+}
+
+Rope::Rope(Rope&& other) noexcept
+    : m_Root(std::move(other.m_Root))
+    , m_LastEdit(other.m_LastEdit)
+    , m_Cache(std::move(other.m_Cache))
+    , m_CacheDirty(other.m_CacheDirty) {
+}
+
+Rope& Rope::operator=(const Rope& other) {
+    if (this != &other) {
+        m_Root = other.m_Root ? other.m_Root->Clone() : nullptr;
+        m_LastEdit = other.m_LastEdit;
+        m_CacheDirty = true;
+    }
+    return *this;
+}
+
+Rope& Rope::operator=(Rope&& other) noexcept {
+    if (this != &other) {
+        m_Root = std::move(other.m_Root);
+        m_LastEdit = other.m_LastEdit;
+        m_Cache = std::move(other.m_Cache);
+        m_CacheDirty = other.m_CacheDirty;
+    }
+    return *this;
+}
+
+Rope::~Rope() = default;
+
+std::unique_ptr<Rope::Node> Rope::BuildFromText(std::string_view text) {
+    if (text.length() <= LEAF_SIZE) {
+        return std::make_unique<Leaf>(text);
+    }
+    
+    size_t mid = text.length() / 2;
+    auto left = BuildFromText(text.substr(0, mid));
+    auto right = BuildFromText(text.substr(mid));
+    return std::make_unique<Branch>(std::move(left), std::move(right));
+}
+
+std::pair<std::unique_ptr<Rope::Node>, std::unique_ptr<Rope::Node>>
+Rope::Split(std::unique_ptr<Node> node, size_t pos) {
+    if (!node) {
+        return {nullptr, nullptr};
+    }
+    
+    if (auto* leaf = dynamic_cast<Leaf*>(node.get())) {
+        if (pos == 0) {
+            return {nullptr, std::move(node)};
+        }
+        if (pos >= leaf->text.length()) {
+            return {std::move(node), nullptr};
+        }
+        auto left = std::make_unique<Leaf>(leaf->text.substr(0, pos));
+        auto right = std::make_unique<Leaf>(leaf->text.substr(pos));
+        return {std::move(left), std::move(right)};
+    }
+    
+    auto* branch = dynamic_cast<Branch*>(node.get());
+    if (pos <= branch->leftLen) {
+        auto [ll, lr] = Split(std::move(branch->left), pos);
+        auto right = Concat(std::move(lr), std::move(branch->right));
+        return {std::move(ll), std::move(right)};
+    } else {
+        auto [rl, rr] = Split(std::move(branch->right), pos - branch->leftLen);
+        auto left = Concat(std::move(branch->left), std::move(rl));
+        return {std::move(left), std::move(rr)};
+    }
+}
+
+std::unique_ptr<Rope::Node> Rope::Concat(std::unique_ptr<Node> left, std::unique_ptr<Node> right) {
+    if (!left) return right;
+    if (!right) return left;
+    
+    // Try to merge small leaves
+    auto* ll = dynamic_cast<Leaf*>(left.get());
+    auto* rl = dynamic_cast<Leaf*>(right.get());
+    if (ll && rl && ll->text.length() + rl->text.length() <= LEAF_SIZE) {
+        return std::make_unique<Leaf>(ll->text + rl->text);
+    }
+    
+    auto result = std::make_unique<Branch>(std::move(left), std::move(right));
+    return Rebalance(std::move(result));
+}
+
+std::unique_ptr<Rope::Node> Rope::Rebalance(std::unique_ptr<Node> node) {
+    if (!node) return nullptr;
+    
+    auto* branch = dynamic_cast<Branch*>(node.get());
+    if (!branch) return node;
+    
+    size_t ld = branch->left ? branch->left->Depth() : 0;
+    size_t rd = branch->right ? branch->right->Depth() : 0;
+    
+    // Simple rebalancing: if imbalanced by more than 2, rebuild
+    if (ld > rd + 2 || rd > ld + 2) {
+        std::string content;
+        node->CollectString(content);
+        return BuildFromText(content);
+    }
+    
+    return node;
+}
+
+void Rope::Insert(size_t pos, std::string_view text) {
+    if (text.empty()) return;
+    
+    pos = std::min(pos, Length());
+    
+    // Record edit info for tree-sitter
+    auto [startLine, startCol] = PosToLineCol(pos);
+    m_LastEdit.startByte = pos;
+    m_LastEdit.oldEndByte = pos;
+    m_LastEdit.newEndByte = pos + text.length();
+    m_LastEdit.startPoint = {startLine, startCol};
+    m_LastEdit.oldEndPoint = {startLine, startCol};
+    
+    auto [left, right] = Split(std::move(m_Root), pos);
+    auto middle = BuildFromText(text);
+    auto temp = Concat(std::move(left), std::move(middle));
+    m_Root = Concat(std::move(temp), std::move(right));
+    
+    auto [endLine, endCol] = PosToLineCol(pos + text.length());
+    m_LastEdit.newEndPoint = {endLine, endCol};
+    
+    InvalidateCache();
+}
+
+void Rope::Delete(size_t pos, size_t len) {
+    if (len == 0) return;
+    
+    size_t totalLen = Length();
+    pos = std::min(pos, totalLen);
+    len = std::min(len, totalLen - pos);
+    
+    // Record edit info for tree-sitter
+    auto [startLine, startCol] = PosToLineCol(pos);
+    auto [endLine, endCol] = PosToLineCol(pos + len);
+    m_LastEdit.startByte = pos;
+    m_LastEdit.oldEndByte = pos + len;
+    m_LastEdit.newEndByte = pos;
+    m_LastEdit.startPoint = {startLine, startCol};
+    m_LastEdit.oldEndPoint = {endLine, endCol};
+    m_LastEdit.newEndPoint = {startLine, startCol};
+    
+    auto [left, temp] = Split(std::move(m_Root), pos);
+    auto [_, right] = Split(std::move(temp), len);
+    m_Root = Concat(std::move(left), std::move(right));
+    
+    if (!m_Root) {
+        m_Root = std::make_unique<Leaf>("");
+    }
+    
+    InvalidateCache();
+}
+
+void Rope::Replace(size_t pos, size_t len, std::string_view text) {
+    Delete(pos, len);
+    Insert(pos, text);
+}
+
+char Rope::At(size_t pos) const {
+    assert(pos < Length());
+    return m_Root->At(pos);
+}
+
+std::string Rope::Substring(size_t pos, size_t len) const {
+    if (len == 0) return "";
+    
+    size_t totalLen = Length();
+    pos = std::min(pos, totalLen);
+    len = std::min(len, totalLen - pos);
+    
+    // For small substrings, use the cache
+    EnsureCache();
+    return m_Cache.substr(pos, len);
+}
+
+std::string Rope::ToString() const {
+    EnsureCache();
+    return m_Cache;
+}
+
+size_t Rope::Length() const {
+    return m_Root ? m_Root->Length() : 0;
+}
+
+size_t Rope::LineCount() const {
+    return m_Root ? m_Root->LineCount() + 1 : 1;  // +1 for last line without newline
+}
+
+size_t Rope::LineStart(size_t lineNum) const {
+    if (lineNum == 0) return 0;
+    
+    EnsureCache();
+    size_t currentLine = 0;
+    for (size_t i = 0; i < m_Cache.length(); ++i) {
+        if (m_Cache[i] == '\n') {
+            ++currentLine;
+            if (currentLine == lineNum) {
+                return i + 1;
+            }
+        }
+    }
+    return m_Cache.length();
+}
+
+size_t Rope::LineEnd(size_t lineNum) const {
+    size_t start = LineStart(lineNum);
+    EnsureCache();
+    
+    for (size_t i = start; i < m_Cache.length(); ++i) {
+        if (m_Cache[i] == '\n') {
+            return i;
+        }
+    }
+    return m_Cache.length();
+}
+
+size_t Rope::LineLength(size_t lineNum) const {
+    return LineEnd(lineNum) - LineStart(lineNum);
+}
+
+std::string Rope::Line(size_t lineNum) const {
+    size_t start = LineStart(lineNum);
+    size_t end = LineEnd(lineNum);
+    return Substring(start, end - start);
+}
+
+std::pair<size_t, size_t> Rope::PosToLineCol(size_t pos) const {
+    EnsureCache();
+    pos = std::min(pos, m_Cache.length());
+    
+    size_t line = 0;
+    size_t lineStart = 0;
+    
+    for (size_t i = 0; i < pos; ++i) {
+        if (m_Cache[i] == '\n') {
+            ++line;
+            lineStart = i + 1;
+        }
+    }
+    
+    return {line, pos - lineStart};
+}
+
+size_t Rope::LineColToPos(size_t line, size_t col) const {
+    size_t start = LineStart(line);
+    size_t end = LineEnd(line);
+    return std::min(start + col, end);
+}
+
+void Rope::ForEach(CharCallback callback) const {
+    ForEachInRange(0, Length(), callback);
+}
+
+void Rope::ForEachInRange(size_t start, size_t end, CharCallback callback) const {
+    EnsureCache();
+    end = std::min(end, m_Cache.length());
+    for (size_t i = start; i < end; ++i) {
+        if (!callback(i, m_Cache[i])) break;
+    }
+}
+
+void Rope::EnsureCache() const {
+    if (m_CacheDirty) {
+        m_Cache.clear();
+        if (m_Root) {
+            m_Root->CollectString(m_Cache);
+        }
+        m_CacheDirty = false;
+    }
+}
+
+const char* Rope::CStr() {
+    EnsureCache();
+    return m_Cache.c_str();
+}
+
+char* Rope::Data() {
+    EnsureCache();
+    // Reserve extra space for editing
+    if (m_Cache.capacity() < m_Cache.size() + 4096) {
+        m_Cache.reserve(m_Cache.size() + 8192);
+    }
+    return m_Cache.data();
+}
+
+size_t Rope::Capacity() const {
+    const_cast<Rope*>(this)->EnsureCache();
+    return m_Cache.capacity();
+}
+
+void Rope::SyncFromBuffer() {
+    // Rebuild rope from the modified cache
+    std::string newContent = m_Cache;  // Copy before modifying
+    m_Root = BuildFromText(newContent);
+    m_CacheDirty = false;
+}
+
+size_t Rope::CountNewlines(std::string_view text) const {
+    return std::count(text.begin(), text.end(), '\n');
+}
+
+} // namespace sol

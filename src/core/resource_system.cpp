@@ -20,6 +20,13 @@ Resource::Resource(const std::filesystem::path& path)
 TextResource::TextResource(const std::filesystem::path& path)
     : Resource(path) {
     m_Type = ResourceType::Text;
+    m_Buffer.SetFilePath(path);
+    
+    // Set language based on file extension
+    auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(path);
+    if (lang) {
+        m_Buffer.SetLanguage(lang);
+    }
 }
 
 bool TextResource::Load() {
@@ -31,7 +38,18 @@ bool TextResource::Load() {
     
     std::stringstream buffer;
     buffer << file.rdbuf();
-    m_Content = buffer.str();
+    std::string content = buffer.str();
+    
+    // Initialize TextBuffer with content
+    m_Buffer = TextBuffer(content);
+    m_Buffer.SetFilePath(m_Path);
+    
+    // Set language and parse
+    auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(m_Path);
+    if (lang) {
+        m_Buffer.SetLanguage(lang);
+    }
+    
     m_Modified = false;
     
     Logger::Info("Loaded file: " + m_Path.string());
@@ -45,25 +63,38 @@ bool TextResource::Save() {
         return false;
     }
     
-    file << m_Content;
+    file << m_Buffer.ToString();
     m_Modified = false;
+    m_Buffer.SetModified(false);
     
     Logger::Info("Saved file: " + m_Path.string());
     return true;
 }
 
 void TextResource::SetContent(const std::string& content) {
-    if (m_Content != content) {
-        m_Content = content;
+    std::string current = m_Buffer.ToString();
+    if (current != content) {
+        m_Buffer = TextBuffer(content);
+        m_Buffer.SetFilePath(m_Path);
+        auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(m_Path);
+        if (lang) {
+            m_Buffer.SetLanguage(lang);
+        }
         m_Modified = true;
     }
 }
 
 int TextResource::InputTextCallback(ImGuiInputTextCallbackData* data) {
+    EditState* state = static_cast<EditState*>(data->UserData);
+    TextBuffer& buffer = state->resource->m_Buffer;
+    
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
-        std::string* str = static_cast<std::string*>(data->UserData);
-        str->resize(data->BufTextLen);
-        data->Buf = str->data();
+        // Sync from ImGui buffer and resize
+        buffer.SyncFromBuffer();
+        data->Buf = buffer.Data();
+    } else if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
+        state->resource->SetModified(true);
+        buffer.MarkModified();
     }
     return 0;
 }

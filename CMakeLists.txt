@@ -1,11 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
-project(sol LANGUAGES CXX OBJCXX)
+project(sol LANGUAGES C CXX OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_C_STANDARD 11)
 
 # UI Library
 add_subdirectory(src/vendors/tvk)
+
+# Tree-sitter library (static)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+add_subdirectory(src/vendors/tree-sitter)
+
+# Tree-sitter grammars
+include(src/vendors/tree-sitter-grammars.cmake)
 
 set(SRCS
     src/main.cpp
@@ -14,6 +22,8 @@ set(SRCS
     src/core/logger.cpp
     src/core/job_system.cpp
     src/core/resource_system.cpp
+    src/core/text/rope.cpp
+    src/core/text/text_buffer.cpp
     src/ui/ui_system.cpp
     src/ui/layers/menu_bar.cpp
     src/ui/layers/explorer.cpp
@@ -35,9 +45,14 @@ add_executable(sol ${SRCS})
 target_include_directories(sol PRIVATE 
     src
     src/vendors/tvk/include
+    src/vendors/tree-sitter/lib/include
 )
 
-target_link_libraries(sol PRIVATE tinyvk)
+target_link_libraries(sol PRIVATE 
+    tinyvk 
+    tree-sitter
+    tree-sitter-grammars
+)
 
 # Platform-specific frameworks for file dialogs
 if(APPLE)
