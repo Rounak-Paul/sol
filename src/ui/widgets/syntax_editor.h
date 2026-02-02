@@ -1,7 +1,10 @@
 #pragma once
 
 #include "core/text/text_buffer.h"
+#include "core/text/undo_tree.h"
+#include "ui/input/input_manager.h"
 #include <imgui.h>
+#include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -62,6 +65,14 @@ public:
     void SetTabSize(int size) { m_TabSize = size; }
     void SetReadOnly(bool readOnly) { m_ReadOnly = readOnly; }
     
+    // Input mode
+    InputManager& GetInputManager() { return m_InputManager; }
+    void SetVimEnabled(bool enabled) { m_InputManager.SetVimEnabled(enabled); }
+    bool IsVimEnabled() const { return m_InputManager.IsVimEnabled(); }
+    
+    // Undo/Redo tree
+    UndoTree& GetUndoTree() { return m_UndoTree; }
+    
     // State
     size_t GetCursorPos() const { return m_CursorPos; }
     void SetCursorPos(size_t pos) { m_CursorPos = pos; }
@@ -72,6 +83,7 @@ private:
     void RenderText(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine);
     void RenderSelection(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine);
+    void RenderStatusLine(TextBuffer& buffer, const ImVec2& pos, float width);
     
     float GetCharWidth() const;
     float GetLineNumberWidth(size_t lineCount) const;
@@ -80,6 +92,10 @@ private:
     bool m_ShowLineNumbers = true;
     int m_TabSize = 4;
     bool m_ReadOnly = false;
+    
+    // Input handling
+    InputManager m_InputManager;
+    UndoTree m_UndoTree;
     
     // Cursor and selection state
     size_t m_CursorPos = 0;

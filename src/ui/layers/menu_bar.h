@@ -16,6 +16,7 @@ private:
     void SetupMenuBar();
     void RenderFileMenu();
     void RenderViewMenu();
+    void RenderInputMenu();
     
     UISystem* m_UISystem;
 };

@@ -1,5 +1,6 @@
 #include "menu_bar.h"
 #include "core/resource_system.h"
+#include "ui/editor_settings.h"
 #include <imgui.h>
 
 using sol::EventSystem;
@@ -22,6 +23,7 @@ void MenuBar::OnUI() {
         
         RenderFileMenu();
         RenderViewMenu();
+        RenderInputMenu();
         
         ImGui::EndMainMenuBar();
     }
@@ -64,6 +66,25 @@ void MenuBar::RenderViewMenu() {
             }
         }
         
+        ImGui::EndMenu();
+    }
+}
+
+void MenuBar::RenderInputMenu() {
+    if (ImGui::BeginMenu("Input")) {
+        if (ImGui::BeginMenu("Mode")) {
+            auto& settings = EditorSettings::Get();
+            bool vimEnabled = settings.IsVimEnabled();
+            
+            if (ImGui::MenuItem("Standard", nullptr, !vimEnabled)) {
+                settings.SetVimEnabled(false);
+            }
+            if (ImGui::MenuItem("Vim", nullptr, vimEnabled)) {
+                settings.SetVimEnabled(true);
+            }
+            
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
 }

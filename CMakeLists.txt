@@ -24,7 +24,12 @@ set(SRCS
     src/core/resource_system.cpp
     src/core/text/rope.cpp
     src/core/text/text_buffer.cpp
+    src/core/text/undo_tree.cpp
     src/ui/ui_system.cpp
+    src/ui/input/input_mode.cpp
+    src/ui/input/standard_mode.cpp
+    src/ui/input/vim_mode.cpp
+    src/ui/input/input_manager.cpp
     src/ui/layers/menu_bar.cpp
     src/ui/layers/explorer.cpp
     src/ui/layers/status_bar.cpp

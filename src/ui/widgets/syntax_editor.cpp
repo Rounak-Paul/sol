@@ -1,4 +1,5 @@
 #include "syntax_editor.h"
+#include "ui/editor_settings.h"
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
@@ -6,6 +7,10 @@
 namespace sol {
 
 SyntaxEditor::SyntaxEditor() {
+    // Register for mode change notifications
+    EditorSettings::Get().SetOnModeChanged([this](bool vimEnabled) {
+        m_InputManager.SetVimEnabled(vimEnabled);
+    });
 }
 
 float SyntaxEditor::GetCharWidth() const {
@@ -154,6 +159,20 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Handle keyboard input
     if (m_IsFocused) {
         HandleInput(buffer);
+    }
+    
+    // Render mode-specific UI (vim command line, etc.)
+    if (m_IsFocused) {
+        EditorState uiState;
+        uiState.buffer = &buffer;
+        uiState.cursorPos = m_CursorPos;
+        m_InputManager.RenderUI(uiState);
+        
+        // Update global editor settings for status bar
+        auto& settings = EditorSettings::Get();
+        settings.SetModeIndicator(m_InputManager.GetModeIndicator());
+        auto [line, col] = buffer.PosToLineCol(m_CursorPos);
+        settings.SetCursorPos(line + 1, col + 1);  // 1-based for display
     }
     
     // Set content size for scrolling
@@ -333,222 +352,57 @@ void SyntaxEditor::HandleInput(TextBuffer& buffer) {
     if (m_ReadOnly) return;
     
     ImGuiIO& io = ImGui::GetIO();
+    
+    // Build editor state for input mode
+    EditorState state;
+    state.buffer = &buffer;
+    state.undoTree = &m_UndoTree;
+    state.cursorPos = m_CursorPos;
+    state.selectionStart = m_SelectionStart;
+    state.selectionEnd = m_SelectionEnd;
+    state.hasSelection = m_HasSelection;
+    
     bool modified = false;
     
-    // Handle text input
-    if (io.InputQueueCharacters.Size > 0) {
-        for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
-            ImWchar c = io.InputQueueCharacters[i];
-            if (c == '\r') continue;
-            
-            // Delete selection first
-            if (m_HasSelection) {
-                size_t selStart = std::min(m_SelectionStart, m_SelectionEnd);
-                size_t selEnd = std::max(m_SelectionStart, m_SelectionEnd);
-                buffer.Delete(selStart, selEnd - selStart);
-                m_CursorPos = selStart;
-                m_HasSelection = false;
+    // Handle keyboard input through input manager
+    InputResult result = m_InputManager.HandleKeyboard(state);
+    
+    if (result.handled) {
+        if (result.cursorMoved || result.textChanged) {
+            if (result.newCursorPos) {
+                m_CursorPos = *result.newCursorPos;
             }
-            
-            // Insert character
-            char ch[5] = {0};
-            if (c < 0x80) {
-                ch[0] = static_cast<char>(c);
-            } else if (c < 0x800) {
-                ch[0] = static_cast<char>(0xC0 | (c >> 6));
-                ch[1] = static_cast<char>(0x80 | (c & 0x3F));
-            } else {
-                ch[0] = static_cast<char>(0xE0 | (c >> 12));
-                ch[1] = static_cast<char>(0x80 | ((c >> 6) & 0x3F));
-                ch[2] = static_cast<char>(0x80 | (c & 0x3F));
-            }
-            
-            buffer.Insert(m_CursorPos, ch);
-            m_CursorPos += strlen(ch);
+            m_CursorBlinkTimer = 0.0f;
+        }
+        if (result.selectionChanged) {
+            if (result.newSelectionStart) m_SelectionStart = *result.newSelectionStart;
+            if (result.newSelectionEnd) m_SelectionEnd = *result.newSelectionEnd;
+            m_HasSelection = m_SelectionStart != m_SelectionEnd;
+        }
+        if (result.textChanged) {
             modified = true;
         }
-        m_CursorBlinkTimer = 0.0f;
     }
     
-    // Handle special keys
-    if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
-        if (m_HasSelection) {
-            size_t selStart = std::min(m_SelectionStart, m_SelectionEnd);
-            size_t selEnd = std::max(m_SelectionStart, m_SelectionEnd);
-            buffer.Delete(selStart, selEnd - selStart);
-            m_CursorPos = selStart;
-            m_HasSelection = false;
-        } else if (m_CursorPos > 0) {
-            buffer.Delete(m_CursorPos - 1, 1);
-            --m_CursorPos;
-        }
-        modified = true;
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-        if (m_HasSelection) {
-            size_t selStart = std::min(m_SelectionStart, m_SelectionEnd);
-            size_t selEnd = std::max(m_SelectionStart, m_SelectionEnd);
-            buffer.Delete(selStart, selEnd - selStart);
-            m_CursorPos = selStart;
-            m_HasSelection = false;
-        } else if (m_CursorPos < buffer.Length()) {
-            buffer.Delete(m_CursorPos, 1);
-        }
-        modified = true;
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-        if (m_HasSelection) {
-            size_t selStart = std::min(m_SelectionStart, m_SelectionEnd);
-            size_t selEnd = std::max(m_SelectionStart, m_SelectionEnd);
-            buffer.Delete(selStart, selEnd - selStart);
-            m_CursorPos = selStart;
-            m_HasSelection = false;
-        }
-        buffer.Insert(m_CursorPos, "\n");
-        ++m_CursorPos;
-        modified = true;
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
-        if (m_HasSelection) {
-            size_t selStart = std::min(m_SelectionStart, m_SelectionEnd);
-            size_t selEnd = std::max(m_SelectionStart, m_SelectionEnd);
-            buffer.Delete(selStart, selEnd - selStart);
-            m_CursorPos = selStart;
-            m_HasSelection = false;
-        }
-        // Insert spaces instead of tab for consistency
-        std::string tabSpaces(m_TabSize, ' ');
-        buffer.Insert(m_CursorPos, tabSpaces);
-        m_CursorPos += m_TabSize;
-        modified = true;
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    // Navigation
-    bool shift = io.KeyShift;
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) {
-        if (m_CursorPos > 0) {
-            if (shift) {
-                if (!m_HasSelection) m_SelectionStart = m_CursorPos;
-                --m_CursorPos;
-                m_SelectionEnd = m_CursorPos;
-                m_HasSelection = m_SelectionStart != m_SelectionEnd;
-            } else {
-                if (m_HasSelection) {
-                    m_CursorPos = std::min(m_SelectionStart, m_SelectionEnd);
-                    m_HasSelection = false;
-                } else {
-                    --m_CursorPos;
-                }
-            }
-        }
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) {
-        if (m_CursorPos < buffer.Length()) {
-            if (shift) {
-                if (!m_HasSelection) m_SelectionStart = m_CursorPos;
-                ++m_CursorPos;
-                m_SelectionEnd = m_CursorPos;
-                m_HasSelection = m_SelectionStart != m_SelectionEnd;
-            } else {
-                if (m_HasSelection) {
-                    m_CursorPos = std::max(m_SelectionStart, m_SelectionEnd);
-                    m_HasSelection = false;
-                } else {
-                    ++m_CursorPos;
-                }
-            }
-        }
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
-        auto [line, col] = buffer.PosToLineCol(m_CursorPos);
-        if (line > 0) {
-            std::string prevLine = buffer.Line(line - 1);
-            size_t newCol = std::min(col, prevLine.length());
-            size_t newPos = buffer.LineColToPos(line - 1, newCol);
-            
-            if (shift) {
-                if (!m_HasSelection) m_SelectionStart = m_CursorPos;
-                m_CursorPos = newPos;
-                m_SelectionEnd = m_CursorPos;
-                m_HasSelection = m_SelectionStart != m_SelectionEnd;
-            } else {
-                m_CursorPos = newPos;
-                m_HasSelection = false;
-            }
-        }
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
-        auto [line, col] = buffer.PosToLineCol(m_CursorPos);
-        if (line < buffer.LineCount() - 1) {
-            std::string nextLine = buffer.Line(line + 1);
-            size_t newCol = std::min(col, nextLine.length());
-            size_t newPos = buffer.LineColToPos(line + 1, newCol);
-            
-            if (shift) {
-                if (!m_HasSelection) m_SelectionStart = m_CursorPos;
-                m_CursorPos = newPos;
-                m_SelectionEnd = m_CursorPos;
-                m_HasSelection = m_SelectionStart != m_SelectionEnd;
-            } else {
-                m_CursorPos = newPos;
-                m_HasSelection = false;
-            }
-        }
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_Home)) {
-        auto [line, col] = buffer.PosToLineCol(m_CursorPos);
-        size_t newPos = buffer.LineStart(line);
+    // Handle text input through input manager
+    if (io.InputQueueCharacters.Size > 0) {
+        InputResult textResult = m_InputManager.HandleTextInput(
+            state, 
+            io.InputQueueCharacters.Data, 
+            io.InputQueueCharacters.Size
+        );
         
-        if (shift) {
-            if (!m_HasSelection) m_SelectionStart = m_CursorPos;
-            m_CursorPos = newPos;
-            m_SelectionEnd = m_CursorPos;
-            m_HasSelection = m_SelectionStart != m_SelectionEnd;
-        } else {
-            m_CursorPos = newPos;
-            m_HasSelection = false;
+        if (textResult.handled) {
+            if (textResult.cursorMoved || textResult.textChanged) {
+                if (textResult.newCursorPos) {
+                    m_CursorPos = *textResult.newCursorPos;
+                }
+                m_CursorBlinkTimer = 0.0f;
+            }
+            if (textResult.textChanged) {
+                modified = true;
+            }
         }
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    if (ImGui::IsKeyPressed(ImGuiKey_End)) {
-        auto [line, col] = buffer.PosToLineCol(m_CursorPos);
-        size_t newPos = buffer.LineEnd(line);
-        
-        if (shift) {
-            if (!m_HasSelection) m_SelectionStart = m_CursorPos;
-            m_CursorPos = newPos;
-            m_SelectionEnd = m_CursorPos;
-            m_HasSelection = m_SelectionStart != m_SelectionEnd;
-        } else {
-            m_CursorPos = newPos;
-            m_HasSelection = false;
-        }
-        m_CursorBlinkTimer = 0.0f;
-    }
-    
-    // Ctrl+A - Select all
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_A)) {
-        m_SelectionStart = 0;
-        m_SelectionEnd = buffer.Length();
-        m_CursorPos = buffer.Length();
-        m_HasSelection = true;
     }
     
     if (modified) {
