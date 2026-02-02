@@ -5,8 +5,8 @@ using sol::EventSystem;
 
 namespace sol {
 
-MenuBar::MenuBar(const Id& id)
-    : UILayer(id) {
+MenuBar::MenuBar(UISystem* uiSystem, const Id& id)
+    : UILayer(id), m_UISystem(uiSystem) {
     SetupMenuBar();
 }
 
@@ -18,12 +18,37 @@ void MenuBar::OnUI() {
             }
             ImGui::EndMenu();
         }
+        
+        RenderViewMenu();
+        
         ImGui::EndMainMenuBar();
     }
 }
 
 void MenuBar::SetupMenuBar() {
     // MenuBar setup if needed in the future
+}
+
+void MenuBar::RenderViewMenu() {
+    if (ImGui::BeginMenu("View")) {
+        auto workspace = m_UISystem->GetLayer("workspace");
+        if (workspace) {
+            bool enabled = workspace->IsEnabled();
+            if (ImGui::MenuItem("Workspace", nullptr, &enabled)) {
+                EventSystem::Execute("toggle_window", {{"window_id", std::string("workspace")}});
+            }
+        }
+        
+        auto explorer = m_UISystem->GetLayer("Explorer");
+        if (explorer) {
+            bool enabled = explorer->IsEnabled();
+            if (ImGui::MenuItem("Explorer", nullptr, &enabled)) {
+                EventSystem::Execute("toggle_window", {{"window_id", std::string("Explorer")}});
+            }
+        }
+        
+        ImGui::EndMenu();
+    }
 }
 
 } // namespace sol

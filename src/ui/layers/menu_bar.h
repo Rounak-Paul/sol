@@ -7,13 +7,16 @@ namespace sol {
 
 class MenuBar : public UILayer {
 public:
-    explicit MenuBar(const Id& id = "menu_bar");
+    explicit MenuBar(UISystem* uiSystem, const Id& id = "menu_bar");
     ~MenuBar() override = default;
 
     void OnUI() override;
 
 private:
     void SetupMenuBar();
+    void RenderViewMenu();
+    
+    UISystem* m_UISystem;
 };
 
 } // namespace sol

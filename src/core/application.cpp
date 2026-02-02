@@ -32,6 +32,7 @@ void Application::OnUI() {
 
 void Application::SetupEvents() {
     Logger::Info("Setting up events...");
+    
     auto exitEvent = std::make_shared<Event>("exit");
     exitEvent->SetHandler([this](const EventData& data) {
         Logger::Info("Exit event triggered");
@@ -44,12 +45,32 @@ void Application::SetupEvents() {
     .SetFailureCallback([](const std::string& error) {
         Logger::Error("Exit event failed: " + error);
     });
-    
     EventSystem::Register(exitEvent);
+    
+    auto toggleWindowEvent = std::make_shared<Event>("toggle_window");
+    toggleWindowEvent->SetHandler([this](const EventData& data) {
+        auto it = data.find("window_id");
+        if (it == data.end()) {
+            Logger::Error("toggle_window event missing window_id");
+            return false;
+        }
+        
+        std::string windowId = std::any_cast<std::string>(it->second);
+        auto layer = m_UISystem.GetLayer(windowId);
+        if (layer) {
+            layer->SetEnabled(!layer->IsEnabled());
+            Logger::Info("Toggled window: " + windowId + " to " + (layer->IsEnabled() ? "enabled" : "disabled"));
+            return true;
+        }
+        
+        Logger::Error("Window not found: " + windowId);
+        return false;
+    });
+    EventSystem::Register(toggleWindowEvent);
 }
 
 void Application::SetupUILayers() {
-    auto menuBar = std::make_shared<MenuBar>();
+    auto menuBar = std::make_shared<MenuBar>(&m_UISystem);
     m_UISystem.RegisterLayer(menuBar);
     
     auto workspace = std::make_shared<Workspace>();
@@ -57,7 +78,6 @@ void Application::SetupUILayers() {
 
     auto explorer = std::make_shared<Explorer>();
     m_UISystem.RegisterLayer(explorer);
-    
 }
 
 int Application::GetDockspaceFlags() {
