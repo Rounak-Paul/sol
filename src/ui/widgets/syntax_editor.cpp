@@ -799,7 +799,7 @@ void SyntaxEditor::RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, 
                 
                 if (!tooltipShown) {
                     ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 16.0f);
                     tooltipShown = true;
                 } else {
                     ImGui::Separator();
