@@ -180,42 +180,90 @@ std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t en
     size_t startByte = m_Rope.LineStart(startLine);
     size_t endByte = (endLine < m_Rope.LineCount()) ? m_Rope.LineEnd(endLine) : m_Rope.Length();
     
-    // Walk the tree and collect tokens in range
-    std::function<void(TSNode)> walkTree = [&](TSNode node) {
+    // Use tree-sitter cursor for efficient traversal
+    TSTreeCursor cursor = ts_tree_cursor_new(root);
+    
+    // Move cursor to the start position
+    TSPoint startPoint = { static_cast<uint32_t>(startLine), 0 };
+    
+    // Stack-based iterative traversal (much faster than std::function recursion)
+    bool visitChildren = true;
+    
+    while (true) {
+        TSNode node = ts_tree_cursor_current_node(&cursor);
         uint32_t nodeStart = ts_node_start_byte(node);
         uint32_t nodeEnd = ts_node_end_byte(node);
         
-        // Skip nodes outside our range
-        if (nodeEnd < startByte || nodeStart > endByte) {
-            return;
+        // Skip nodes entirely after our range
+        if (nodeStart > endByte) {
+            // Try to go to sibling or parent's sibling
+            while (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    goto done;
+                }
+            }
+            visitChildren = true;
+            continue;
         }
         
-        // Only add leaf nodes (named nodes without children or anonymous nodes)
+        // Skip nodes entirely before our range
+        if (nodeEnd < startByte) {
+            if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                if (!ts_tree_cursor_goto_parent(&cursor)) {
+                    goto done;
+                }
+                visitChildren = false;
+            }
+            continue;
+        }
+        
+        // Node overlaps our range
         uint32_t childCount = ts_node_child_count(node);
+        
+        // Add leaf nodes or anonymous nodes
         if (childCount == 0 || !ts_node_is_named(node)) {
             const char* type = ts_node_type(node);
-            TSPoint startPoint = ts_node_start_point(node);
-            TSPoint endPoint = ts_node_end_point(node);
+            TSPoint sp = ts_node_start_point(node);
+            TSPoint ep = ts_node_end_point(node);
             
             tokens.push_back(SyntaxToken{
                 .startByte = nodeStart,
                 .endByte = nodeEnd,
-                .startRow = startPoint.row,
-                .startCol = startPoint.column,
-                .endRow = endPoint.row,
-                .endCol = endPoint.column,
+                .startRow = sp.row,
+                .startCol = sp.column,
+                .endRow = ep.row,
+                .endCol = ep.column,
                 .type = type,
                 .highlightId = static_cast<uint16_t>(MapNodeTypeToHighlight(type))
             });
         }
         
-        // Recurse into children
-        for (uint32_t i = 0; i < childCount; ++i) {
-            walkTree(ts_node_child(node, i));
+        // Try to descend into children
+        if (visitChildren && ts_tree_cursor_goto_first_child(&cursor)) {
+            visitChildren = true;
+            continue;
         }
-    };
+        
+        // Try to go to sibling
+        if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+            visitChildren = true;
+            continue;
+        }
+        
+        // Go up and try siblings of ancestors
+        while (true) {
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                goto done;
+            }
+            if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+                visitChildren = true;
+                break;
+            }
+        }
+    }
     
-    walkTree(root);
+done:
+    ts_tree_cursor_delete(&cursor);
     
     // Sort by start position
     std::sort(tokens.begin(), tokens.end(), [](const SyntaxToken& a, const SyntaxToken& b) {

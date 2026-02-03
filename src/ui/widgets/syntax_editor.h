@@ -79,6 +79,7 @@ private:
     void HandleInput(TextBuffer& buffer);
     void RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderText(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
+    void RenderSpan(ImDrawList* drawList, std::string_view lineText, size_t start, size_t end, float& x, float y, ImU32 color);
     void RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine);
     void RenderSelection(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderStatusLine(TextBuffer& buffer, const ImVec2& pos, float width);

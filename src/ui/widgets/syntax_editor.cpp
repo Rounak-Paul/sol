@@ -63,10 +63,11 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         buffer.Parse();
     }
     
-    // Calculate max line width for horizontal scrollbar
+    // Calculate max line width for horizontal scrollbar (use cached line lengths)
     float maxLineWidth = 0.0f;
     for (size_t i = firstVisibleLine; i < lastVisibleLine; ++i) {
-        maxLineWidth = std::max(maxLineWidth, buffer.Line(i).length() * m_CharWidth);
+        size_t lineLen = buffer.LineEnd(i) - buffer.LineStart(i);
+        maxLineWidth = std::max(maxLineWidth, lineLen * m_CharWidth);
     }
     
     // Set total content size for scrolling
@@ -114,9 +115,12 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Render syntax-highlighted text
     RenderText(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
     
-    // Render cursor
+    // Render cursor (only if cursor line is visible)
     if (m_IsFocused && !m_ReadOnly) {
-        RenderCursor(buffer, textPos, lineHeight, firstVisibleLine);
+        auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
+        if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
+            RenderCursor(buffer, textPos, lineHeight, firstVisibleLine);
+        }
     }
     
     // Handle mouse input for clicking and dragging
@@ -226,24 +230,43 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
     // Get syntax tokens for visible range
     std::vector<SyntaxToken> tokens = buffer.GetSyntaxTokens(firstLine, lastLine);
     
-    // Build a map of byte position -> color
-    std::vector<std::pair<size_t, ImU32>> colorChanges;
+    // Build a flat list of color changes sorted by position for O(log n) lookup
+    struct ColorChange {
+        size_t pos;
+        ImU32 color;
+        bool isStart;  // true = token start, false = token end
+    };
+    std::vector<ColorChange> colorChanges;
+    colorChanges.reserve(tokens.size() * 2);
+    
     for (const auto& token : tokens) {
-        colorChanges.emplace_back(token.startByte, m_Theme.GetColor(static_cast<HighlightGroup>(token.highlightId)));
-        colorChanges.emplace_back(token.endByte, m_Theme.text);
+        ImU32 color = m_Theme.GetColor(static_cast<HighlightGroup>(token.highlightId));
+        colorChanges.push_back({token.startByte, color, true});
+        colorChanges.push_back({token.endByte, m_Theme.text, false});
     }
-    std::sort(colorChanges.begin(), colorChanges.end());
+    
+    std::sort(colorChanges.begin(), colorChanges.end(), [](const ColorChange& a, const ColorChange& b) {
+        if (a.pos != b.pos) return a.pos < b.pos;
+        // Starts come before ends at same position
+        return a.isStart > b.isStart;
+    });
     
     // Render each visible line
     for (size_t lineIdx = firstLine; lineIdx < lastLine; ++lineIdx) {
-        std::string lineText = buffer.Line(lineIdx);
+        std::string_view lineText = buffer.LineView(lineIdx);
         float y = pos.y + (lineIdx - firstLine) * lineHeight;
         float x = pos.x;
+        
+        if (lineText.empty()) continue;
         
         size_t lineStart = buffer.LineStart(lineIdx);
         size_t lineEnd = lineStart + lineText.length();
         
-        // Find starting color for this line
+        // Binary search to find first color change at or before lineStart
+        auto it = std::upper_bound(colorChanges.begin(), colorChanges.end(), lineStart,
+            [](size_t pos, const ColorChange& cc) { return pos < cc.pos; });
+        
+        // Find the active color at lineStart by scanning backwards
         ImU32 currentColor = m_Theme.text;
         for (const auto& token : tokens) {
             if (token.startByte <= lineStart && token.endByte > lineStart) {
@@ -252,32 +275,101 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
             }
         }
         
-        // Render character by character with color changes
+        // Process color changes within this line
         size_t charIdx = 0;
-        size_t bytePos = lineStart;
+        size_t spanStart = 0;
+        ImU32 spanColor = currentColor;
         
         while (charIdx < lineText.length()) {
-            // Check for color change at this position
-            for (const auto& token : tokens) {
-                if (token.startByte == bytePos) {
-                    currentColor = m_Theme.GetColor(static_cast<HighlightGroup>(token.highlightId));
-                } else if (token.endByte == bytePos) {
-                    currentColor = m_Theme.text;
+            size_t bytePos = lineStart + charIdx;
+            
+            // Check if there's a color change at this position
+            while (it != colorChanges.end() && it->pos == bytePos) {
+                if (it->isStart) {
+                    // Start of a new token
+                    if (charIdx > spanStart) {
+                        // Render previous span
+                        RenderSpan(drawList, lineText, spanStart, charIdx, x, y, spanColor);
+                    }
+                    spanStart = charIdx;
+                    spanColor = it->color;
                 }
+                ++it;
             }
             
-            // Handle tabs
-            if (lineText[charIdx] == '\t') {
-                x += m_CharWidth * m_TabSize;
-            } else {
-                // Render single character
-                char ch[2] = { lineText[charIdx], '\0' };
-                drawList->AddText(ImVec2(x, y), currentColor, ch);
-                x += m_CharWidth;
+            // Check for token end
+            while (it != colorChanges.end() && it->pos == bytePos && !it->isStart) {
+                ++it;
             }
             
             ++charIdx;
-            ++bytePos;
+            
+            // Advance iterator past positions we've passed
+            while (it != colorChanges.end() && it->pos < lineStart + charIdx) {
+                if (it->isStart) {
+                    spanColor = it->color;
+                } else {
+                    // Token ended, check if another starts
+                    auto nextIt = it + 1;
+                    if (nextIt != colorChanges.end() && nextIt->pos == it->pos && nextIt->isStart) {
+                        spanColor = nextIt->color;
+                    } else {
+                        spanColor = m_Theme.text;
+                    }
+                }
+                ++it;
+            }
+        }
+        
+        // Render final span
+        if (lineText.length() > spanStart) {
+            RenderSpan(drawList, lineText, spanStart, lineText.length(), x, y, spanColor);
+        }
+    }
+}
+
+void SyntaxEditor::RenderSpan(ImDrawList* drawList, std::string_view lineText, 
+                               size_t start, size_t end, float& x, float y, ImU32 color) {
+    // Get clip rect to skip rendering off-screen content
+    const ImVec4& clipRect = drawList->_ClipRectStack.back();
+    float clipLeft = clipRect.x;
+    float clipRight = clipRect.z;
+    
+    size_t i = start;
+    while (i < end) {
+        // Handle tabs
+        if (lineText[i] == '\t') {
+            x += m_CharWidth * m_TabSize;
+            ++i;
+            continue;
+        }
+        
+        // Find contiguous run of non-tab characters
+        size_t runStart = i;
+        while (i < end && lineText[i] != '\t') {
+            ++i;
+        }
+        
+        if (i > runStart) {
+            float runWidth = (i - runStart) * m_CharWidth;
+            
+            // Skip if entirely to the left of clip rect
+            if (x + runWidth < clipLeft) {
+                x += runWidth;
+                continue;
+            }
+            
+            // Stop if entirely to the right of clip rect
+            if (x > clipRight) {
+                x += runWidth;
+                continue;
+            }
+            
+            // Render the visible portion
+            drawList->AddText(ImVec2(x, y), color, 
+                              lineText.data() + runStart, 
+                              lineText.data() + i);
+            x += runWidth;
         }
     }
 }

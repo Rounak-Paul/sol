@@ -85,6 +85,7 @@ public:
     // Line operations
     size_t LineCount() const { return m_Rope.LineCount(); }
     std::string Line(size_t lineNum) const { return m_Rope.Line(lineNum); }
+    std::string_view LineView(size_t lineNum) { return m_Rope.LineView(lineNum); }
     size_t LineStart(size_t lineNum) const { return m_Rope.LineStart(lineNum); }
     size_t LineEnd(size_t lineNum) const { return m_Rope.LineEnd(lineNum); }
     std::pair<size_t, size_t> PosToLineCol(size_t pos) const { return m_Rope.PosToLineCol(pos); }

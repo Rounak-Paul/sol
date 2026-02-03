@@ -38,6 +38,7 @@ public:
     size_t LineEnd(size_t lineNum) const;
     size_t LineLength(size_t lineNum) const;
     std::string Line(size_t lineNum) const;
+    std::string_view LineView(size_t lineNum);  // Returns view into cached buffer
     std::pair<size_t, size_t> PosToLineCol(size_t pos) const;  // Returns (line, col)
     size_t LineColToPos(size_t line, size_t col) const;
     
@@ -113,14 +114,19 @@ private:
     mutable std::string m_Cache;
     mutable bool m_CacheDirty = true;
     
+    // Line starts cache for O(1) line access
+    mutable std::vector<size_t> m_LineStarts;
+    mutable bool m_LineStartsDirty = true;
+    
     // Internal helpers
     static std::unique_ptr<Node> BuildFromText(std::string_view text);
     static std::pair<std::unique_ptr<Node>, std::unique_ptr<Node>> Split(std::unique_ptr<Node> node, size_t pos);
     static std::unique_ptr<Node> Concat(std::unique_ptr<Node> left, std::unique_ptr<Node> right);
     static std::unique_ptr<Node> Rebalance(std::unique_ptr<Node> node);
     
-    void InvalidateCache() { m_CacheDirty = true; }
+    void InvalidateCache() { m_CacheDirty = true; m_LineStartsDirty = true; }
     void EnsureCache() const;
+    void EnsureLineStarts() const;
     
     size_t CountNewlines(std::string_view text) const;
 };

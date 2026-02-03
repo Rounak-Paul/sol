@@ -267,33 +267,38 @@ size_t Rope::Length() const {
 }
 
 size_t Rope::LineCount() const {
-    return m_Root ? m_Root->LineCount() + 1 : 1;  // +1 for last line without newline
+    EnsureLineStarts();
+    return m_LineStarts.size();
+}
+
+void Rope::EnsureLineStarts() const {
+    if (!m_LineStartsDirty) return;
+    
+    EnsureCache();
+    m_LineStarts.clear();
+    m_LineStarts.push_back(0);  // First line starts at 0
+    
+    for (size_t i = 0; i < m_Cache.length(); ++i) {
+        if (m_Cache[i] == '\n') {
+            m_LineStarts.push_back(i + 1);
+        }
+    }
+    
+    m_LineStartsDirty = false;
 }
 
 size_t Rope::LineStart(size_t lineNum) const {
-    if (lineNum == 0) return 0;
-    
-    EnsureCache();
-    size_t currentLine = 0;
-    for (size_t i = 0; i < m_Cache.length(); ++i) {
-        if (m_Cache[i] == '\n') {
-            ++currentLine;
-            if (currentLine == lineNum) {
-                return i + 1;
-            }
-        }
+    EnsureLineStarts();
+    if (lineNum >= m_LineStarts.size()) {
+        return m_Cache.length();
     }
-    return m_Cache.length();
+    return m_LineStarts[lineNum];
 }
 
 size_t Rope::LineEnd(size_t lineNum) const {
-    size_t start = LineStart(lineNum);
-    EnsureCache();
-    
-    for (size_t i = start; i < m_Cache.length(); ++i) {
-        if (m_Cache[i] == '\n') {
-            return i;
-        }
+    EnsureLineStarts();
+    if (lineNum + 1 < m_LineStarts.size()) {
+        return m_LineStarts[lineNum + 1] - 1;  // -1 to exclude newline
     }
     return m_Cache.length();
 }
@@ -308,20 +313,23 @@ std::string Rope::Line(size_t lineNum) const {
     return Substring(start, end - start);
 }
 
-std::pair<size_t, size_t> Rope::PosToLineCol(size_t pos) const {
+std::string_view Rope::LineView(size_t lineNum) {
     EnsureCache();
+    size_t start = LineStart(lineNum);
+    size_t end = LineEnd(lineNum);
+    return std::string_view(m_Cache.data() + start, end - start);
+}
+
+std::pair<size_t, size_t> Rope::PosToLineCol(size_t pos) const {
+    EnsureLineStarts();
     pos = std::min(pos, m_Cache.length());
     
-    size_t line = 0;
-    size_t lineStart = 0;
+    // Binary search to find the line containing pos
+    auto it = std::upper_bound(m_LineStarts.begin(), m_LineStarts.end(), pos);
+    size_t line = (it - m_LineStarts.begin()) - 1;
+    if (it == m_LineStarts.begin()) line = 0;
     
-    for (size_t i = 0; i < pos; ++i) {
-        if (m_Cache[i] == '\n') {
-            ++line;
-            lineStart = i + 1;
-        }
-    }
-    
+    size_t lineStart = m_LineStarts[line];
     return {line, pos - lineStart};
 }
 
