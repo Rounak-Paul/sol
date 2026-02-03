@@ -2,7 +2,6 @@
 #include "ui/ui_system.h"
 #include "ui/editor_settings.h"
 #include <imgui.h>
-#include <cstring>
 
 namespace sol {
 
@@ -32,43 +31,7 @@ void StatusBar::OnUI() {
     if (ImGui::Begin("##StatusBar", nullptr, windowFlags)) {
         auto& settings = EditorSettings::Get();
         
-        // Left side: Mode indicator
-        const char* modeIndicator = settings.GetModeIndicator();
-        bool isVim = settings.IsVimEnabled();
-        
-        // Ensure we have valid text for the button
-        const char* displayMode = (modeIndicator && modeIndicator[0] != '\0') ? modeIndicator : (isVim ? "NORMAL" : "STANDARD");
-        
-        // Mode badge with color
-        if (isVim) {
-            // Vim mode colors based on state
-            ImVec4 badgeColor = ImVec4(0.2f, 0.6f, 0.2f, 1.0f);  // Green for normal
-            if (strcmp(displayMode, "INSERT") == 0) {
-                badgeColor = ImVec4(0.6f, 0.4f, 0.2f, 1.0f);  // Orange for insert
-            } else if (strncmp(displayMode, "VISUAL", 6) == 0 || strncmp(displayMode, "V-", 2) == 0) {
-                badgeColor = ImVec4(0.5f, 0.3f, 0.6f, 1.0f);  // Purple for visual
-            } else if (strcmp(displayMode, ":") == 0 || strcmp(displayMode, "/") == 0 || strcmp(displayMode, "?") == 0) {
-                badgeColor = ImVec4(0.3f, 0.5f, 0.7f, 1.0f);  // Blue for command/search
-            }
-            
-            ImGui::PushStyleColor(ImGuiCol_Button, badgeColor);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, badgeColor);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, badgeColor);
-            ImGui::SmallButton(displayMode);
-            ImGui::PopStyleColor(3);
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.5f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.5f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.3f, 0.3f, 0.5f, 1.0f));
-            ImGui::SmallButton("STANDARD");
-            ImGui::PopStyleColor(3);
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "|");
-        ImGui::SameLine();
-        
-        // Right side: Cursor position (pushed to right)
+        // Right side: Cursor position
         size_t line = settings.GetCursorLine();
         size_t col = settings.GetCursorCol();
         

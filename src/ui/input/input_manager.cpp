@@ -1,15 +1,11 @@
 #include "input_manager.h"
 #include "standard_mode.h"
-#include "vim_mode.h"
 
 namespace sol {
 
 InputManager::InputManager() {
-    // Register default modes
+    // Register standard mode
     RegisterMode("standard", std::make_unique<StandardMode>());
-    RegisterMode("vim", std::make_unique<VimMode>());
-    
-    // Start with standard mode
     SetActiveMode("standard");
 }
 
@@ -47,23 +43,6 @@ StandardMode* InputManager::GetStandardMode() const {
         return static_cast<StandardMode*>(it->second.get());
     }
     return nullptr;
-}
-
-VimMode* InputManager::GetVimMode() const {
-    auto it = m_Modes.find("vim");
-    if (it != m_Modes.end()) {
-        return static_cast<VimMode*>(it->second.get());
-    }
-    return nullptr;
-}
-
-void InputManager::SetVimEnabled(bool enabled) {
-    m_VimEnabled = enabled;
-    if (enabled) {
-        SetActiveMode("vim");
-    } else {
-        SetActiveMode("standard");
-    }
 }
 
 InputResult InputManager::HandleKeyboard(EditorState& state) {

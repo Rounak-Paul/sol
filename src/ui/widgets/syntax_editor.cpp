@@ -7,10 +7,6 @@
 namespace sol {
 
 SyntaxEditor::SyntaxEditor() {
-    // Register for mode change notifications
-    EditorSettings::Get().SetOnModeChanged([this](bool vimEnabled) {
-        m_InputManager.SetVimEnabled(vimEnabled);
-    });
 }
 
 float SyntaxEditor::GetCharWidth() const {
@@ -178,18 +174,9 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Handle keyboard input
     if (m_IsFocused) {
         HandleInput(buffer);
-    }
-    
-    // Render mode-specific UI (vim command line, etc.)
-    if (m_IsFocused) {
-        EditorState uiState;
-        uiState.buffer = &buffer;
-        uiState.cursorPos = m_CursorPos;
-        m_InputManager.RenderUI(uiState);
         
-        // Update global editor settings for status bar
+        // Update cursor position for status bar
         auto& settings = EditorSettings::Get();
-        settings.SetModeIndicator(m_InputManager.GetModeIndicator());
         auto [line, col] = buffer.PosToLineCol(m_CursorPos);
         settings.SetCursorPos(line + 1, col + 1);  // 1-based for display
     }

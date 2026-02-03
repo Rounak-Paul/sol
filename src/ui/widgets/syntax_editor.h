@@ -67,8 +67,6 @@ public:
     
     // Input mode
     InputManager& GetInputManager() { return m_InputManager; }
-    void SetVimEnabled(bool enabled) { m_InputManager.SetVimEnabled(enabled); }
-    bool IsVimEnabled() const { return m_InputManager.IsVimEnabled(); }
     
     // Undo/Redo tree
     UndoTree& GetUndoTree() { return m_UndoTree; }

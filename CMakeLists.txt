@@ -32,7 +32,6 @@ set(SRCS
     src/ui/ui_system.cpp
     src/ui/input/input_mode.cpp
     src/ui/input/standard_mode.cpp
-    src/ui/input/vim_mode.cpp
     src/ui/input/input_manager.cpp
     src/ui/layers/menu_bar.cpp
     src/ui/layers/explorer.cpp

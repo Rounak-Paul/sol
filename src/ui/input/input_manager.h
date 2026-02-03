@@ -9,7 +9,6 @@
 namespace sol {
 
 class StandardMode;
-class VimMode;
 
 class InputManager {
 public:
@@ -24,11 +23,6 @@ public:
     
     // Get specific modes
     StandardMode* GetStandardMode() const;
-    VimMode* GetVimMode() const;
-    
-    // Enable/disable vim mode (convenience)
-    void SetVimEnabled(bool enabled);
-    bool IsVimEnabled() const { return m_VimEnabled; }
     
     // Input handling - delegates to active mode
     InputResult HandleKeyboard(EditorState& state);
@@ -48,7 +42,6 @@ private:
     std::unordered_map<std::string, std::unique_ptr<InputMode>> m_Modes;
     std::string m_ActiveModeName;
     InputMode* m_ActiveMode = nullptr;
-    bool m_VimEnabled = false;
 };
 
 } // namespace sol
