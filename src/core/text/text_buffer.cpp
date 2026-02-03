@@ -7,6 +7,13 @@ extern "C" {
     const TSLanguage* tree_sitter_c();
     const TSLanguage* tree_sitter_cpp();
     const TSLanguage* tree_sitter_python();
+    const TSLanguage* tree_sitter_cmake();
+    const TSLanguage* tree_sitter_css();
+    const TSLanguage* tree_sitter_html();
+    const TSLanguage* tree_sitter_javascript();
+    const TSLanguage* tree_sitter_json();
+    const TSLanguage* tree_sitter_markdown();
+    const TSLanguage* tree_sitter_typescript();
 }
 
 namespace sol {
@@ -480,6 +487,138 @@ void LanguageRegistry::InitializeBuiltins() {
         {"none", HighlightGroup::Constant},
     };
     RegisterLanguage(std::move(pyLang));
+
+    // CMake language
+    auto cmakeLang = std::make_unique<Language>();
+    cmakeLang->name = "cmake";
+    cmakeLang->extensions = {".cmake", "CMakeLists.txt"};
+    cmakeLang->tsLanguage = tree_sitter_cmake();
+    cmakeLang->highlightMappings = {
+        {"identifier", HighlightGroup::Variable},
+        {"function", HighlightGroup::Function},
+        {"variable", HighlightGroup::Variable},
+        {"string", HighlightGroup::String},
+        {"number", HighlightGroup::Number},
+        {"comment", HighlightGroup::Comment},
+        {"boolean", HighlightGroup::Constant},
+    };
+    RegisterLanguage(std::move(cmakeLang));
+
+    // CSS language
+    auto cssLang = std::make_unique<Language>();
+    cssLang->name = "css";
+    cssLang->extensions = {".css"};
+    cssLang->tsLanguage = tree_sitter_css();
+    cssLang->highlightMappings = {
+        {"tag_name", HighlightGroup::Keyword},
+        {"class_name", HighlightGroup::Type},
+        {"id_name", HighlightGroup::Type},
+        {"attribute_name", HighlightGroup::Variable},
+        {"property_name", HighlightGroup::Variable},
+        {"string_value", HighlightGroup::String},
+        {"integer_value", HighlightGroup::Number},
+        {"float_value", HighlightGroup::Number},
+        {"comment", HighlightGroup::Comment},
+        {"color_value", HighlightGroup::Constant},
+    };
+    RegisterLanguage(std::move(cssLang));
+
+    // HTML language
+    auto htmlLang = std::make_unique<Language>();
+    htmlLang->name = "html";
+    htmlLang->extensions = {".html", ".htm"};
+    htmlLang->tsLanguage = tree_sitter_html();
+    htmlLang->highlightMappings = {
+        {"tag_name", HighlightGroup::Keyword},
+        {"attribute_name", HighlightGroup::Variable},
+        {"attribute_value", HighlightGroup::String},
+        {"comment", HighlightGroup::Comment},
+        {"doctype", HighlightGroup::Macro},
+    };
+    RegisterLanguage(std::move(htmlLang));
+
+    // JavaScript language
+    auto jsLang = std::make_unique<Language>();
+    jsLang->name = "javascript";
+    jsLang->extensions = {".js", ".mjs", ".cjs"};
+    jsLang->tsLanguage = tree_sitter_javascript();
+    jsLang->highlightMappings = {
+        {"identifier", HighlightGroup::Variable},
+        {"property_identifier", HighlightGroup::Variable},
+        {"shorthand_property_identifier", HighlightGroup::Variable},
+        {"function_declaration", HighlightGroup::Function},
+        {"function", HighlightGroup::Function},
+        {"call_expression", HighlightGroup::Function},
+        {"string", HighlightGroup::String},
+        {"template_string", HighlightGroup::String},
+        {"number", HighlightGroup::Number},
+        {"comment", HighlightGroup::Comment},
+        {"true", HighlightGroup::Constant},
+        {"false", HighlightGroup::Constant},
+        {"null", HighlightGroup::Constant},
+        {"undefined", HighlightGroup::Constant},
+    };
+    RegisterLanguage(std::move(jsLang));
+
+    // JSON language
+    auto jsonLang = std::make_unique<Language>();
+    jsonLang->name = "json";
+    jsonLang->extensions = {".json"};
+    jsonLang->tsLanguage = tree_sitter_json();
+    jsonLang->highlightMappings = {
+        {"pair_key", HighlightGroup::Variable},
+        {"string", HighlightGroup::String},
+        {"number", HighlightGroup::Number},
+        {"true", HighlightGroup::Constant},
+        {"false", HighlightGroup::Constant},
+        {"null", HighlightGroup::Constant},
+    };
+    RegisterLanguage(std::move(jsonLang));
+
+    // Markdown language
+    auto mdLang = std::make_unique<Language>();
+    mdLang->name = "markdown";
+    mdLang->extensions = {".md", ".markdown"};
+    mdLang->tsLanguage = tree_sitter_markdown();
+    mdLang->highlightMappings = {
+        {"atx_heading", HighlightGroup::Function},
+        {"setext_heading", HighlightGroup::Function},
+        {"fenced_code_block", HighlightGroup::String}, // Treat code blocks as "string" for now
+        {"link_text", HighlightGroup::Keyword},
+        {"link_destination", HighlightGroup::String},
+        {"list_marker_plus", HighlightGroup::Operator},
+        {"list_marker_minus", HighlightGroup::Operator},
+        {"list_marker_star", HighlightGroup::Operator},
+        {"list_marker_dot", HighlightGroup::Operator},
+        {"emphasis", HighlightGroup::Type},
+        {"strong_emphasis", HighlightGroup::Type},
+    };
+    RegisterLanguage(std::move(mdLang));
+
+    // TypeScript language
+    auto tsLang = std::make_unique<Language>();
+    tsLang->name = "typescript";
+    tsLang->extensions = {".ts", ".tsx"};
+    tsLang->tsLanguage = tree_sitter_typescript();
+    tsLang->highlightMappings = {
+        {"identifier", HighlightGroup::Variable},
+        {"property_identifier", HighlightGroup::Variable},
+        {"shorthand_property_identifier", HighlightGroup::Variable},
+        {"type_identifier", HighlightGroup::Type},
+        {"predefined_type", HighlightGroup::Type},
+        {"function_declaration", HighlightGroup::Function},
+        {"function", HighlightGroup::Function},
+        {"call_expression", HighlightGroup::Function},
+        {"string", HighlightGroup::String},
+        {"template_string", HighlightGroup::String},
+        {"number", HighlightGroup::Number},
+        {"comment", HighlightGroup::Comment},
+        {"true", HighlightGroup::Constant},
+        {"false", HighlightGroup::Constant},
+        {"null", HighlightGroup::Constant},
+        {"undefined", HighlightGroup::Constant},
+    };
+    RegisterLanguage(std::move(tsLang));
 }
 
 } // namespace sol
