@@ -118,7 +118,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     }
     
     // Render current line highlight
-    if (m_IsFocused && !m_HasSelection) {
+    if ((m_IsFocused || m_ShowCompletion) && !m_HasSelection) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
             float y = textPos.y + (cursorLine - firstVisibleLine) * lineHeight;
@@ -137,7 +137,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     RenderDiagnostics(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
 
     // Render cursor (only if cursor line is visible)
-    if (m_IsFocused && !m_ReadOnly) {
+    if ((m_IsFocused || m_ShowCompletion) && !m_ReadOnly) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
             RenderCursor(buffer, textPos, lineHeight, firstVisibleLine);
@@ -197,7 +197,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     }
     
     // Handle keyboard input (Navigation and State Control)
-    if (m_IsFocused) {
+    if (m_IsFocused || m_ShowCompletion) {
         bool inputHandled = HandleInput(buffer);
         
         // Update cursor position for status bar
@@ -366,7 +366,8 @@ void SyntaxEditor::RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, floa
         float y = pos.y + (i - firstLine) * lineHeight;
         
         // Highlight current line number
-        ImU32 color = (i == cursorLine && m_IsFocused) ? m_Theme.text : m_Theme.lineNumber;
+        bool isFocused = (m_IsFocused || m_ShowCompletion);
+        ImU32 color = (i == cursorLine && isFocused) ? m_Theme.text : m_Theme.lineNumber;
         
         char lineNumStr[16];
         snprintf(lineNumStr, sizeof(lineNumStr), "%zu", i + 1);
@@ -613,6 +614,7 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
     if (m_ShowCompletion) {
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             m_ShowCompletion = false;
+            ImGui::SetWindowFocus(); // Restore focus to buffer window
             return true;
         }
         if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
@@ -643,6 +645,7 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
                 buffer.Insert(m_CursorPos, item.insertText);
                 m_CursorPos += item.insertText.length();
                 m_ShowCompletion = false;
+                ImGui::SetWindowFocus(); // Restore focus to buffer window
             }
             return true;
         }
