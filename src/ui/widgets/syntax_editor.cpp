@@ -67,7 +67,26 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         buffer.Parse();
     }
     
-    ImVec2 cursorPos = ImGui::GetCursorScreenPos();
+    // Calculate max line width for horizontal scrollbar
+    float maxLineWidth = 0.0f;
+    for (size_t i = firstVisibleLine; i < lastVisibleLine; ++i) {
+        maxLineWidth = std::max(maxLineWidth, buffer.Line(i).length() * m_CharWidth);
+    }
+    
+    // Set total content size for scrolling
+    float totalHeight = lineCount * lineHeight;
+    ImGui::Dummy(ImVec2(maxLineWidth + lineNumberWidth, totalHeight));
+    
+    // Get window position for drawing (not affected by scroll, we handle scroll ourselves)
+    ImVec2 windowPos = ImGui::GetWindowPos();
+    ImVec2 windowPadding = ImGui::GetStyle().WindowPadding;
+    
+    // Calculate the offset within the first visible line due to partial scroll
+    float scrollOffset = m_ScrollY - (firstVisibleLine * lineHeight);
+    
+    // Base position for drawing: window position + padding - partial line offset
+    ImVec2 cursorPos = ImVec2(windowPos.x + windowPadding.x - m_ScrollX, 
+                               windowPos.y + windowPadding.y - scrollOffset);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
     // Render line numbers
@@ -109,7 +128,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     // Helper lambda to convert mouse position to buffer position
     auto mouseToBufPos = [&](ImVec2 pos) -> size_t {
-        float relX = pos.x - textPos.x + m_ScrollX;
+        float relX = pos.x - textPos.x;
         float relY = pos.y - textPos.y;
         
         size_t clickedLine = firstVisibleLine + static_cast<size_t>(std::max(0.0f, relY) / lineHeight);
@@ -175,14 +194,6 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         settings.SetCursorPos(line + 1, col + 1);  // 1-based for display
     }
     
-    // Set content size for scrolling
-    float totalHeight = lineCount * lineHeight;
-    float maxLineWidth = 0.0f;
-    for (size_t i = firstVisibleLine; i < lastVisibleLine; ++i) {
-        maxLineWidth = std::max(maxLineWidth, buffer.Line(i).length() * m_CharWidth);
-    }
-    ImGui::Dummy(ImVec2(maxLineWidth + lineNumberWidth, totalHeight));
-    
     ImGui::EndChild();
     ImGui::PopStyleColor();
     
@@ -240,7 +251,7 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
     for (size_t lineIdx = firstLine; lineIdx < lastLine; ++lineIdx) {
         std::string lineText = buffer.Line(lineIdx);
         float y = pos.y + (lineIdx - firstLine) * lineHeight;
-        float x = pos.x - m_ScrollX;
+        float x = pos.x;
         
         size_t lineStart = buffer.LineStart(lineIdx);
         size_t lineEnd = lineStart + lineText.length();
@@ -302,7 +313,7 @@ void SyntaxEditor::RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float
     auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
     
     // Calculate cursor screen position
-    float x = textPos.x + cursorCol * m_CharWidth - m_ScrollX;
+    float x = textPos.x + cursorCol * m_CharWidth;
     float y = textPos.y + (cursorLine - firstLine) * lineHeight;
     
     // Get line height without spacing for cursor
@@ -337,8 +348,8 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
         size_t colStart = (line == startLine) ? startCol : 0;
         size_t colEnd = (line == endLine) ? endCol : lineText.length();
         
-        float xStart = textPos.x + colStart * m_CharWidth - m_ScrollX;
-        float xEnd = textPos.x + colEnd * m_CharWidth - m_ScrollX;
+        float xStart = textPos.x + colStart * m_CharWidth;
+        float xEnd = textPos.x + colEnd * m_CharWidth;
         
         drawList->AddRectFilled(
             ImVec2(xStart, y),
