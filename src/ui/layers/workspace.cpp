@@ -8,7 +8,7 @@
 namespace sol {
 
 Workspace::Workspace(const Id& id)
-    : UILayer(id), m_DockspaceID(0), m_PendingFloatBuffer(std::nullopt), m_Editor(std::make_unique<SyntaxEditor>()) {
+    : UILayer(id), m_DockspaceID(0), m_PendingFloatBuffer(std::nullopt) {
 }
 
 void Workspace::OnUI() {
@@ -128,7 +128,7 @@ void Workspace::RenderBufferContent() {
             TextBuffer& buffer = textResource->GetBuffer();
             
             ImVec2 available = ImGui::GetContentRegionAvail();
-            if (m_Editor->Render("##editor_content", buffer, available)) {
+            if (GetOrCreateEditor(activeBuffer->GetId())->Render("##editor_content", buffer, available)) {
                 textResource->SetModified(true);
             }
         }
@@ -176,7 +176,7 @@ void Workspace::RenderFloatingBuffers() {
                     TextBuffer& textBuf = textResource->GetBuffer();
                     
                     ImVec2 available = ImGui::GetContentRegionAvail();
-                    if (m_Editor->Render("##float_editor", textBuf, available)) {
+                    if (GetOrCreateEditor(bufferId)->Render("##float_editor", textBuf, available)) {
                         textResource->SetModified(true);
                     }
                 }
@@ -201,6 +201,7 @@ void Workspace::ProcessPendingActions() {
     // Process pending closes first
     for (auto bufferId : m_PendingCloseBuffers) {
         m_FloatingBufferIds.erase(bufferId);
+        m_Editors.erase(bufferId);
         rs.CloseBuffer(bufferId);
     }
     m_PendingCloseBuffers.clear();
@@ -226,6 +227,14 @@ void Workspace::ProcessPendingActions() {
             }
         }
     }
+}
+
+SyntaxEditor* Workspace::GetOrCreateEditor(size_t bufferId) {
+    auto it = m_Editors.find(bufferId);
+    if (it == m_Editors.end()) {
+        it = m_Editors.emplace(bufferId, std::make_unique<SyntaxEditor>()).first;
+    }
+    return it->second.get();
 }
 
 } // namespace sol

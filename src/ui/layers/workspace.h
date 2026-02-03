@@ -3,6 +3,7 @@
 #include "ui/ui_system.h"
 #include "ui/widgets/syntax_editor.h"
 #include <set>
+#include <map>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -27,7 +28,9 @@ private:
     std::set<size_t> m_FloatingBufferIds;
     std::optional<size_t> m_PendingFloatBuffer;
     std::vector<size_t> m_PendingCloseBuffers;
-    std::unique_ptr<SyntaxEditor> m_Editor;
+    std::map<size_t, std::unique_ptr<SyntaxEditor>> m_Editors;
+
+    SyntaxEditor* GetOrCreateEditor(size_t bufferId);
 };
 
 } // namespace sol

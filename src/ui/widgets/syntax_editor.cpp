@@ -417,6 +417,10 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
     
     auto [startLine, startCol] = buffer.PosToLineCol(selStart);
     auto [endLine, endCol] = buffer.PosToLineCol(selEnd);
+
+    // Use text height instead of line height (which includes spacing)
+    // to avoid selection looking "larger" than the text line
+    float textHeight = ImGui::GetTextLineHeight();
     
     for (size_t line = startLine; line <= endLine && line < lastLine; ++line) {
         if (line < firstLine) continue;
@@ -432,7 +436,7 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
         
         drawList->AddRectFilled(
             ImVec2(xStart, y),
-            ImVec2(xEnd, y + lineHeight),
+            ImVec2(xEnd, y + textHeight),
             m_Theme.selection
         );
     }
