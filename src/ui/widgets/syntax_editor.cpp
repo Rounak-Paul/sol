@@ -1,12 +1,24 @@
 #include "syntax_editor.h"
 #include "ui/editor_settings.h"
+#include "core/lsp/lsp_manager.h"
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 
 namespace sol {
 
 SyntaxEditor::SyntaxEditor() {
+    // Register global handler if we are the first editor? 
+    // Ideally this is done by Workspace.
+}
+
+void SyntaxEditor::UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
+    m_Diagnostics.clear();
+    for (const auto& diag : diagnostics) {
+        // Group by line for easier rendering
+        m_Diagnostics[diag.range.start.line].push_back(diag);
+    }
 }
 
 float SyntaxEditor::GetCharWidth() const {
@@ -44,8 +56,14 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     // Begin child region for scrolling
     ImGui::PushStyleColor(ImGuiCol_ChildBg, m_Theme.background);
-    ImGui::BeginChild(id, contentSize, false, 
-        ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove);
+    
+    ImGuiWindowFlags childFlags = ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove;
+    if (m_ShowCompletion) {
+        // Prevent buffer scrolling when navigating completion list
+        childFlags |= ImGuiWindowFlags_NoNavInputs; 
+    }
+
+    ImGui::BeginChild(id, contentSize, false, childFlags);
     
     m_IsFocused = ImGui::IsWindowFocused();
     
@@ -115,6 +133,9 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Render syntax-highlighted text
     RenderText(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
     
+    // Render diagnostics (squiggles)
+    RenderDiagnostics(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
+
     // Render cursor (only if cursor line is visible)
     if (m_IsFocused && !m_ReadOnly) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
@@ -175,22 +196,165 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         m_IsDragging = false;
     }
     
-    // Handle keyboard input
+    // Handle keyboard input (Navigation and State Control)
     if (m_IsFocused) {
-        HandleInput(buffer);
+        bool inputHandled = HandleInput(buffer);
         
         // Update cursor position for status bar
         auto& settings = EditorSettings::Get();
         auto [line, col] = buffer.PosToLineCol(m_CursorPos);
         settings.SetCursorPos(line + 1, col + 1);  // 1-based for display
+
+        // Process Text Input (Typing)
+        if (!inputHandled) {
+             HandleTextInput(buffer);
+        }
     }
     
+    // Calculate completion position before ending child (to get correct screen coords)
+    // Always calculate this because m_ShowCompletion might have changed during HandleTextInput
+    ImVec2 completionPos;
+    {
+        auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
+        size_t firstVisibleLine = static_cast<size_t>(m_ScrollY / lineHeight);
+        
+        completionPos.x = textPos.x + cursorCol * m_CharWidth;
+        completionPos.y = textPos.y + (cursorLine - firstVisibleLine + 1) * lineHeight;
+    }
+
     ImGui::EndChild();
     ImGui::PopStyleColor();
+
+    // Render completion (needs to be last/on top and outside child to avoid clipping)
+    if (m_ShowCompletion) {
+        RenderCompletion(buffer, completionPos);
+    }
     
     return buffer.IsModified();
 }
 
+void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
+     ImGuiIO& io = ImGui::GetIO();
+     if (m_ReadOnly) return;
+     if (io.InputQueueCharacters.Size == 0) return;
+     
+     // Build editor state for input mode
+    EditorState state;
+    state.buffer = &buffer;
+    state.undoTree = &m_UndoTree;
+    state.cursorPos = m_CursorPos;
+    state.selectionStart = m_SelectionStart;
+    state.selectionEnd = m_SelectionEnd;
+    state.hasSelection = m_HasSelection;
+
+    InputResult textResult = m_InputManager.HandleTextInput(
+        state, 
+        io.InputQueueCharacters.Data, 
+        io.InputQueueCharacters.Size
+    );
+    
+    if (textResult.handled) {
+        if (textResult.cursorMoved || textResult.textChanged) {
+            if (textResult.newCursorPos) {
+                m_CursorPos = *textResult.newCursorPos;
+            }
+            m_CursorBlinkTimer = 0.0f;
+        }
+        if (textResult.textChanged) {
+             buffer.MarkModified();
+
+            // Auto-trigger and Update Completion
+            // We run this even if completion is already shown to update/filter the list
+            if (m_CursorPos > 0) {
+                char c = buffer.At(m_CursorPos - 1);
+                bool isTriggerChar = (c == '.' || c == '>' || c == ':' || c == '/');
+                bool isWordChar = std::isalnum(c) || c == '_';
+                
+                // If the list is open but the user typed a space or something that breaks the word, close it
+                if (m_ShowCompletion && !isWordChar && !isTriggerChar) {
+                    m_ShowCompletion = false;
+                }
+                else if (isTriggerChar || isWordChar) {
+                    auto [line, col] = buffer.PosToLineCol(m_CursorPos);
+                    const auto* langPtr = buffer.GetLanguage();
+                    std::string lang = langPtr ? langPtr->name : "";
+                    
+                    bool hasServerConfig = LSPManager::GetInstance().HasServerFor(lang);
+                    bool isClientActive = LSPManager::GetInstance().IsClientActive(lang);
+                    
+                    // Calculate word start
+                    size_t start = m_CursorPos;
+                    while (start > 0) {
+                        char p = buffer.At(start - 1);
+                        if (!std::isalnum(p) && p != '_') break;
+                        start--;
+                    }
+
+                    if (isClientActive && hasServerConfig) {
+                        // LSP Mode
+                        if (isTriggerChar || (isWordChar && m_CursorPos - start >= 1)) {
+                            // If completion already shown, we might just be typing more letters.
+                            // Ideally we filter client-side if we have a list, but sending update is also fine for now.
+                            // For LSP, debouncing is handled by client or we accept traffic.
+                             LSPManager::GetInstance().RequestCompletion(
+                                buffer.GetFilePath().string(), 
+                                lang, 
+                                line, col, 
+                                [this](const std::vector<LSPCompletionItem>& items) {
+                                    if (!items.empty()) {
+                                        m_CompletionItems = items;
+                                        m_ShowCompletion = true;
+                                        // Don't reset selection index if we are just updating, 
+                                        // but the list content changed, so we probably should.
+                                        m_SelectedCompletionIndex = 0;
+                                    } else {
+                                        // If server returns nothing (e.g. no match), close popup
+                                        m_ShowCompletion = false;
+                                    }
+                                }
+                            );
+                        }
+                    } else if (isWordChar) {
+                        // Fallback Mode (Buffer scan / Tree-sitter)
+                        if (m_CursorPos - start >= 1) {
+                            std::string prefix = buffer.Substring(start, m_CursorPos - start);
+                            std::vector<std::string> words = buffer.GetWordCompletions(prefix);
+                            
+                            // Also add language keywords if available
+                            if (langPtr) {
+                                for(const auto& mapping : langPtr->highlightMappings) {
+                                    if (mapping.second == HighlightGroup::Keyword || mapping.second == HighlightGroup::Type) {
+                                        if (mapping.first.length() > prefix.length() && 
+                                            mapping.first.substr(0, prefix.length()) == prefix) {
+                                            words.push_back(mapping.first);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!words.empty()) {
+                                m_CompletionItems.clear();
+                                for(const auto& w : words) {
+                                    LSPCompletionItem item;
+                                    item.label = w;
+                                    item.kind = 1; // Text
+                                    item.insertText = w;
+                                    item.detail = "Buffer/Keyword";
+                                    m_CompletionItems.push_back(item);
+                                }
+                                m_ShowCompletion = true;
+                                m_SelectedCompletionIndex = 0;
+                            } else {
+                                // No matching words found locally
+                                m_ShowCompletion = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 void SyntaxEditor::RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, float lineHeight, 
                                       size_t firstLine, size_t lastLine) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -442,10 +606,98 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
     }
 }
 
-void SyntaxEditor::HandleInput(TextBuffer& buffer) {
-    if (m_ReadOnly) return;
-    
+bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
     ImGuiIO& io = ImGui::GetIO();
+
+    // Completion navigation
+    if (m_ShowCompletion) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_ShowCompletion = false;
+            return true;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) {
+            m_SelectedCompletionIndex = (m_SelectedCompletionIndex + 1) % m_CompletionItems.size();
+            return true;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) {
+            m_SelectedCompletionIndex = (m_SelectedCompletionIndex - 1 + m_CompletionItems.size()) % m_CompletionItems.size();
+            return true;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            if (m_SelectedCompletionIndex >= 0 && m_SelectedCompletionIndex < m_CompletionItems.size()) {
+                const auto& item = m_CompletionItems[m_SelectedCompletionIndex];
+                
+                // Find existing word prefix to replace (simple heuristic)
+                size_t start = m_CursorPos;
+                while (start > 0) {
+                    char c = buffer.At(start - 1);
+                    if (!std::isalnum(c) && c != '_') break;
+                    start--;
+                }
+                
+                if (start < m_CursorPos) {
+                    buffer.Delete(start, m_CursorPos - start);
+                    m_CursorPos = start;
+                }
+                
+                buffer.Insert(m_CursorPos, item.insertText);
+                m_CursorPos += item.insertText.length();
+                m_ShowCompletion = false;
+            }
+            return true;
+        }
+    } else {
+        // Trigger completion manually
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+            auto [line, col] = buffer.PosToLineCol(m_CursorPos);
+            std::string lang = buffer.GetLanguage() ? buffer.GetLanguage()->name : "";
+            
+            bool hasLSP = LSPManager::GetInstance().HasServerFor(lang);
+            
+            if (hasLSP) {
+                LSPManager::GetInstance().RequestCompletion(
+                    buffer.GetFilePath().string(), 
+                    lang, 
+                    line, col, 
+                    [this](const std::vector<LSPCompletionItem>& items) {
+                        if (!items.empty()) {
+                            m_CompletionItems = items;
+                            m_ShowCompletion = true;
+                            m_SelectedCompletionIndex = 0;
+                        }
+                    }
+                );
+            } else {
+                // Built-in fallback
+                // Find current word prefix
+                size_t start = m_CursorPos;
+                while (start > 0) {
+                    char c = buffer.At(start - 1);
+                    if (!std::isalnum(c) && c != '_') break;
+                    start--;
+                }
+                std::string prefix = buffer.Substring(start, m_CursorPos - start);
+                
+                std::vector<std::string> words = buffer.GetWordCompletions(prefix);
+                
+                if (!words.empty()) {
+                    m_CompletionItems.clear();
+                    for(const auto& w : words) {
+                         LSPCompletionItem item;
+                         item.label = w;
+                         item.kind = 1; // Text
+                         item.insertText = w;
+                         item.detail = "Buffer";
+                         m_CompletionItems.push_back(item);
+                    }
+                    m_ShowCompletion = true;
+                    m_SelectedCompletionIndex = 0;
+                }
+            }
+        }
+    }
+
+    if (m_ReadOnly) return false;
     
     // Build editor state for input mode
     EditorState state;
@@ -479,29 +731,140 @@ void SyntaxEditor::HandleInput(TextBuffer& buffer) {
     }
     
     // Handle text input through input manager
-    if (io.InputQueueCharacters.Size > 0) {
-        InputResult textResult = m_InputManager.HandleTextInput(
-            state, 
-            io.InputQueueCharacters.Data, 
-            io.InputQueueCharacters.Size
-        );
-        
-        if (textResult.handled) {
-            if (textResult.cursorMoved || textResult.textChanged) {
-                if (textResult.newCursorPos) {
-                    m_CursorPos = *textResult.newCursorPos;
-                }
-                m_CursorBlinkTimer = 0.0f;
-            }
-            if (textResult.textChanged) {
-                modified = true;
-            }
-        }
-    }
+    // REMOVED DUPLICATE HANDLING - Logic moved to HandleTextInput
+    // if (io.InputQueueCharacters.Size > 0) { ... }
     
     if (modified) {
         buffer.MarkModified();
     }
+    return result.handled;
+}
+
+
+void SyntaxEditor::RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Simple squiggly line rendering
+    // A real implementation would use a sine wave or texture
+    
+    for (size_t line = firstLine; line < lastLine; ++line) {
+        // Since diagnostics are mapped by 0-based line index in syntax_editor
+        if (m_Diagnostics.count(line) == 0) continue;
+        
+        float y = textPos.y + (line - firstLine) * lineHeight + lineHeight; // Bottom of line
+        
+        for (const auto& diag : m_Diagnostics[line]) {
+            // Calculate X start/end
+            size_t startCol = diag.range.start.character;
+            size_t endCol = diag.range.end.character;
+            
+            float x1 = textPos.x + startCol * m_CharWidth;
+            float x2 = textPos.x + endCol * m_CharWidth;
+            
+            ImU32 color = m_Theme.error; // Default error
+            if (diag.severity == 2) color = IM_COL32(255, 180, 0, 255); // Warning
+            else if (diag.severity > 2) color = IM_COL32(0, 200, 255, 255); // Info/Hint
+            
+            // Draw zigzag
+            float x = x1;
+            float zigLen = 3.0f;
+            bool up = true;
+            while (x < x2) {
+                float nextX = std::min(x + zigLen, x2);
+                float yOffset = up ? -2.0f : 0.0f;
+                drawList->AddLine(ImVec2(x, y + (up ? 0 : -2)), ImVec2(nextX, y + (up ? -2 : 0)), color, 1.0f);
+                x = nextX;
+                up = !up;
+            }
+        }
+    }
+}
+
+void SyntaxEditor::RenderCompletion(TextBuffer& buffer, const ImVec2& popupPos) {
+    if (m_CompletionItems.empty()) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+    
+    // Calculate smart size and position
+    float width = 300.0f;
+    float padding = ImGui::GetStyle().WindowPadding.y * 2;
+    // Estimate content height based on items (approximate)
+    float contentHeight = m_CompletionItems.size() * lineHeight; 
+    float maxHeight = 200.0f;
+    float height = std::min(contentHeight + padding, maxHeight);
+    
+    ImVec2 pos = popupPos;
+    
+    // Horizontal Boundary Check (Keep inside right edge)
+    if (pos.x + width > io.DisplaySize.x) {
+        pos.x = std::max(0.0f, io.DisplaySize.x - width);
+    }
+    
+    // Vertical Boundary Check (Flip if it hits bottom)
+    // popupPos is the bottom-left of the cursor.
+    if (pos.y + height > io.DisplaySize.y) {
+        // Place ABOVE the cursor line
+        // We subtract the popup height AND the cursor line height (since pos is bottom of cursor)
+        pos.y -= (height + lineHeight);
+    }
+
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+    
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | 
+                             ImGuiWindowFlags_NoResize | 
+                             ImGuiWindowFlags_NoMove | 
+                             ImGuiWindowFlags_HorizontalScrollbar | 
+                             ImGuiWindowFlags_NoSavedSettings |
+                             ImGuiWindowFlags_Tooltip |
+                             ImGuiWindowFlags_NoFocusOnAppearing; 
+                             
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, m_Theme.popupBg);
+    ImGui::PushStyleColor(ImGuiCol_Border, m_Theme.popupBorder);
+    ImGui::PushStyleColor(ImGuiCol_Text, m_Theme.popupText);
+    
+    if (ImGui::Begin("##completion_popup", nullptr, flags)) {
+        for (int i = 0; i < m_CompletionItems.size(); ++i) {
+            bool selected = (i == m_SelectedCompletionIndex);
+            
+            if (selected) {
+                ImGui::PushStyleColor(ImGuiCol_Header, m_Theme.popupSelected);
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, m_Theme.popupSelected);
+            }
+            
+            // Explicitly use std::string because of weird name lookup issue
+            std::string label = m_CompletionItems[i].label; 
+            if (ImGui::Selectable(label.c_str(), selected)) {
+                // Clicked
+                m_SelectedCompletionIndex = i;
+                // Double click? Or just single click to select? 
+                // Usually click inserts.
+                // For now just select, let Enter insert.
+            }
+            
+            if (selected && m_ShowCompletion) {
+                ImGui::SetScrollHereY();
+                
+                // Show detail tooltip
+                if (!m_CompletionItems[i].detail.empty() || !m_CompletionItems[i].documentation.empty()) {
+                    ImGui::BeginTooltip();
+                    if (!m_CompletionItems[i].detail.empty())
+                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", m_CompletionItems[i].detail.c_str());
+                    if (!m_CompletionItems[i].documentation.empty())
+                        ImGui::TextWrapped("%s", m_CompletionItems[i].documentation.c_str());
+                    ImGui::EndTooltip();
+                }
+            }
+            
+            if (selected) {
+                 ImGui::PopStyleColor(2);
+            }
+        }
+    }
+    ImGui::End();
+    
+    ImGui::PopStyleColor(3);
 }
 
 } // namespace sol

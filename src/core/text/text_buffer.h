@@ -105,6 +105,9 @@ public:
     std::vector<SyntaxToken> GetSyntaxTokens(size_t startLine, size_t endLine) const;
     HighlightGroup GetHighlightAt(size_t pos) const;
     
+    // Built-in completion
+    std::vector<std::string> GetWordCompletions(const std::string& prefix, size_t cursorPos = 0) const;
+
     // For ImGui compatibility
     const char* CStr() { return m_Rope.CStr(); }
     char* Data() { return m_Rope.Data(); }

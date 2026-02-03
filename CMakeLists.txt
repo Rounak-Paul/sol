@@ -38,6 +38,8 @@ set(SRCS
     src/ui/layers/status_bar.cpp
     src/ui/layers/workspace.cpp
     src/ui/widgets/syntax_editor.cpp
+    src/core/lsp/lsp_client.cpp
+    src/core/lsp/lsp_manager.cpp
 )
 
 # Platform-specific file dialog implementation
@@ -46,7 +48,10 @@ if(APPLE)
 elseif(WIN32)
     list(APPEND SRCS src/core/platform/file_dialog_windows.cpp)
 else()
-    list(APPEND SRCS src/core/platform/file_dialog_linux.cpp)
+    list(APPEND SRCS 
+        src/core/platform/file_dialog_linux.cpp
+        src/core/platform/process_linux.cpp
+    )
 endif()
 
 add_executable(sol ${SRCS})

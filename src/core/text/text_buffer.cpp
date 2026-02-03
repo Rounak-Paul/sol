@@ -1,6 +1,10 @@
 #include "text_buffer.h"
+#include "core/lsp/lsp_manager.h"
 #include <tree_sitter/api.h>
 #include <algorithm>
+#include <set>
+#include <cctype>
+#include <cstring>
 
 // Language declarations
 extern "C" {
@@ -67,18 +71,30 @@ void TextBuffer::Insert(size_t pos, std::string_view text) {
     m_Rope.Insert(pos, text);
     m_Modified = true;
     ParseIncremental();
+    
+    if (m_Language) {
+        LSPManager::GetInstance().DidChange(m_FilePath.string(), m_Rope.ToString(), m_Language->name);
+    }
 }
 
 void TextBuffer::Delete(size_t pos, size_t len) {
     m_Rope.Delete(pos, len);
     m_Modified = true;
     ParseIncremental();
+    
+    if (m_Language) {
+        LSPManager::GetInstance().DidChange(m_FilePath.string(), m_Rope.ToString(), m_Language->name);
+    }
 }
 
 void TextBuffer::Replace(size_t pos, size_t len, std::string_view text) {
     m_Rope.Replace(pos, len, text);
     m_Modified = true;
     ParseIncremental();
+    
+    if (m_Language) {
+        LSPManager::GetInstance().DidChange(m_FilePath.string(), m_Rope.ToString(), m_Language->name);
+    }
 }
 
 void TextBuffer::SetLanguage(const Language* lang) {
@@ -622,3 +638,128 @@ void LanguageRegistry::InitializeBuiltins() {
 }
 
 } // namespace sol
+
+namespace sol {
+std::vector<std::string> TextBuffer::GetWordCompletions(const std::string& prefix, size_t cursorPos) const {
+    std::set<std::string> words;
+    
+    // 1. Try Tree-sitter completions first if available (Smarter, "Educated" fallback)
+    if (m_Tree) {
+        TSNode root = ts_tree_root_node(m_Tree);
+        TSTreeCursor cursor = ts_tree_cursor_new(root);
+        
+        bool visitChildren = true;
+        while (true) {
+            TSNode node = ts_tree_cursor_current_node(&cursor);
+            const char* type = ts_node_type(node);
+            std::string typeStr = (type ? type : "");
+            
+            // Skip comments and strings to keep completions clean
+            bool isStringOrComment = (typeStr.find("string") != std::string::npos || 
+                                     typeStr.find("comment") != std::string::npos);
+            
+            if (isStringOrComment) {
+                visitChildren = false; 
+            } else {
+                // Collect identifiers
+                if (ts_node_is_named(node)) {
+                    bool isId = false;
+                    // Heuristic: check for identifier-like node types
+                    if (typeStr.find("identifier") != std::string::npos || 
+                        typeStr.find("name") != std::string::npos || 
+                        typeStr == "word") {
+                        isId = true;
+                    }
+
+                    if (isId) {
+                        uint32_t start = ts_node_start_byte(node);
+                        uint32_t end = ts_node_end_byte(node);
+                        if (end > start) {
+                            std::string text = m_Rope.Substring(start, end - start);
+                            if (!text.empty() && (isalpha(text[0]) || text[0] == '_')) {
+                                bool match = true;
+                                if (!prefix.empty()) {
+                                    if (text.length() < prefix.length()) match = false;
+                                    else {
+                                        for(size_t i = 0; i < prefix.length(); ++i) {
+                                            if (std::tolower(text[i]) != std::tolower(prefix[i])) {
+                                                match = false;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (match && text != prefix) {
+                                    words.insert(text);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Traverse
+            if (visitChildren && ts_tree_cursor_goto_first_child(&cursor)) {
+                visitChildren = true;
+                continue;
+            }
+            
+            bool moved = false;
+            while (!moved) {
+                if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+                    visitChildren = true;
+                    moved = true;
+                } else {
+                    if (!ts_tree_cursor_goto_parent(&cursor)) {
+                        ts_tree_cursor_delete(&cursor);
+                        // If we found words, return them
+                        if (!words.empty()) {
+                            return std::vector<std::string>(words.begin(), words.end());
+                        }
+                        goto raw_fallback;
+                    }
+                }
+            }
+        }
+    }
+
+raw_fallback:
+    std::string text = m_Rope.ToString(); // Not optimal for huge files, but safe
+    const char* ptr = text.c_str();
+    const char* end = ptr + text.length();
+    
+    while (ptr < end) {
+        // Skip non-word chars
+        while (ptr < end && !(isalnum(*ptr) || *ptr == '_')) {
+            ptr++;
+        }
+        
+        if (ptr >= end) break;
+        
+        const char* start = ptr;
+        while (ptr < end && (isalnum(*ptr) || *ptr == '_')) {
+            ptr++;
+        }
+        
+        std::string word(start, ptr - start);
+        // If prefix matches (case insensitive)
+        if (word.length() > prefix.length()) {
+            bool match = true;
+            for(size_t i = 0; i < prefix.length(); ++i) {
+                if (std::tolower(word[i]) != std::tolower(prefix[i])) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) words.insert(word);
+        }
+        // If empty prefix, just all words? Maybe too many. Limit length > 3
+        else if (prefix.empty() && word.length() > 3) {
+            words.insert(word);
+        }
+    }
+    
+    return std::vector<std::string>(words.begin(), words.end());
+}
+}
+

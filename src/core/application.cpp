@@ -4,6 +4,7 @@
 #include "core/resource_system.h"
 #include "core/file_dialog.h"
 #include "core/text/text_buffer.h"
+#include "core/lsp/lsp_manager.h"
 #include "ui/layers/menu_bar.h"
 #include "ui/layers/workspace.h"
 #include "ui/layers/explorer.h"
@@ -27,6 +28,10 @@ void Application::OnStart() {
     // Initialize language registry for syntax highlighting
     LanguageRegistry::GetInstance().InitializeBuiltins();
     Logger::Info("Language registry initialized");
+    
+    // Initialize LSP
+    LSPManager::GetInstance().Initialize(std::filesystem::current_path().string());
+    Logger::Info("LSP Manager initialized");
     
     SetupEvents();
     SetupUILayers();
@@ -96,6 +101,7 @@ void Application::SetupEvents() {
         auto path = FileDialog::OpenFolder("Open Folder");
         if (path) {
             ResourceSystem::GetInstance().SetWorkingDirectory(*path);
+            LSPManager::GetInstance().Initialize(path->string());
             Logger::Info("Opened folder: " + path->string());
             
             // Refresh explorer

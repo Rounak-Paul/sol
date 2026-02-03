@@ -3,11 +3,13 @@
 #include "core/text/text_buffer.h"
 #include "core/text/undo_tree.h"
 #include "ui/input/input_manager.h"
+#include "core/lsp/lsp_types.h"
 #include <imgui.h>
 #include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <map>
 
 namespace sol {
 
@@ -28,6 +30,11 @@ struct SyntaxTheme {
     ImU32 constant = IM_COL32(100, 150, 220, 255);    // Blue
     ImU32 error = IM_COL32(244, 71, 71, 255);         // Red
     ImU32 lineNumber = IM_COL32(100, 100, 100, 255);  // Gray
+    
+    ImU32 popupBg = 0xFF252526;
+    ImU32 popupBorder = 0xFF454545;
+    ImU32 popupText = 0xFFCCCCCC;
+    ImU32 popupSelected = 0xFF094771;
     ImU32 currentLine = IM_COL32(40, 40, 40, 255);    // Slightly lighter
     ImU32 selection = IM_COL32(38, 79, 120, 255);     // Selection blue
     ImU32 cursor = IM_COL32(255, 255, 255, 255);      // White cursor
@@ -76,7 +83,12 @@ public:
     void SetCursorPos(size_t pos) { m_CursorPos = pos; }
     
 private:
-    void HandleInput(TextBuffer& buffer);
+    bool HandleInput(TextBuffer& buffer);
+    void HandleTextInput(TextBuffer& buffer);
+    void RenderCompletion(TextBuffer& buffer, const ImVec2& popupPos);
+    void RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine);
+    void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
+
     void RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderText(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderSpan(ImDrawList* drawList, std::string_view lineText, size_t start, size_t end, float& x, float y, ImU32 color);
@@ -111,6 +123,15 @@ private:
     bool m_IsFocused = false;
     float m_CharWidth = 0.0f;
     
+    // Completion state
+    bool m_ShowCompletion = false;
+    std::vector<LSPCompletionItem> m_CompletionItems;
+    int m_SelectedCompletionIndex = 0;
+    
+    // Diagnostics state
+    std::string m_LastDiagnosticsPath;
+    std::map<size_t, std::vector<LSPDiagnostic>> m_Diagnostics;
+
     // Blink timer for cursor
     float m_CursorBlinkTimer = 0.0f;
     static constexpr float CURSOR_BLINK_RATE = 0.5f;

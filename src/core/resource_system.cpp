@@ -1,5 +1,6 @@
 #include "resource_system.h"
 #include "logger.h"
+#include "core/lsp/lsp_manager.h"
 #include <fstream>
 #include <sstream>
 #include <imgui.h>
@@ -48,6 +49,7 @@ bool TextResource::Load() {
     auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(m_Path);
     if (lang) {
         m_Buffer.SetLanguage(lang);
+        LSPManager::GetInstance().DidOpen(m_Path.string(), m_Buffer.ToString(), lang->name);
     }
     
     m_Modified = false;
