@@ -13,3 +13,24 @@
 [submodule "src/vendors/tree-sitter-python"]
 	path = src/vendors/tree-sitter-python
 	url = https://github.com/Rounak-Paul/tree-sitter-python.git
+[submodule "src/vendors/tree-sitter-cmake"]
+	path = src/vendors/tree-sitter-cmake
+	url = https://github.com/Rounak-Paul/tree-sitter-cmake.git
+[submodule "src/vendors/tree-sitter-json"]
+	path = src/vendors/tree-sitter-json
+	url = https://github.com/Rounak-Paul/tree-sitter-json.git
+[submodule "src/vendors/tree-sitter-javascript"]
+	path = src/vendors/tree-sitter-javascript
+	url = https://github.com/Rounak-Paul/tree-sitter-javascript.git
+[submodule "src/vendors/tree-sitter-typescript"]
+	path = src/vendors/tree-sitter-typescript
+	url = https://github.com/Rounak-Paul/tree-sitter-typescript.git
+[submodule "src/vendors/tree-sitter-html"]
+	path = src/vendors/tree-sitter-html
+	url = https://github.com/Rounak-Paul/tree-sitter-html.git
+[submodule "src/vendors/tree-sitter-css"]
+	path = src/vendors/tree-sitter-css
+	url = https://github.com/Rounak-Paul/tree-sitter-css.git
+[submodule "src/vendors/tree-sitter-markdown"]
+	path = src/vendors/tree-sitter-markdown
+	url = https://github.com/Rounak-Paul/tree-sitter-markdown.git
