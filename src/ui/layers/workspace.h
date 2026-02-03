@@ -17,6 +17,9 @@ public:
     ~Workspace() override = default;
 
     void OnUI() override;
+    
+    // Updates diagnostic markers (LSP errors/warnings) for a specific file
+    void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
 
 private:
     void RenderTabBar();

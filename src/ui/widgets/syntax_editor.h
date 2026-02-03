@@ -81,13 +81,14 @@ public:
     // State
     size_t GetCursorPos() const { return m_CursorPos; }
     void SetCursorPos(size_t pos) { m_CursorPos = pos; }
+
+    void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
     
 private:
     bool HandleInput(TextBuffer& buffer);
     void HandleTextInput(TextBuffer& buffer);
     void RenderCompletion(TextBuffer& buffer, const ImVec2& popupPos);
     void RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine);
-    void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
 
     void RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderText(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);

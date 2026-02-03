@@ -6,6 +6,7 @@
 #include <functional>
 #include <mutex>
 #include <unordered_map>
+#include <map>
 #include <string>
 #include <thread>
 #include <atomic>
@@ -51,6 +52,9 @@ private:
     DiagnosticsCallback m_DiagnosticsCallback;
     
     std::string FilePathToURI(const std::string& path);
+    
+    // File version tracking for synchronization
+    std::map<std::string, int> m_FileVersions;
 };
 
 } // namespace sol

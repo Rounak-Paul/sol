@@ -85,9 +85,20 @@ void LSPClient::SendNotification(const std::string& method, const JsonObject& pa
 
 void LSPClient::ReadLoop() {
     std::vector<char> buffer(4096);
+    std::vector<char> errBuffer(4096);
     std::string accumulator;
     
     while (m_Running) {
+        // Log any stderr output from the server
+        size_t errBytes = m_Process->ReadErr(errBuffer.data(), errBuffer.size());
+        if (errBytes > 0) {
+            std::string errMsg(errBuffer.data(), errBytes);
+            // Don't flood logs if it's just info/progress, but for now helpful
+            if (!errMsg.empty()) {
+                Logger::Info("LSP [" + std::string(m_Process->GetExitCode() == 0 ? "Running" : "Dead") + "] Stderr: " + errMsg);
+            }
+        }
+
         size_t bytesRead = m_Process->Read(buffer.data(), buffer.size());
         if (bytesRead > 0) {
             accumulator.append(buffer.data(), bytesRead);
@@ -169,7 +180,14 @@ void LSPClient::DidOpen(const std::string& filePath, const std::string& content,
     JsonObject textDocument;
     textDocument["uri"] = FilePathToURI(filePath);
     textDocument["languageId"] = languageId;
-    textDocument["version"] = 1;
+    
+    int version = 1;
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_FileVersions[filePath] = version;
+    }
+    
+    textDocument["version"] = version;
     textDocument["text"] = content;
     params["textDocument"] = textDocument;
     
@@ -180,7 +198,14 @@ void LSPClient::DidChange(const std::string& filePath, const std::string& conten
     JsonObject params;
     JsonObject textDocument;
     textDocument["uri"] = FilePathToURI(filePath);
-    textDocument["version"] = 2; // Should increment
+    
+    int version = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        version = ++m_FileVersions[filePath];
+    }
+    
+    textDocument["version"] = version; 
     params["textDocument"] = textDocument;
     
     JsonArray contentChanges;
@@ -201,6 +226,11 @@ void LSPClient::DidClose(const std::string& filePath) {
     JsonObject textDocument;
     textDocument["uri"] = FilePathToURI(filePath);
     params["textDocument"] = textDocument;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_FileVersions.erase(filePath);
+    }
     
     SendNotification("textDocument/didClose", params);
 }

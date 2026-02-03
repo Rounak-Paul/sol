@@ -153,6 +153,11 @@ void Application::SetupUILayers() {
     auto workspace = std::make_shared<Workspace>();
     m_UISystem.RegisterLayer(workspace);
     
+    // Connect LSP diagnostics to workspace
+    LSPManager::GetInstance().SetDiagnosticsCallback([workspace](const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
+        workspace->UpdateDiagnostics(path, diagnostics);
+    });
+    
     auto statusBar = std::make_shared<StatusBar>();
     m_UISystem.RegisterLayer(statusBar);
 }

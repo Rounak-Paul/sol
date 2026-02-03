@@ -44,6 +44,34 @@ void Workspace::OnUI() {
     RenderFloatingBuffers();
 }
 
+void Workspace::UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
+    auto& rs = ResourceSystem::GetInstance();
+    // Simple path comparison - in a real app canonicalization/normalization is key
+    std::filesystem::path targetPath(path);
+    
+    for (const auto& buffer : rs.GetBuffers()) {
+        std::filesystem::path bufPath = buffer->GetResource()->GetPath();
+        
+        bool match = false;
+        try {
+            if (std::filesystem::exists(bufPath) && std::filesystem::exists(targetPath)) {
+                match = std::filesystem::equivalent(bufPath, targetPath);
+            } else {
+                match = (bufPath == targetPath);
+            }
+        } catch (...) {
+            match = (bufPath.string() == targetPath.string());
+        }
+
+        if (match) {
+            if (auto* editor = GetOrCreateEditor(buffer->GetId())) {
+                editor->UpdateDiagnostics(path, diagnostics);
+            }
+            break;
+        }
+    }
+}
+
 void Workspace::RenderTabBar() {
     auto& rs = ResourceSystem::GetInstance();
     const auto& buffers = rs.GetBuffers();

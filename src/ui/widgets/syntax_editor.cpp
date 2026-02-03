@@ -280,7 +280,7 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
                     std::string lang = langPtr ? langPtr->name : "";
                     
                     bool hasServerConfig = LSPManager::GetInstance().HasServerFor(lang);
-                    bool isClientActive = LSPManager::GetInstance().IsClientActive(lang);
+                    bool reqSent = false;
                     
                     // Calculate word start
                     size_t start = m_CursorPos;
@@ -290,37 +290,12 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
                         start--;
                     }
 
-                    if (isClientActive && hasServerConfig) {
-                        // LSP Mode
-                        if (isTriggerChar || (isWordChar && m_CursorPos - start >= 1)) {
-                            // If completion already shown, we might just be typing more letters.
-                            // Ideally we filter client-side if we have a list, but sending update is also fine for now.
-                            // For LSP, debouncing is handled by client or we accept traffic.
-                             LSPManager::GetInstance().RequestCompletion(
-                                buffer.GetFilePath().string(), 
-                                lang, 
-                                line, col, 
-                                [this](const std::vector<LSPCompletionItem>& items) {
-                                    if (!items.empty()) {
-                                        m_CompletionItems = items;
-                                        m_ShowCompletion = true;
-                                        // Don't reset selection index if we are just updating, 
-                                        // but the list content changed, so we probably should.
-                                        m_SelectedCompletionIndex = 0;
-                                    } else {
-                                        // If server returns nothing (e.g. no match), close popup
-                                        m_ShowCompletion = false;
-                                    }
-                                }
-                            );
-                        }
-                    } else if (isWordChar) {
-                        // Fallback Mode (Buffer scan / Tree-sitter)
+                    if (isWordChar) {
+                        // Optimistically show local completions FIRST
                         if (m_CursorPos - start >= 1) {
                             std::string prefix = buffer.Substring(start, m_CursorPos - start);
                             std::vector<std::string> words = buffer.GetWordCompletions(prefix);
                             
-                            // Also add language keywords if available
                             if (langPtr) {
                                 for(const auto& mapping : langPtr->highlightMappings) {
                                     if (mapping.second == HighlightGroup::Keyword || mapping.second == HighlightGroup::Type) {
@@ -339,16 +314,47 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
                                     item.label = w;
                                     item.kind = 1; // Text
                                     item.insertText = w;
-                                    item.detail = "Buffer/Keyword";
+                                    item.detail = "Buffer";
                                     m_CompletionItems.push_back(item);
                                 }
                                 m_ShowCompletion = true;
                                 m_SelectedCompletionIndex = 0;
-                            } else {
-                                // No matching words found locally
-                                m_ShowCompletion = false;
                             }
                         }
+                    }
+
+                    if (hasServerConfig) {
+                        // LSP Mode - Attempt to fetch smarter results
+                        if (isTriggerChar || (isWordChar && m_CursorPos - start >= 1)) {
+                             LSPManager::GetInstance().RequestCompletion(
+                                buffer.GetFilePath().string(), 
+                                lang, 
+                                line, col, 
+                                [this](const std::vector<LSPCompletionItem>& items) {
+                                    if (!items.empty()) {
+                                        m_CompletionItems = items;
+                                        m_ShowCompletion = true;
+                                        m_SelectedCompletionIndex = 0;
+                                    } else {
+                                        // If server explicitly returns nothing but we had local items, 
+                                        // we might want to keep local items? 
+                                        // Usually explicit empty list means "no suggestions".
+                                        // But invalid/timeout requests might result in no callback.
+                                        // So if this callback runs, let's respect it, mostly.
+                                        // But for now, if empty, we might just hide or leave it if previously populated?
+                                        // If users explicitly asked for LSP via trigger char, we should show what LSP says.
+                                        if (m_CompletionItems.empty()) {
+                                             m_ShowCompletion = false;
+                                        }
+                                    }
+                                }
+                            );
+                        }
+                    } 
+                    
+                    // Cleanup if nothing found at all
+                    if (m_ShowCompletion && m_CompletionItems.empty()) {
+                        m_ShowCompletion = false;
                     }
                 }
             }
@@ -657,8 +663,10 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
             
             bool hasLSP = LSPManager::GetInstance().HasServerFor(lang);
             
+            bool reqSent = false;
+            
             if (hasLSP) {
-                LSPManager::GetInstance().RequestCompletion(
+                reqSent = LSPManager::GetInstance().RequestCompletion(
                     buffer.GetFilePath().string(), 
                     lang, 
                     line, col, 
@@ -670,7 +678,9 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
                         }
                     }
                 );
-            } else {
+            }
+            
+            if (!reqSent) {
                 // Built-in fallback
                 // Find current word prefix
                 size_t start = m_CursorPos;
@@ -746,6 +756,8 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
 
 void SyntaxEditor::RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImVec2 mousePos = ImGui::GetMousePos();
+    bool tooltipShown = false;
     
     // Simple squiggly line rendering
     // A real implementation would use a sine wave or texture
@@ -779,7 +791,46 @@ void SyntaxEditor::RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, 
                 x = nextX;
                 up = !up;
             }
+
+            // Hover check
+            if (ImGui::IsWindowHovered() && 
+                mousePos.x >= x1 && mousePos.x <= x2 &&
+                mousePos.y >= y - lineHeight && mousePos.y <= y) {
+                
+                if (!tooltipShown) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+                    tooltipShown = true;
+                } else {
+                    ImGui::Separator();
+                }
+
+                ImVec4 titleColor = ImVec4(1, 1, 1, 1);
+                const char* title = "Diagnostic";
+                
+                if (diag.severity == 1) {
+                    title = "Error";
+                    titleColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                } else if (diag.severity == 2) {
+                    title = "Warning";
+                    titleColor = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+                } else if (diag.severity == 3) {
+                    title = "Info";
+                    titleColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+                } else {
+                    title = "Hint";
+                    titleColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+                }
+                
+                ImGui::TextColored(titleColor, "%s", title);
+                ImGui::TextWrapped("%s", diag.message.c_str());
+            }
         }
+    }
+
+    if (tooltipShown) {
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
     }
 }
 

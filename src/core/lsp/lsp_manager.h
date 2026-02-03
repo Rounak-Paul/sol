@@ -31,7 +31,8 @@ public:
     void DidClose(const std::string& filePath, const std::string& languageId);
     
     // Features
-    void RequestCompletion(const std::string& filePath, const std::string& languageId, int line, int character, LSPClient::CompletionCallback callback);
+    // Returns true if request was sent (client active/started), false otherwise
+    bool RequestCompletion(const std::string& filePath, const std::string& languageId, int line, int character, LSPClient::CompletionCallback callback);
     
     // Setup callbacks
     // callback: (filePath, diagnostics)

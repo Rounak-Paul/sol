@@ -42,7 +42,11 @@ LSPClient* LSPManager::GetClient(const std::string& languageId) {
     // Check if client already running
     auto it = m_Clients.find(languageId);
     if (it != m_Clients.end()) {
-        return it->second.get();
+        if (it->second->IsRunning()) {
+            return it->second.get();
+        }
+        // Client died, remove it so we can try restarting
+        m_Clients.erase(it);
     }
     
     // Check if we have config
@@ -95,10 +99,12 @@ void LSPManager::DidClose(const std::string& filePath, const std::string& langua
     }
 }
 
-void LSPManager::RequestCompletion(const std::string& filePath, const std::string& languageId, int line, int character, LSPClient::CompletionCallback callback) {
+bool LSPManager::RequestCompletion(const std::string& filePath, const std::string& languageId, int line, int character, LSPClient::CompletionCallback callback) {
     if (auto* client = GetClient(languageId)) {
         client->RequestCompletion(filePath, line, character, callback);
+        return true;
     }
+    return false;
 }
 
 void LSPManager::SetDiagnosticsCallback(GlobalDiagnosticsCallback callback) {
