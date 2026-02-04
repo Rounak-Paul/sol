@@ -42,11 +42,17 @@ set(SRCS
     src/core/lsp/lsp_manager.cpp
 )
 
-# Platform-specific file dialog implementation
+# Platform-specific file dialog and process implementations
 if(APPLE)
-    list(APPEND SRCS src/core/platform/file_dialog_macos.mm)
+    list(APPEND SRCS 
+        src/core/platform/file_dialog_macos.mm
+        src/core/platform/process_macos.cpp
+    )
 elseif(WIN32)
-    list(APPEND SRCS src/core/platform/file_dialog_windows.cpp)
+    list(APPEND SRCS 
+        src/core/platform/file_dialog_windows.cpp
+        src/core/platform/process_windows.cpp
+    )
 else()
     list(APPEND SRCS 
         src/core/platform/file_dialog_linux.cpp
