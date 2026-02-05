@@ -77,8 +77,14 @@ void Workspace::RenderTabBar() {
     const auto& buffers = rs.GetBuffers();
     
     if (buffers.empty()) {
+        m_LastActiveBufferId = 0;
         return;
     }
+
+    auto activeBuffer = rs.GetActiveBuffer();
+    size_t currentActiveId = activeBuffer ? activeBuffer->GetId() : 0;
+    bool forceSelection = (currentActiveId != m_LastActiveBufferId) && (currentActiveId != 0);
+    m_LastActiveBufferId = currentActiveId;
     
     ImGuiTabBarFlags tabBarFlags = ImGuiTabBarFlags_Reorderable | 
                                     ImGuiTabBarFlags_AutoSelectNewTabs |
@@ -99,10 +105,15 @@ void Workspace::RenderTabBar() {
             label += "###buf_" + std::to_string(buffer->GetId());
             
             bool open = true;
+            ImGuiTabItemFlags flags = 0;
+            if (forceSelection && buffer->IsActive()) {
+                flags |= ImGuiTabItemFlags_SetSelected;
+            }
             
-            if (ImGui::BeginTabItem(label.c_str(), &open)) {
+            if (ImGui::BeginTabItem(label.c_str(), &open, flags)) {
                 // This tab is selected, update active buffer
-                if (!buffer->IsActive()) {
+                // Only update if we aren't forcing selection (which means external change)
+                if (!forceSelection && !buffer->IsActive()) {
                     rs.SetActiveBuffer(buffer->GetId());
                 }
                 ImGui::EndTabItem();

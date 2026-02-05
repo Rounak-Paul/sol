@@ -44,6 +44,14 @@ void LSPManager::Initialize(const std::string& projectRoot) {
     RegisterServer("cpp", "clangd", {"--background-index", "--header-insertion=never"});
     RegisterServer("python", "pylsp", {});
     RegisterServer("cmake", "cmake-language-server", {});
+    
+    // Web Technologies
+    RegisterServer("html", "vscode-html-language-server", {"--stdio"});
+    RegisterServer("css", "vscode-css-language-server", {"--stdio"});
+    RegisterServer("javascript", "typescript-language-server", {"--stdio"});
+    RegisterServer("typescript", "typescript-language-server", {"--stdio"});
+    RegisterServer("javascriptreact", "typescript-language-server", {"--stdio"});
+    RegisterServer("typescriptreact", "typescript-language-server", {"--stdio"});
     // Add more defaults...
 }
 

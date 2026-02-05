@@ -57,15 +57,50 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Begin child region for scrolling
     ImGui::PushStyleColor(ImGuiCol_ChildBg, m_Theme.background);
     
-    ImGuiWindowFlags childFlags = ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove;
-    if (m_ShowCompletion) {
-        // Prevent buffer scrolling when navigating completion list
-        childFlags |= ImGuiWindowFlags_NoNavInputs; 
-    }
-
+    // Always disable default navigation inputs to prevent auto-scrolling on arrow keys
+    // We handle scrolling manually based on cursor position
+    ImGuiWindowFlags childFlags = ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNavInputs;
+    
     ImGui::BeginChild(id, contentSize, false, childFlags);
     
     m_IsFocused = ImGui::IsWindowFocused();
+
+    // Auto-scroll to cursor if needed (only if focused)
+    if (m_IsFocused) {
+        auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
+        
+        ImVec2 region = ImGui::GetContentRegionAvail();
+
+        // Vertical scrolling
+        float cursorY = cursorLine * lineHeight;
+        float currentScrollY = ImGui::GetScrollY();
+        float displayHeight = region.y;
+        
+        if (cursorY < currentScrollY) {
+            ImGui::SetScrollY(cursorY);
+        } else if (cursorY + lineHeight > currentScrollY + displayHeight) {
+            ImGui::SetScrollY(cursorY + lineHeight - displayHeight);
+        }
+        
+        // Horizontal scrolling
+        float cursorX = cursorCol * m_CharWidth;
+        float currentScrollX = ImGui::GetScrollX();
+        // Adjust width for line numbers
+        const float actualNumberWidth = GetLineNumberWidth(lineCount);
+        float displayWidth = region.x - actualNumberWidth;
+        
+        // Horizontal scrolling logic
+        // Use symmetric margins (10% of width or min 4 chars)
+        float scrollMargin = std::max(displayWidth * 0.1f, m_CharWidth * 4.0f); 
+
+        if (cursorX < currentScrollX + scrollMargin) {
+             // Scroll to keep cursor at left margin
+            ImGui::SetScrollX(std::max(0.0f, cursorX - scrollMargin));
+        } else if (cursorX > currentScrollX + displayWidth - scrollMargin) {
+            // Scroll to keep cursor at right margin
+            ImGui::SetScrollX(cursorX - displayWidth + scrollMargin);
+        }
+    }
     
     // Handle scrolling
     m_ScrollX = ImGui::GetScrollX();

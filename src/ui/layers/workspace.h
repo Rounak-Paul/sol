@@ -32,6 +32,7 @@ private:
     std::optional<size_t> m_PendingFloatBuffer;
     std::vector<size_t> m_PendingCloseBuffers;
     std::map<size_t, std::unique_ptr<SyntaxEditor>> m_Editors;
+    size_t m_LastActiveBufferId = 0;
 
     SyntaxEditor* GetOrCreateEditor(size_t bufferId);
 };
