@@ -166,6 +166,9 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
         m_CursorPos = mouseToBufPos(mousePos);
         
+        // Close completion on mouse click navigation
+        m_ShowCompletion = false;
+        
         // Handle selection with shift
         if (ImGui::GetIO().KeyShift) {
             m_SelectionEnd = m_CursorPos;
@@ -211,15 +214,20 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         }
     }
     
-    // Calculate completion position before ending child (to get correct screen coords)
-    // Always calculate this because m_ShowCompletion might have changed during HandleTextInput
-    ImVec2 completionPos;
+    // Calculate completion position and buffer bounds before ending child
+    ImVec2 cursorScreenPos;
+    ImVec4 bufferRect; // x, y, x+w, y+h
     {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         size_t firstVisibleLine = static_cast<size_t>(m_ScrollY / lineHeight);
         
-        completionPos.x = textPos.x + cursorCol * m_CharWidth;
-        completionPos.y = textPos.y + (cursorLine - firstVisibleLine + 1) * lineHeight;
+        cursorScreenPos.x = textPos.x + cursorCol * m_CharWidth;
+        cursorScreenPos.y = textPos.y + (cursorLine - firstVisibleLine) * lineHeight;
+        
+        // Get buffer region bounds (child window bounds)
+        ImVec2 childMin = ImGui::GetWindowPos();
+        ImVec2 childSize = ImGui::GetWindowSize();
+        bufferRect = ImVec4(childMin.x, childMin.y, childMin.x + childSize.x, childMin.y + childSize.y);
     }
 
     ImGui::EndChild();
@@ -227,7 +235,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
 
     // Render completion (needs to be last/on top and outside child to avoid clipping)
     if (m_ShowCompletion) {
-        RenderCompletion(buffer, completionPos);
+        RenderCompletion(buffer, cursorScreenPos, bufferRect, lineHeight);
     }
     
     return buffer.IsModified();
@@ -732,6 +740,11 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
                 m_CursorPos = *result.newCursorPos;
             }
             m_CursorBlinkTimer = 0.0f;
+            
+            // Close completion on cursor navigation (but not from text input)
+            if (result.cursorMoved && !result.textChanged && m_ShowCompletion) {
+                m_ShowCompletion = false;
+            }
         }
         if (result.selectionChanged) {
             if (result.newSelectionStart) m_SelectionStart = *result.newSelectionStart;
@@ -740,6 +753,53 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
         }
         if (result.textChanged) {
             modified = true;
+            
+            // Update completion when text changed (e.g., backspace)
+            if (m_ShowCompletion && m_CursorPos > 0) {
+                // Find current word prefix at cursor
+                size_t start = m_CursorPos;
+                while (start > 0) {
+                    char c = buffer.At(start - 1);
+                    if (!std::isalnum(c) && c != '_') break;
+                    start--;
+                }
+                
+                if (m_CursorPos > start) {
+                    // Still in a word, update suggestions
+                    std::string prefix = buffer.Substring(start, m_CursorPos - start);
+                    std::vector<std::string> words = buffer.GetWordCompletions(prefix);
+                    
+                    const auto* langPtr = buffer.GetLanguage();
+                    if (langPtr) {
+                        for (const auto& mapping : langPtr->highlightMappings) {
+                            if (mapping.second == HighlightGroup::Keyword || mapping.second == HighlightGroup::Type) {
+                                if (mapping.first.length() > prefix.length() && 
+                                    mapping.first.substr(0, prefix.length()) == prefix) {
+                                    words.push_back(mapping.first);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (!words.empty()) {
+                        m_CompletionItems.clear();
+                        for (const auto& w : words) {
+                            LSPCompletionItem item;
+                            item.label = w;
+                            item.kind = 1;
+                            item.insertText = w;
+                            item.detail = "Buffer";
+                            m_CompletionItems.push_back(item);
+                        }
+                        m_SelectedCompletionIndex = 0;
+                    } else {
+                        m_ShowCompletion = false;
+                    }
+                } else {
+                    // No longer in a word, close completion
+                    m_ShowCompletion = false;
+                }
+            }
         }
     }
     
@@ -834,33 +894,54 @@ void SyntaxEditor::RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, 
     }
 }
 
-void SyntaxEditor::RenderCompletion(TextBuffer& buffer, const ImVec2& popupPos) {
+void SyntaxEditor::RenderCompletion(TextBuffer& buffer, const ImVec2& cursorScreenPos, const ImVec4& bufferRect, float lineHeight) {
     if (m_CompletionItems.empty()) return;
 
-    ImGuiIO& io = ImGui::GetIO();
-    float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+    float itemLineHeight = ImGui::GetTextLineHeightWithSpacing();
     
-    // Calculate smart size and position
+    // Calculate popup size
     float width = 300.0f;
     float padding = ImGui::GetStyle().WindowPadding.y * 2;
-    // Estimate content height based on items (approximate)
-    float contentHeight = m_CompletionItems.size() * lineHeight; 
+    float contentHeight = m_CompletionItems.size() * itemLineHeight; 
     float maxHeight = 200.0f;
     float height = std::min(contentHeight + padding, maxHeight);
     
-    ImVec2 pos = popupPos;
+    // Buffer bounds
+    float bufLeft = bufferRect.x;
+    float bufTop = bufferRect.y;
+    float bufRight = bufferRect.z;
+    float bufBottom = bufferRect.w;
     
-    // Horizontal Boundary Check (Keep inside right edge)
-    if (pos.x + width > io.DisplaySize.x) {
-        pos.x = std::max(0.0f, io.DisplaySize.x - width);
+    ImVec2 pos;
+    
+    // Horizontal positioning: prefer right of cursor, but stay in buffer
+    pos.x = cursorScreenPos.x;
+    if (pos.x + width > bufRight) {
+        // Try left of cursor
+        pos.x = cursorScreenPos.x - width;
+        if (pos.x < bufLeft) {
+            // Clamp to buffer left edge
+            pos.x = bufLeft;
+        }
     }
     
-    // Vertical Boundary Check (Flip if it hits bottom)
-    // popupPos is the bottom-left of the cursor.
-    if (pos.y + height > io.DisplaySize.y) {
-        // Place ABOVE the cursor line
-        // We subtract the popup height AND the cursor line height (since pos is bottom of cursor)
-        pos.y -= (height + lineHeight);
+    // Vertical positioning: prefer below cursor, flip above if no space
+    float spaceBelow = bufBottom - (cursorScreenPos.y + lineHeight);
+    float spaceAbove = cursorScreenPos.y - bufTop;
+    
+    if (spaceBelow >= height) {
+        // Place below cursor
+        pos.y = cursorScreenPos.y + lineHeight;
+    } else if (spaceAbove >= height) {
+        // Place above cursor
+        pos.y = cursorScreenPos.y - height;
+    } else {
+        // Not enough space either way, pick the side with more room
+        if (spaceBelow >= spaceAbove) {
+            pos.y = cursorScreenPos.y + lineHeight;
+        } else {
+            pos.y = cursorScreenPos.y - height;
+        }
     }
 
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always);

@@ -31,7 +31,6 @@ bool LSPClient::Initialize(const std::string& rootPath) {
 
     SendRequest("initialize", params, [this](const JsonValue& result) {
         SendNotification("initialized", {});
-        Logger::Info("LSP Initialized");
     });
 
     return true;
@@ -89,15 +88,8 @@ void LSPClient::ReadLoop() {
     std::string accumulator;
     
     while (m_Running) {
-        // Log any stderr output from the server
-        size_t errBytes = m_Process->ReadErr(errBuffer.data(), errBuffer.size());
-        if (errBytes > 0) {
-            std::string errMsg(errBuffer.data(), errBytes);
-            // Don't flood logs if it's just info/progress, but for now helpful
-            if (!errMsg.empty()) {
-                Logger::Info("LSP [" + std::string(m_Process->GetExitCode() == 0 ? "Running" : "Dead") + "] Stderr: " + errMsg);
-            }
-        }
+        // Drain stderr to prevent blocking, but don't log it
+        m_Process->ReadErr(errBuffer.data(), errBuffer.size());
 
         size_t bytesRead = m_Process->Read(buffer.data(), buffer.size());
         if (bytesRead > 0) {

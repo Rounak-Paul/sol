@@ -87,7 +87,7 @@ public:
 private:
     bool HandleInput(TextBuffer& buffer);
     void HandleTextInput(TextBuffer& buffer);
-    void RenderCompletion(TextBuffer& buffer, const ImVec2& popupPos);
+    void RenderCompletion(TextBuffer& buffer, const ImVec2& cursorScreenPos, const ImVec4& bufferRect, float lineHeight);
     void RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine);
 
     void RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);

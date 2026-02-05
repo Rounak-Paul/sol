@@ -3,6 +3,35 @@
 
 namespace sol {
 
+namespace {
+    // Decode percent-encoded URI path (e.g., %20 -> space)
+    std::string DecodeURIPath(const std::string& encoded) {
+        std::string result;
+        result.reserve(encoded.size());
+        for (size_t i = 0; i < encoded.size(); ++i) {
+            if (encoded[i] == '%' && i + 2 < encoded.size()) {
+                char high = encoded[i + 1];
+                char low = encoded[i + 2];
+                auto hexVal = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return -1;
+                };
+                int h = hexVal(high);
+                int l = hexVal(low);
+                if (h >= 0 && l >= 0) {
+                    result += static_cast<char>((h << 4) | l);
+                    i += 2;
+                    continue;
+                }
+            }
+            result += encoded[i];
+        }
+        return result;
+    }
+} // anonymous namespace
+
 LSPManager& LSPManager::GetInstance() {
     static LSPManager instance;
     return instance;
@@ -62,10 +91,10 @@ LSPClient* LSPManager::GetClient(const std::string& languageId) {
         // Hook up diagnostics
         client->SetDiagnosticsCallback([this](const std::string& uri, const std::vector<LSPDiagnostic>& diagnostics) {
             if (m_DiagnosticsCallback) {
-                // Convert URI back to file path if needed, or pass as is
-                // For simplified logic, assume simple file specific callback
+                // Convert URI back to file path: strip scheme and decode percent-encoding
                 std::string path = uri;
                 if (path.find("file://") == 0) path = path.substr(7);
+                path = DecodeURIPath(path);
                 m_DiagnosticsCallback(path, diagnostics);
             }
         });
