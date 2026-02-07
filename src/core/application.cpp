@@ -9,6 +9,8 @@
 #include "ui/layers/workspace.h"
 #include "ui/layers/explorer.h"
 #include "ui/layers/status_bar.h"
+#include "ui/layers/settings.h"
+#include "ui/editor_settings.h"
 #include <imgui.h>
 
 using sol::Logger;
@@ -147,6 +149,9 @@ void Application::SetupEvents() {
 }
 
 void Application::SetupUILayers() {
+    // Apply initial theme
+    EditorSettings::Get().ApplyTheme();
+
     auto menuBar = std::make_shared<MenuBar>(&m_UISystem);
     m_UISystem.RegisterLayer(menuBar);
     
@@ -163,6 +168,10 @@ void Application::SetupUILayers() {
     
     auto statusBar = std::make_shared<StatusBar>();
     m_UISystem.RegisterLayer(statusBar);
+
+    auto settings = std::make_shared<SettingsWindow>();
+    settings->SetEnabled(false);
+    m_UISystem.RegisterLayer(settings);
 }
 
 int Application::GetDockspaceFlags() {

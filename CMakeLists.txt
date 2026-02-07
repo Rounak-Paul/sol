@@ -37,7 +37,9 @@ set(SRCS
     src/ui/layers/explorer.cpp
     src/ui/layers/status_bar.cpp
     src/ui/layers/workspace.cpp
+    src/ui/layers/settings.cpp
     src/ui/widgets/syntax_editor.cpp
+    src/ui/editor_settings.cpp
     src/core/lsp/lsp_client.cpp
     src/core/lsp/lsp_manager.cpp
 )

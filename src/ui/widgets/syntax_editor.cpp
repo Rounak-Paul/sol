@@ -37,6 +37,33 @@ float SyntaxEditor::GetLineNumberWidth(size_t lineCount) const {
 bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& size) {
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
+
+    // Sync theme from EditorSettings
+    {
+        const auto& e = EditorSettings::Get().GetTheme().editor;
+        m_Theme.background   = ImGui::ColorConvertFloat4ToU32(e.background);
+        m_Theme.text         = ImGui::ColorConvertFloat4ToU32(e.text);
+        m_Theme.keyword      = ImGui::ColorConvertFloat4ToU32(e.keyword);
+        m_Theme.type         = ImGui::ColorConvertFloat4ToU32(e.type);
+        m_Theme.function     = ImGui::ColorConvertFloat4ToU32(e.function);
+        m_Theme.variable     = ImGui::ColorConvertFloat4ToU32(e.variable);
+        m_Theme.string       = ImGui::ColorConvertFloat4ToU32(e.string);
+        m_Theme.number       = ImGui::ColorConvertFloat4ToU32(e.number);
+        m_Theme.comment      = ImGui::ColorConvertFloat4ToU32(e.comment);
+        m_Theme.op           = ImGui::ColorConvertFloat4ToU32(e.op);
+        m_Theme.punctuation  = ImGui::ColorConvertFloat4ToU32(e.punctuation);
+        m_Theme.macro        = ImGui::ColorConvertFloat4ToU32(e.macro);
+        m_Theme.constant     = ImGui::ColorConvertFloat4ToU32(e.constant);
+        m_Theme.error        = ImGui::ColorConvertFloat4ToU32(e.error);
+        m_Theme.lineNumber   = ImGui::ColorConvertFloat4ToU32(e.lineNumber);
+        m_Theme.currentLine  = ImGui::ColorConvertFloat4ToU32(e.currentLine);
+        m_Theme.selection    = ImGui::ColorConvertFloat4ToU32(e.selection);
+        m_Theme.cursor       = ImGui::ColorConvertFloat4ToU32(e.cursor);
+        m_Theme.popupBg      = ImGui::ColorConvertFloat4ToU32(e.popupBg);
+        m_Theme.popupBorder  = ImGui::ColorConvertFloat4ToU32(e.popupBorder);
+        m_Theme.popupText    = ImGui::ColorConvertFloat4ToU32(e.popupText);
+        m_Theme.popupSelected = ImGui::ColorConvertFloat4ToU32(e.popupSelected);
+    }
     
     // Process any pending completion items from LSP (thread-safe)
     {

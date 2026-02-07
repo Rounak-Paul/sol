@@ -15,6 +15,10 @@ MenuBar::MenuBar(UISystem* uiSystem, const Id& id)
 void MenuBar::OnUI() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("Sol")) {
+            if (ImGui::MenuItem("Settings", "Ctrl+,")) {
+                EventSystem::Execute("toggle_window", {{"window_id", std::string("Settings")}});
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Exit", "Esc")) {
                 EventSystem::Execute("exit");
             }
@@ -62,6 +66,14 @@ void MenuBar::RenderViewMenu() {
             bool enabled = explorer->IsEnabled();
             if (ImGui::MenuItem("Explorer", nullptr, &enabled)) {
                 EventSystem::Execute("toggle_window", {{"window_id", std::string("Explorer")}});
+            }
+        }
+
+        auto settings = m_UISystem->GetLayer("Settings");
+        if (settings) {
+            bool enabled = settings->IsEnabled();
+            if (ImGui::MenuItem("Settings", "Ctrl+,", &enabled)) {
+                EventSystem::Execute("toggle_window", {{"window_id", std::string("Settings")}});
             }
         }
         
