@@ -73,7 +73,7 @@ void TextBuffer::Insert(size_t pos, std::string_view text) {
     ParseIncremental();
     
     if (m_Language) {
-        LSPManager::GetInstance().DidChange(m_FilePath.string(), m_Rope.ToString(), m_Language->name);
+        LSPManager::GetInstance().DidChange(m_FilePath.string(), std::string(m_Rope.CStr(), m_Rope.Length()), m_Language->name);
     }
 }
 
@@ -83,7 +83,7 @@ void TextBuffer::Delete(size_t pos, size_t len) {
     ParseIncremental();
     
     if (m_Language) {
-        LSPManager::GetInstance().DidChange(m_FilePath.string(), m_Rope.ToString(), m_Language->name);
+        LSPManager::GetInstance().DidChange(m_FilePath.string(), std::string(m_Rope.CStr(), m_Rope.Length()), m_Language->name);
     }
 }
 
@@ -93,7 +93,7 @@ void TextBuffer::Replace(size_t pos, size_t len, std::string_view text) {
     ParseIncremental();
     
     if (m_Language) {
-        LSPManager::GetInstance().DidChange(m_FilePath.string(), m_Rope.ToString(), m_Language->name);
+        LSPManager::GetInstance().DidChange(m_FilePath.string(), std::string(m_Rope.CStr(), m_Rope.Length()), m_Language->name);
     }
 }
 
@@ -134,13 +134,14 @@ void TextBuffer::Parse() {
     
     ReleaseTree();
     
-    // Use string input for simplicity (tree-sitter handles it efficiently)
-    std::string content = m_Rope.ToString();
+    // Use cached buffer directly — no copy needed
+    const char* content = m_Rope.CStr();
+    uint32_t len = static_cast<uint32_t>(m_Rope.Length());
     m_Tree = ts_parser_parse_string(
         m_Parser,
-        nullptr,  // No old tree for full parse
-        content.c_str(),
-        static_cast<uint32_t>(content.length())
+        nullptr,
+        content,
+        len
     );
 }
 
@@ -177,13 +178,14 @@ void TextBuffer::ParseIncremental() {
     
     ts_tree_edit(m_Tree, &tsEdit);
     
-    // Reparse
-    std::string content = m_Rope.ToString();
+    // Reparse using cached buffer directly — no copy needed
+    const char* content = m_Rope.CStr();
+    uint32_t len = static_cast<uint32_t>(m_Rope.Length());
     TSTree* newTree = ts_parser_parse_string(
         m_Parser,
-        m_Tree,  // Old tree for incremental parsing
-        content.c_str(),
-        static_cast<uint32_t>(content.length())
+        m_Tree,
+        content,
+        len
     );
     
     ReleaseTree();

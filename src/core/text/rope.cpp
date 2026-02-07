@@ -188,7 +188,11 @@ void Rope::Insert(size_t pos, std::string_view text) {
     
     pos = std::min(pos, Length());
     
-    // Record edit info for tree-sitter
+    // Ensure caches are materialized before edit so we can patch them
+    EnsureCache();
+    EnsureLineStarts();
+    
+    // Record edit info for tree-sitter (use cached line starts — still valid pre-edit)
     auto [startLine, startCol] = PosToLineCol(pos);
     m_LastEdit.startByte = pos;
     m_LastEdit.oldEndByte = pos;
@@ -196,15 +200,18 @@ void Rope::Insert(size_t pos, std::string_view text) {
     m_LastEdit.startPoint = {startLine, startCol};
     m_LastEdit.oldEndPoint = {startLine, startCol};
     
+    // Structural edit on the rope tree
     auto [left, right] = Split(std::move(m_Root), pos);
     auto middle = BuildFromText(text);
     auto temp = Concat(std::move(left), std::move(middle));
     m_Root = Concat(std::move(temp), std::move(right));
     
+    // Patch cache and line starts incrementally (O(inserted_text) not O(total_doc))
+    PatchCacheInsert(pos, text);
+    
+    // Compute newEndPoint from the now-updated line starts
     auto [endLine, endCol] = PosToLineCol(pos + text.length());
     m_LastEdit.newEndPoint = {endLine, endCol};
-    
-    InvalidateCache();
 }
 
 void Rope::Delete(size_t pos, size_t len) {
@@ -214,7 +221,11 @@ void Rope::Delete(size_t pos, size_t len) {
     pos = std::min(pos, totalLen);
     len = std::min(len, totalLen - pos);
     
-    // Record edit info for tree-sitter
+    // Ensure caches are materialized before edit
+    EnsureCache();
+    EnsureLineStarts();
+    
+    // Record edit info for tree-sitter (use cached line starts — still valid pre-edit)
     auto [startLine, startCol] = PosToLineCol(pos);
     auto [endLine, endCol] = PosToLineCol(pos + len);
     m_LastEdit.startByte = pos;
@@ -224,6 +235,7 @@ void Rope::Delete(size_t pos, size_t len) {
     m_LastEdit.oldEndPoint = {endLine, endCol};
     m_LastEdit.newEndPoint = {startLine, startCol};
     
+    // Structural edit on the rope tree
     auto [left, temp] = Split(std::move(m_Root), pos);
     auto [_, right] = Split(std::move(temp), len);
     m_Root = Concat(std::move(left), std::move(right));
@@ -232,7 +244,8 @@ void Rope::Delete(size_t pos, size_t len) {
         m_Root = std::make_unique<Leaf>("");
     }
     
-    InvalidateCache();
+    // Patch cache and line starts incrementally
+    PatchCacheDelete(pos, len);
 }
 
 void Rope::Replace(size_t pos, size_t len, std::string_view text) {
@@ -317,7 +330,7 @@ std::string Rope::Line(size_t lineNum) const {
     return Substring(start, end - start);
 }
 
-std::string_view Rope::LineView(size_t lineNum) {
+std::string_view Rope::LineView(size_t lineNum) const {
     EnsureCache();
     size_t start = LineStart(lineNum);
     size_t end = LineEnd(lineNum);
@@ -370,7 +383,7 @@ void Rope::EnsureCache() const {
     }
 }
 
-const char* Rope::CStr() {
+const char* Rope::CStr() const {
     EnsureCache();
     return m_Cache.c_str();
 }
@@ -391,9 +404,71 @@ size_t Rope::Capacity() const {
 
 void Rope::SyncFromBuffer() {
     // Rebuild rope from the modified cache
-    std::string newContent = m_Cache;  // Copy before modifying
+    std::string newContent = m_Cache;
     m_Root = BuildFromText(newContent);
     m_CacheDirty = false;
+    m_LineStartsDirty = true;  // Line starts need rebuild after external edit
+}
+
+void Rope::PatchCacheInsert(size_t pos, std::string_view text) {
+    // Patch m_Cache in-place: insert text at pos
+    m_Cache.insert(pos, text.data(), text.length());
+    m_CacheDirty = false;
+    
+    // Patch m_LineStarts incrementally
+    // Find the line containing pos via binary search
+    auto it = std::upper_bound(m_LineStarts.begin(), m_LineStarts.end(), pos);
+    size_t lineIdx = static_cast<size_t>(it - m_LineStarts.begin());
+    
+    // Collect positions of newlines in inserted text
+    std::vector<size_t> newNewlines;
+    for (size_t i = 0; i < text.length(); ++i) {
+        if (text[i] == '\n') {
+            newNewlines.push_back(pos + i + 1);  // Line starts after the newline
+        }
+    }
+    
+    // Shift all line starts after pos by text.length()
+    for (size_t i = lineIdx; i < m_LineStarts.size(); ++i) {
+        m_LineStarts[i] += text.length();
+    }
+    
+    // Insert new line starts for newlines in the inserted text
+    if (!newNewlines.empty()) {
+        m_LineStarts.insert(m_LineStarts.begin() + lineIdx, newNewlines.begin(), newNewlines.end());
+    }
+    
+    m_LineStartsDirty = false;
+}
+
+void Rope::PatchCacheDelete(size_t pos, size_t len) {
+    // Patch m_Cache in-place: erase len bytes at pos
+    m_Cache.erase(pos, len);
+    m_CacheDirty = false;
+    
+    // Patch m_LineStarts incrementally
+    size_t delEnd = pos + len;
+    
+    // Find range of line starts that fall within the deleted region
+    auto eraseBegin = std::upper_bound(m_LineStarts.begin(), m_LineStarts.end(), pos);
+    auto eraseEnd = std::upper_bound(m_LineStarts.begin(), m_LineStarts.end(), delEnd);
+    
+    // Only erase line starts that are strictly inside the deleted region (> pos and <= delEnd)
+    // A line start at exactly delEnd will be shifted, not erased
+    size_t shiftIdx;
+    if (eraseBegin != eraseEnd) {
+        auto afterErase = m_LineStarts.erase(eraseBegin, eraseEnd);
+        shiftIdx = static_cast<size_t>(afterErase - m_LineStarts.begin());
+    } else {
+        shiftIdx = static_cast<size_t>(eraseBegin - m_LineStarts.begin());
+    }
+    
+    // Shift all remaining line starts after pos by -len
+    for (size_t i = shiftIdx; i < m_LineStarts.size(); ++i) {
+        m_LineStarts[i] -= len;
+    }
+    
+    m_LineStartsDirty = false;
 }
 
 size_t Rope::CountNewlines(std::string_view text) const {

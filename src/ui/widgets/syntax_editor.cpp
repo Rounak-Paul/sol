@@ -235,8 +235,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         clickedLine = std::min(clickedLine, lineCount > 0 ? lineCount - 1 : 0);
         
         size_t clickedCol = static_cast<size_t>(std::max(0.0f, relX) / m_CharWidth);
-        std::string line = buffer.Line(clickedLine);
-        clickedCol = std::min(clickedCol, line.length());
+        size_t lineLen = buffer.LineEnd(clickedLine) - buffer.LineStart(clickedLine);
+        clickedCol = std::min(clickedCol, lineLen);
         
         return buffer.LineColToPos(clickedLine, clickedCol);
     };
@@ -673,11 +673,11 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
     for (size_t line = startLine; line <= endLine && line < lastLine; ++line) {
         if (line < firstLine) continue;
         
-        std::string lineText = buffer.Line(line);
+        size_t lineLen = buffer.LineEnd(line) - buffer.LineStart(line);
         float y = textPos.y + (line - firstLine) * lineHeight;
         
         size_t colStart = (line == startLine) ? startCol : 0;
-        size_t colEnd = (line == endLine) ? endCol : lineText.length();
+        size_t colEnd = (line == endLine) ? endCol : lineLen;
         
         float xStart = textPos.x + colStart * m_CharWidth;
         float xEnd = textPos.x + colEnd * m_CharWidth;

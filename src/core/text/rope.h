@@ -38,7 +38,7 @@ public:
     size_t LineEnd(size_t lineNum) const;
     size_t LineLength(size_t lineNum) const;
     std::string Line(size_t lineNum) const;
-    std::string_view LineView(size_t lineNum);  // Returns view into cached buffer
+    std::string_view LineView(size_t lineNum) const;
     std::pair<size_t, size_t> PosToLineCol(size_t pos) const;  // Returns (line, col)
     size_t LineColToPos(size_t line, size_t col) const;
     
@@ -59,7 +59,7 @@ public:
     EditInfo GetLastEdit() const { return m_LastEdit; }
     
     // For ImGui compatibility - returns a contiguous buffer (cached)
-    const char* CStr();
+    const char* CStr() const;
     char* Data();
     size_t Capacity() const;
     void SyncFromBuffer();  // Call after ImGui modifies the buffer
@@ -110,11 +110,11 @@ private:
     std::unique_ptr<Node> m_Root;
     EditInfo m_LastEdit{};
     
-    // Cache for ImGui compatibility
+    // Cache for contiguous text access — updated incrementally on edits
     mutable std::string m_Cache;
     mutable bool m_CacheDirty = true;
     
-    // Line starts cache for O(1) line access
+    // Line starts cache for O(1) line access — updated incrementally on edits
     mutable std::vector<size_t> m_LineStarts;
     mutable bool m_LineStartsDirty = true;
     
@@ -127,6 +127,10 @@ private:
     void InvalidateCache() { m_CacheDirty = true; m_LineStartsDirty = true; }
     void EnsureCache() const;
     void EnsureLineStarts() const;
+    
+    // Incremental cache/line-starts patching (avoids full rebuild)
+    void PatchCacheInsert(size_t pos, std::string_view text);
+    void PatchCacheDelete(size_t pos, size_t len);
     
     size_t CountNewlines(std::string_view text) const;
 };
