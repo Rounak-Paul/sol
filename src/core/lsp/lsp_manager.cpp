@@ -58,7 +58,13 @@ void LSPManager::Initialize(const std::string& projectRoot) {
 void LSPManager::Shutdown() {
     std::lock_guard<std::mutex> lock(m_Mutex);
     for (auto& [lang, client] : m_Clients) {
-        client->Shutdown();
+        try {
+            if (client) {
+                client->Shutdown();
+            }
+        } catch (...) {
+            // Ignore shutdown errors
+        }
     }
     m_Clients.clear();
 }

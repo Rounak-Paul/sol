@@ -31,46 +31,62 @@ TextResource::TextResource(const std::filesystem::path& path)
 }
 
 bool TextResource::Load() {
-    std::ifstream file(m_Path);
-    if (!file.is_open()) {
-        Logger::Error("Failed to open file: " + m_Path.string());
+    try {
+        std::ifstream file(m_Path);
+        if (!file.is_open()) {
+            Logger::Error("Failed to open file: " + m_Path.string());
+            return false;
+        }
+        
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        std::string content = buffer.str();
+        
+        // Initialize TextBuffer with content
+        m_Buffer = TextBuffer(content);
+        m_Buffer.SetFilePath(m_Path);
+        
+        // Set language and parse
+        auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(m_Path);
+        if (lang) {
+            m_Buffer.SetLanguage(lang);
+            LSPManager::GetInstance().DidOpen(m_Path.string(), m_Buffer.ToString(), lang->name);
+        }
+        
+        m_Modified = false;
+        
+        Logger::Info("Loaded file: " + m_Path.string());
+        return true;
+    } catch (const std::exception& e) {
+        Logger::Error("Exception loading file: " + std::string(e.what()));
         return false;
     }
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string content = buffer.str();
-    
-    // Initialize TextBuffer with content
-    m_Buffer = TextBuffer(content);
-    m_Buffer.SetFilePath(m_Path);
-    
-    // Set language and parse
-    auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(m_Path);
-    if (lang) {
-        m_Buffer.SetLanguage(lang);
-        LSPManager::GetInstance().DidOpen(m_Path.string(), m_Buffer.ToString(), lang->name);
-    }
-    
-    m_Modified = false;
-    
-    Logger::Info("Loaded file: " + m_Path.string());
-    return true;
 }
 
 bool TextResource::Save() {
-    std::ofstream file(m_Path);
-    if (!file.is_open()) {
-        Logger::Error("Failed to save file: " + m_Path.string());
+    try {
+        std::ofstream file(m_Path);
+        if (!file.is_open()) {
+            Logger::Error("Failed to save file: " + m_Path.string());
+            return false;
+        }
+        
+        file << m_Buffer.ToString();
+        
+        if (file.fail()) {
+            Logger::Error("Error writing to file: " + m_Path.string());
+            return false;
+        }
+        
+        m_Modified = false;
+        m_Buffer.SetModified(false);
+        
+        Logger::Info("Saved file: " + m_Path.string());
+        return true;
+    } catch (const std::exception& e) {
+        Logger::Error("Exception saving file: " + std::string(e.what()));
         return false;
     }
-    
-    file << m_Buffer.ToString();
-    m_Modified = false;
-    m_Buffer.SetModified(false);
-    
-    Logger::Info("Saved file: " + m_Path.string());
-    return true;
 }
 
 void TextResource::SetContent(const std::string& content) {

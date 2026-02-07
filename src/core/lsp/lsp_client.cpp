@@ -170,37 +170,45 @@ void LSPClient::ReadLoop() {
 void LSPClient::HandleMessage(const JsonValue& json) {
     if (json.type != JsonType::Object) return;
     
-    // Response
-    if (json.Has("id") && json.Has("result")) {
-        int id = json["id"].ToInt();
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        if (m_PendingRequests.count(id)) {
-            m_PendingRequests[id](json["result"]);
-            m_PendingRequests.erase(id);
-        }
-    }
-    // Notification or Request from Server
-    else if (json.Has("method")) {
-        std::string method = json["method"].ToString();
-        
-        if (method == "textDocument/publishDiagnostics") {
-            if (m_DiagnosticsCallback) {
-                auto params = json["params"];
-                std::string uri = params["uri"].ToString();
-                auto diagnosticsJson = params["diagnostics"].AsArray();
-                
-                std::vector<LSPDiagnostic> diagnostics;
-                for (const auto& item : diagnosticsJson) {
-                    LSPDiagnostic d;
-                    d.range = LSPRange::FromJson(item["range"]);
-                    d.message = item["message"].ToString();
-                    d.severity = item["severity"].ToInt();
-                    diagnostics.push_back(d);
-                }
-                
-                m_DiagnosticsCallback(uri, diagnostics);
+    try {
+        // Response
+        if (json.Has("id") && json.Has("result")) {
+            int id = json["id"].ToInt();
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            if (m_PendingRequests.count(id)) {
+                m_PendingRequests[id](json["result"]);
+                m_PendingRequests.erase(id);
             }
         }
+        // Notification or Request from Server
+        else if (json.Has("method")) {
+            std::string method = json["method"].ToString();
+            
+            if (method == "textDocument/publishDiagnostics") {
+                if (m_DiagnosticsCallback && json.Has("params")) {
+                    auto params = json["params"];
+                    if (!params.Has("uri") || !params.Has("diagnostics")) return;
+                    
+                    std::string uri = params["uri"].ToString();
+                    auto diagnosticsJson = params["diagnostics"].AsArray();
+                    
+                    std::vector<LSPDiagnostic> diagnostics;
+                    for (const auto& item : diagnosticsJson) {
+                        LSPDiagnostic d;
+                        if (item.Has("range")) {
+                            d.range = LSPRange::FromJson(item["range"]);
+                        }
+                        d.message = item.Has("message") ? item["message"].ToString() : "";
+                        d.severity = item.Has("severity") ? item["severity"].ToInt() : 1;
+                        diagnostics.push_back(d);
+                    }
+                    
+                    m_DiagnosticsCallback(uri, diagnostics);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger::Error(std::string("Error handling LSP message: ") + e.what());
     }
 }
 
@@ -276,23 +284,29 @@ void LSPClient::RequestCompletion(const std::string& filePath, int line, int cha
     SendRequest("textDocument/completion", params, [callback](const JsonValue& result) {
         std::vector<LSPCompletionItem> items;
         
-        JsonArray itemsJson;
-        if (result.type == JsonType::Array) {
-            itemsJson = result.AsArray();
-        } else if (result.type == JsonType::Object && result.Has("items")) {
-            itemsJson = result["items"].AsArray();
-        }
-        
-        for (const auto& item : itemsJson) {
-            LSPCompletionItem completion;
-            completion.label = item["label"].ToString();
-            completion.kind = item["kind"].ToInt();
-            if (item.Has("detail")) completion.detail = item["detail"].ToString();
-            if (item.Has("documentation")) completion.documentation = item["documentation"].ToString(); // Could be object
-            if (item.Has("insertText")) completion.insertText = item["insertText"].ToString();
-            else completion.insertText = completion.label;
+        try {
+            JsonArray itemsJson;
+            if (result.type == JsonType::Array) {
+                itemsJson = result.AsArray();
+            } else if (result.type == JsonType::Object && result.Has("items")) {
+                itemsJson = result["items"].AsArray();
+            }
             
-            items.push_back(completion);
+            for (const auto& item : itemsJson) {
+                if (!item.Has("label")) continue;  // Skip invalid items
+                
+                LSPCompletionItem completion;
+                completion.label = item["label"].ToString();
+                completion.kind = item.Has("kind") ? item["kind"].ToInt() : 1;
+                if (item.Has("detail")) completion.detail = item["detail"].ToString();
+                if (item.Has("documentation")) completion.documentation = item["documentation"].ToString();
+                if (item.Has("insertText")) completion.insertText = item["insertText"].ToString();
+                else completion.insertText = completion.label;
+                
+                items.push_back(completion);
+            }
+        } catch (...) {
+            // Silently ignore malformed completion responses
         }
         
         if (callback) callback(items);

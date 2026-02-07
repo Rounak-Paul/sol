@@ -20,6 +20,9 @@ Application::Application() {
 }
 
 Application::~Application() {
+    // Ensure proper cleanup of systems
+    LSPManager::GetInstance().Shutdown();
+    JobSystem::Shutdown();
 }
 
 void Application::OnStart() {

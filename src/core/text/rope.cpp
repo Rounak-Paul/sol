@@ -241,7 +241,9 @@ void Rope::Replace(size_t pos, size_t len, std::string_view text) {
 }
 
 char Rope::At(size_t pos) const {
-    assert(pos < Length());
+    if (pos >= Length()) {
+        return '\0';  // Return null char for out of bounds
+    }
     return m_Root->At(pos);
 }
 
@@ -298,7 +300,9 @@ size_t Rope::LineStart(size_t lineNum) const {
 size_t Rope::LineEnd(size_t lineNum) const {
     EnsureLineStarts();
     if (lineNum + 1 < m_LineStarts.size()) {
-        return m_LineStarts[lineNum + 1] - 1;  // -1 to exclude newline
+        size_t nextLineStart = m_LineStarts[lineNum + 1];
+        // Safely handle the case where the line ends at position 0
+        return nextLineStart > 0 ? nextLineStart - 1 : 0;
     }
     return m_Cache.length();
 }
@@ -322,12 +326,17 @@ std::string_view Rope::LineView(size_t lineNum) {
 
 std::pair<size_t, size_t> Rope::PosToLineCol(size_t pos) const {
     EnsureLineStarts();
+    if (m_LineStarts.empty()) {
+        return {0, 0};
+    }
     pos = std::min(pos, m_Cache.length());
     
     // Binary search to find the line containing pos
     auto it = std::upper_bound(m_LineStarts.begin(), m_LineStarts.end(), pos);
-    size_t line = (it - m_LineStarts.begin()) - 1;
-    if (it == m_LineStarts.begin()) line = 0;
+    size_t line = 0;
+    if (it != m_LineStarts.begin()) {
+        line = static_cast<size_t>(it - m_LineStarts.begin()) - 1;
+    }
     
     size_t lineStart = m_LineStarts[line];
     return {line, pos - lineStart};

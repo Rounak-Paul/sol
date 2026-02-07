@@ -201,8 +201,8 @@ void Explorer::BuildTree(FileNode& parent, const std::filesystem::path& path) {
             parent.children.push_back(std::move(file));
         }
         
-    } catch (const std::filesystem::filesystem_error& e) {
-        // Silently ignore permission errors
+    } catch (const std::exception& e) {
+        // Silently ignore filesystem errors (permission, race conditions, etc.)
     }
 }
 
