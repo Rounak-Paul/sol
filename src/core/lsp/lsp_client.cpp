@@ -20,9 +20,17 @@ bool LSPClient::Initialize(const std::string& rootPath) {
         return false;
     }
 
+    // Give the child process a moment to either start or fail
+    // This catches immediate exec failures (command not found)
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    
+    if (!m_Process->IsRunning()) {
+        Logger::Error("LSP server process exited immediately (command not found?)");
+        return false;
+    }
+
     m_Running = true;
     m_ReadThread = std::thread(&LSPClient::ReadLoop, this);
-    m_ReadThread.detach();
 
     JsonObject params;
     params["processId"] = static_cast<int>(getpid());
@@ -38,19 +46,30 @@ bool LSPClient::Initialize(const std::string& rootPath) {
 
 void LSPClient::Shutdown() {
     if (m_Running) {
-        SendRequest("shutdown", {}, [this](const JsonValue&) {
+        m_Running = false;  // Signal read thread to stop first
+        
+        // Only send shutdown if process still running
+        if (m_Process && m_Process->IsRunning()) {
+            SendRequest("shutdown", {}, [](const JsonValue&) {});
             SendNotification("exit", {});
-        });
+            
+            // Give it a moment to exit gracefully
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            m_Process->Stop();
+        }
         
-        // Give it a moment to exit gracefully
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        
-        m_Process->Stop();
-        m_Running = false;
+        // Wait for read thread to finish
+        if (m_ReadThread.joinable()) {
+            m_ReadThread.join();
+        }
     }
 }
 
 void LSPClient::SendRequest(const std::string& method, const JsonObject& params, std::function<void(const JsonValue&)> callback) {
+    if (!m_Running || !m_Process || !m_Process->IsRunning()) {
+        return;
+    }
+    
     std::lock_guard<std::mutex> lock(m_Mutex);
     int id = m_NextRequestId++;
     
@@ -71,6 +90,10 @@ void LSPClient::SendRequest(const std::string& method, const JsonObject& params,
 }
 
 void LSPClient::SendNotification(const std::string& method, const JsonObject& params) {
+    if (!m_Running || !m_Process || !m_Process->IsRunning()) {
+        return;
+    }
+    
     JsonObject msg;
     msg["jsonrpc"] = "2.0";
     msg["method"] = method;
@@ -88,6 +111,11 @@ void LSPClient::ReadLoop() {
     std::string accumulator;
     
     while (m_Running) {
+        // Check if process is still alive
+        if (!m_Process || !m_Process->IsRunning()) {
+            break;
+        }
+        
         // Drain stderr to prevent blocking, but don't log it
         m_Process->ReadErr(errBuffer.data(), errBuffer.size());
 
@@ -109,7 +137,16 @@ void LSPClient::ReadLoop() {
                 
                 size_t lenStart = contentLengthPos + 16;
                 size_t lenEnd = accumulator.find("\r\n", lenStart);
-                int contentLength = std::stoi(accumulator.substr(lenStart, lenEnd - lenStart));
+                if (lenEnd == std::string::npos) break;
+                
+                int contentLength = 0;
+                try {
+                    contentLength = std::stoi(accumulator.substr(lenStart, lenEnd - lenStart));
+                } catch (...) {
+                    // Invalid content-length, discard header
+                    accumulator.erase(0, headerEnd + 4);
+                    continue;
+                }
                 
                 if (accumulator.length() >= headerEnd + 4 + contentLength) {
                     std::string payload = accumulator.substr(headerEnd + 4, contentLength);

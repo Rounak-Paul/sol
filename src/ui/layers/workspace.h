@@ -8,6 +8,7 @@
 #include <optional>
 #include <vector>
 #include <memory>
+#include <mutex>
 
 namespace sol {
 
@@ -19,6 +20,7 @@ public:
     void OnUI() override;
     
     // Updates diagnostic markers (LSP errors/warnings) for a specific file
+    // Thread-safe: can be called from any thread
     void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
 
 private:
@@ -26,6 +28,7 @@ private:
     void RenderBufferContent();
     void RenderFloatingBuffers();
     void ProcessPendingActions();
+    void ProcessPendingDiagnostics();
     
     uint32_t m_DockspaceID;
     std::set<size_t> m_FloatingBufferIds;
@@ -33,6 +36,10 @@ private:
     std::vector<size_t> m_PendingCloseBuffers;
     std::map<size_t, std::unique_ptr<SyntaxEditor>> m_Editors;
     size_t m_LastActiveBufferId = 0;
+    
+    // Thread-safe pending diagnostics from LSP
+    std::mutex m_DiagnosticsMutex;
+    std::vector<std::pair<std::string, std::vector<LSPDiagnostic>>> m_PendingDiagnostics;
 
     SyntaxEditor* GetOrCreateEditor(size_t bufferId);
 };

@@ -38,6 +38,21 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     ImGuiWindow* window = ImGui::GetCurrentWindow();
     if (window->SkipItems) return false;
     
+    // Process any pending completion items from LSP (thread-safe)
+    {
+        std::lock_guard<std::mutex> lock(m_PendingCompletionMutex);
+        if (m_PendingCompletionItems.has_value()) {
+            if (!m_PendingCompletionItems->empty()) {
+                m_CompletionItems = std::move(*m_PendingCompletionItems);
+                m_ShowCompletion = true;
+                m_SelectedCompletionIndex = 0;
+            } else if (m_CompletionItems.empty()) {
+                m_ShowCompletion = false;
+            }
+            m_PendingCompletionItems.reset();
+        }
+    }
+    
     ImGuiContext& g = *GImGui;
     const ImGuiStyle& style = g.Style;
     const ImGuiID id = window->GetID(label);
@@ -65,8 +80,10 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     m_IsFocused = ImGui::IsWindowFocused();
 
-    // Auto-scroll to cursor if needed (only if focused)
-    if (m_IsFocused) {
+    // Auto-scroll to cursor only when cursor moved (not every frame)
+    if (m_NeedsScrollToCursor && m_IsFocused) {
+        m_NeedsScrollToCursor = false;
+        
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         
         ImVec2 region = ImGui::GetContentRegionAvail();
@@ -200,6 +217,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Mouse click - start selection or set cursor
     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
         m_CursorPos = mouseToBufPos(mousePos);
+        m_NeedsScrollToCursor = true;
         
         // Close completion on mouse click navigation
         m_ShowCompletion = false;
@@ -226,6 +244,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
             m_SelectionEnd = m_CursorPos;
             m_HasSelection = m_SelectionStart != m_SelectionEnd;
             m_CursorBlinkTimer = 0.0f;
+            m_NeedsScrollToCursor = true;
         }
     }
     
@@ -302,6 +321,7 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
                 m_CursorPos = *textResult.newCursorPos;
             }
             m_CursorBlinkTimer = 0.0f;
+            m_NeedsScrollToCursor = true;
         }
         if (textResult.textChanged) {
              buffer.MarkModified();
@@ -374,22 +394,9 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
                                 lang, 
                                 line, col, 
                                 [this](const std::vector<LSPCompletionItem>& items) {
-                                    if (!items.empty()) {
-                                        m_CompletionItems = items;
-                                        m_ShowCompletion = true;
-                                        m_SelectedCompletionIndex = 0;
-                                    } else {
-                                        // If server explicitly returns nothing but we had local items, 
-                                        // we might want to keep local items? 
-                                        // Usually explicit empty list means "no suggestions".
-                                        // But invalid/timeout requests might result in no callback.
-                                        // So if this callback runs, let's respect it, mostly.
-                                        // But for now, if empty, we might just hide or leave it if previously populated?
-                                        // If users explicitly asked for LSP via trigger char, we should show what LSP says.
-                                        if (m_CompletionItems.empty()) {
-                                             m_ShowCompletion = false;
-                                        }
-                                    }
+                                    // Thread-safe: queue items for main thread processing
+                                    std::lock_guard<std::mutex> lock(m_PendingCompletionMutex);
+                                    m_PendingCompletionItems = items;
                                 }
                             );
                         }
@@ -693,6 +700,7 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
                 
                 buffer.Insert(m_CursorPos, item.insertText);
                 m_CursorPos += item.insertText.length();
+                m_NeedsScrollToCursor = true;
                 m_ShowCompletion = false;
                 ImGui::SetWindowFocus(); // Restore focus to buffer window
             }
@@ -775,6 +783,7 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
                 m_CursorPos = *result.newCursorPos;
             }
             m_CursorBlinkTimer = 0.0f;
+            m_NeedsScrollToCursor = true;
             
             // Close completion on cursor navigation (but not from text input)
             if (result.cursorMoved && !result.textChanged && m_ShowCompletion) {

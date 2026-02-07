@@ -10,6 +10,8 @@
 #include <vector>
 #include <unordered_map>
 #include <map>
+#include <mutex>
+#include <optional>
 
 namespace sol {
 
@@ -119,6 +121,7 @@ private:
     // Scroll state
     float m_ScrollX = 0.0f;
     float m_ScrollY = 0.0f;
+    bool m_NeedsScrollToCursor = false;  // Only scroll when cursor actually moves
     
     // Cached for current frame
     bool m_IsFocused = false;
@@ -128,6 +131,10 @@ private:
     bool m_ShowCompletion = false;
     std::vector<LSPCompletionItem> m_CompletionItems;
     int m_SelectedCompletionIndex = 0;
+    
+    // Thread-safe pending completion from LSP (written from background, read on main)
+    std::mutex m_PendingCompletionMutex;
+    std::optional<std::vector<LSPCompletionItem>> m_PendingCompletionItems;
     
     // Diagnostics state
     std::string m_LastDiagnosticsPath;

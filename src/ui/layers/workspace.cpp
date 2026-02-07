@@ -15,6 +15,9 @@ void Workspace::OnUI() {
     // Process any pending actions from last frame
     ProcessPendingActions();
     
+    // Process pending diagnostics from LSP (thread-safe)
+    ProcessPendingDiagnostics();
+    
     // Get or create the main dockspace ID
     m_DockspaceID = ImGui::GetID(UISystem::MainDockSpaceId);
     
@@ -45,29 +48,46 @@ void Workspace::OnUI() {
 }
 
 void Workspace::UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
-    auto& rs = ResourceSystem::GetInstance();
-    // Simple path comparison - in a real app canonicalization/normalization is key
-    std::filesystem::path targetPath(path);
-    
-    for (const auto& buffer : rs.GetBuffers()) {
-        std::filesystem::path bufPath = buffer->GetResource()->GetPath();
-        
-        bool match = false;
-        try {
-            if (std::filesystem::exists(bufPath) && std::filesystem::exists(targetPath)) {
-                match = std::filesystem::equivalent(bufPath, targetPath);
-            } else {
-                match = (bufPath == targetPath);
-            }
-        } catch (...) {
-            match = (bufPath.string() == targetPath.string());
-        }
+    // Thread-safe: queue for main thread processing  
+    std::lock_guard<std::mutex> lock(m_DiagnosticsMutex);
+    m_PendingDiagnostics.emplace_back(path, diagnostics);
+}
 
-        if (match) {
-            if (auto* editor = GetOrCreateEditor(buffer->GetId())) {
-                editor->UpdateDiagnostics(path, diagnostics);
+void Workspace::ProcessPendingDiagnostics() {
+    std::vector<std::pair<std::string, std::vector<LSPDiagnostic>>> pending;
+    {
+        std::lock_guard<std::mutex> lock(m_DiagnosticsMutex);
+        pending = std::move(m_PendingDiagnostics);
+        m_PendingDiagnostics.clear();
+    }
+    
+    if (pending.empty()) return;
+    
+    auto& rs = ResourceSystem::GetInstance();
+    
+    for (const auto& [path, diagnostics] : pending) {
+        std::filesystem::path targetPath(path);
+        
+        for (const auto& buffer : rs.GetBuffers()) {
+            std::filesystem::path bufPath = buffer->GetResource()->GetPath();
+            
+            bool match = false;
+            try {
+                if (std::filesystem::exists(bufPath) && std::filesystem::exists(targetPath)) {
+                    match = std::filesystem::equivalent(bufPath, targetPath);
+                } else {
+                    match = (bufPath == targetPath);
+                }
+            } catch (...) {
+                match = (bufPath.string() == targetPath.string());
             }
-            break;
+
+            if (match) {
+                if (auto* editor = GetOrCreateEditor(buffer->GetId())) {
+                    editor->UpdateDiagnostics(path, diagnostics);
+                }
+                break;
+            }
         }
     }
 }
