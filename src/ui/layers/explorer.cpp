@@ -169,11 +169,6 @@ void Explorer::BuildTree(FileNode& parent, const std::filesystem::path& path) {
         for (const auto& entry : std::filesystem::directory_iterator(path)) {
             auto filename = entry.path().filename().string();
             
-            // Skip hidden files and common ignore patterns
-            if (filename[0] == '.' || filename == "build" || filename == "node_modules") {
-                continue;
-            }
-            
             FileNode node;
             node.name = filename;
             node.path = entry.path();
