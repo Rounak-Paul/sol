@@ -11,6 +11,24 @@ namespace sol {
 SyntaxEditor::SyntaxEditor() {
     // Register global handler if we are the first editor? 
     // Ideally this is done by Workspace.
+    
+    // Initialize default theme colors
+    m_Theme.scopeBackground = IM_COL32(50, 50, 60, 100); // 40% opacity
+    
+    // Rainbow Indents (Yellow, Green, Blue, Purple)
+    m_Theme.rainbowIndents = {
+        IM_COL32(255, 255, 80, 128),   // Increased alpha
+        IM_COL32(100, 255, 100, 128),
+        IM_COL32(80, 180, 255, 128),
+        IM_COL32(255, 100, 255, 128)
+    };
+    
+    // Rainbow Brackets (Gold, Orchid, SkyBlue)
+    m_Theme.rainbowBrackets = {
+         IM_COL32(255, 215, 0, 255),
+         IM_COL32(218, 112, 214, 255),
+         IM_COL32(135, 206, 235, 255)
+    };
 }
 
 void SyntaxEditor::UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
@@ -189,6 +207,9 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Text area position
     ImVec2 textPos = ImVec2(cursorPos.x + lineNumberWidth, cursorPos.y);
     
+    // Render Scope Highlight 
+    RenderScope(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
+
     // Render current line highlight
     if ((m_IsFocused || m_ShowCompletion) && !m_HasSelection) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
@@ -213,9 +234,17 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         RenderSelection(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
     }
     
+    // Render indent guides (Rainbow Indents)
+    RenderIndentGuides(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
+
     // Render syntax-highlighted text
     RenderText(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
     
+    // Render matching bracket highlight
+    if (m_IsFocused || m_ShowCompletion) {
+        RenderMatchingBracket(buffer, textPos, lineHeight, firstVisibleLine);
+    }
+
     // Render diagnostics (squiggles)
     RenderDiagnostics(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
 
@@ -493,14 +522,22 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
     
     for (const auto& token : tokens) {
         ImU32 color = m_Theme.GetColor(static_cast<HighlightGroup>(token.highlightId));
+        
+        if (token.depth > 0 && !m_Theme.rainbowBrackets.empty()) {
+             std::string_view type = token.type;
+             if (type == "{" || type == "}" || type == "(" || type == ")" || type == "[" || type == "]") {
+                 color = m_Theme.rainbowBrackets[(token.depth - 1) % m_Theme.rainbowBrackets.size()];
+             }
+        }
+        
         colorChanges.push_back({token.startByte, color, true});
         colorChanges.push_back({token.endByte, m_Theme.text, false});
     }
     
     std::sort(colorChanges.begin(), colorChanges.end(), [](const ColorChange& a, const ColorChange& b) {
         if (a.pos != b.pos) return a.pos < b.pos;
-        // Starts come before ends at same position
-        return a.isStart > b.isStart;
+        // Ends come before Starts at same position
+        return a.isStart < b.isStart;
     });
     
     // Render each visible line
@@ -529,6 +566,13 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
         for (const auto& token : tokens) {
             if (token.startByte <= lineStart && token.endByte > lineStart) {
                 currentColor = m_Theme.GetColor(static_cast<HighlightGroup>(token.highlightId));
+                // Check if this token should have rainbow color (re-apply logic for initial state)
+                 if (token.depth > 0 && !m_Theme.rainbowBrackets.empty()) {
+                    std::string_view type = token.type;
+                    if (type == "{" || type == "}" || type == "(" || type == ")" || type == "[" || type == "]") {
+                        currentColor = m_Theme.rainbowBrackets[(token.depth - 1) % m_Theme.rainbowBrackets.size()];
+                    }
+                }
                 break;
             }
         }
@@ -542,38 +586,29 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
             size_t bytePos = lineStart + charIdx;
             
             // Check if there's a color change at this position
-            while (it != colorChanges.end() && it->pos == bytePos) {
-                if (it->isStart) {
-                    // Start of a new token
-                    if (charIdx > spanStart) {
-                        // Render previous span
-                        RenderSpan(drawList, lineText, spanStart, charIdx, x, y, spanColor);
-                    }
-                    spanStart = charIdx;
-                    spanColor = it->color;
+             while (it != colorChanges.end() && it->pos == bytePos) {
+                if (charIdx > spanStart) {
+                    RenderSpan(drawList, lineText, spanStart, charIdx, x, y, spanColor);
                 }
-                ++it;
-            }
-            
-            // Check for token end
-            while (it != colorChanges.end() && it->pos == bytePos && !it->isStart) {
+                spanStart = charIdx;
+
+                if (it->isStart) {
+                    spanColor = it->color;
+                } else {
+                    // Revert to text
+                    spanColor = m_Theme.text;
+                }
                 ++it;
             }
             
             ++charIdx;
             
-            // Advance iterator past positions we've passed
+            // Advance iterator past positions we've passed (should not be needed if step-by-step logic is correct)
             while (it != colorChanges.end() && it->pos < lineStart + charIdx) {
-                if (it->isStart) {
+                 if (it->isStart) {
                     spanColor = it->color;
                 } else {
-                    // Token ended, check if another starts
-                    auto nextIt = it + 1;
-                    if (nextIt != colorChanges.end() && nextIt->pos == it->pos && nextIt->isStart) {
-                        spanColor = nextIt->color;
-                    } else {
-                        spanColor = m_Theme.text;
-                    }
+                    spanColor = m_Theme.text;
                 }
                 ++it;
             }
@@ -694,6 +729,112 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
             ImVec2(xEnd, y + textHeight),
             m_Theme.selection
         );
+    }
+}
+
+void SyntaxEditor::RenderScope(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine) {
+    auto [start, end] = buffer.GetScopeRange(m_CursorPos);
+    if (start == end) return;
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    auto [startLine, startCol] = buffer.PosToLineCol(start);
+    auto [endLine, endCol] = buffer.PosToLineCol(end);
+    
+    if (endLine < firstLine || startLine >= lastLine) return;
+    
+    size_t drawStartLine = std::max(startLine, firstLine);
+    size_t drawEndLine = std::min(endLine, lastLine - 1);
+    
+    for (size_t i = drawStartLine; i <= drawEndLine; ++i) {
+        float y = textPos.y + (i - firstLine) * lineHeight;
+        
+        float xStart = textPos.x;
+        float xEnd = textPos.x + ImGui::GetContentRegionAvail().x;
+        
+        // Only constrain width on first and last lines for block effect
+        if (i == startLine) xStart += startCol * m_CharWidth;
+        if (i == endLine) xEnd = textPos.x + endCol * m_CharWidth;
+        
+        // Ensure min width for empty scope or cursor
+        if (xEnd <= xStart) xEnd = xStart + m_CharWidth;
+        
+        drawList->AddRectFilled(ImVec2(xStart, y), ImVec2(xEnd, y + lineHeight), m_Theme.scopeBackground);
+    }
+}
+
+void SyntaxEditor::RenderIndentGuides(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine) {
+    if (m_Theme.rainbowIndents.empty()) return;
+    
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    
+    // Offset x starting position by line number width if shown
+    // textPos already includes line number width from Render()
+    
+    for (size_t i = firstLine; i < lastLine; ++i) {
+        std::string_view line = buffer.LineView(i);
+        size_t indentLevel = 0;
+        size_t spaces = 0;
+        
+        for (char c : line) {
+            if (c == ' ') {
+                spaces++;
+                if (spaces % m_TabSize == 0) {
+                     indentLevel++;
+                }
+            } else if (c == '\t') {
+                spaces = 0;
+                indentLevel++;
+            } else {
+                break;
+            }
+        }
+        
+        // Draw guide lines
+        // We draw up to indentLevel
+        // e.g. if indentLevel is 2, we draw lines at indent 0 and 1? 
+        // Or indent 1 and 2?
+        // Usually guides are drawn AT the indent columns.
+        
+        for (size_t j = 0; j < indentLevel; ++j) {
+            float x = textPos.x + (j * m_TabSize) * m_CharWidth;
+            float y = textPos.y + (i - firstLine) * lineHeight;
+            
+            ImU32 color = m_Theme.rainbowIndents[j % m_Theme.rainbowIndents.size()];
+            drawList->AddLine(ImVec2(x, y), ImVec2(x, y + lineHeight), color, 1.0f);
+        }
+    }
+}
+
+void SyntaxEditor::RenderMatchingBracket(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine) {
+    size_t bracketPos = m_CursorPos;
+    size_t matchPos = buffer.GetMatchingBracket(bracketPos);
+    
+    // Check previous character if current is not a bracket
+    if (matchPos == SIZE_MAX && m_CursorPos > 0) {
+        bracketPos = m_CursorPos - 1;
+        matchPos = buffer.GetMatchingBracket(bracketPos);
+    }
+    
+    if (matchPos != SIZE_MAX) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        float textHeight = ImGui::GetTextLineHeight();
+        
+        auto drawBox = [&](size_t pos) {
+            auto [line, col] = buffer.PosToLineCol(pos);
+            if (line < firstLine) return;
+            
+            float x = textPos.x + col * m_CharWidth;
+            float y = textPos.y + (line - firstLine) * lineHeight;
+            
+            drawList->AddRect(
+                ImVec2(x, y), 
+                ImVec2(x + m_CharWidth, y + textHeight), 
+                IM_COL32(255, 200, 0, 200) // Gold color for matching bracket box
+            );
+        };
+        
+        drawBox(bracketPos);
+        drawBox(matchPos);
     }
 }
 

@@ -318,6 +318,7 @@ std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t en
     
     // Use tree-sitter cursor for efficient traversal
     TSTreeCursor cursor = ts_tree_cursor_new(root);
+    int currentDepth = 0;
     
     // Move cursor to the start position
     TSPoint startPoint = { static_cast<uint32_t>(startLine), 0 };
@@ -337,6 +338,7 @@ std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t en
                 if (!ts_tree_cursor_goto_parent(&cursor)) {
                     goto done;
                 }
+                currentDepth--;
             }
             visitChildren = true;
             continue;
@@ -344,13 +346,36 @@ std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t en
         
         // Skip nodes entirely before our range
         if (nodeEnd < startByte) {
+            // Try to descend if it might contain our range, but here we know it ends before
+            // Wait, nodeEnd < startByte means the whole node is before. 
+            // So we don't need to visit children? Yes if children are contained in it.
+            // But we can skip it.
             if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
                 if (!ts_tree_cursor_goto_parent(&cursor)) {
                     goto done;
                 }
-                visitChildren = false;
+                currentDepth--;
+                visitChildren = false; // We just came up from a parent, we might be at a node that we already visited or something?
+                // No, goto_parent goes to parent. We need to go next sibling of parent.
+                // The loop structure in original code was:
+                /*
+                 if (!ts_tree_cursor_goto_next_sibling(&cursor)) {
+                    if (!ts_tree_cursor_goto_parent(&cursor)) { goto done; }
+                    visitChildren = false;
+                 }
+                */
+                // Wait, if I go to parent, I am at the parent node. parent node was already visited?
+                // The cursor logic is tricky. 
+                // Using standard preorder traversal:
+                // Visit Node.
+                // Goto First Child.
+                // Goto Next Sibling.
+                // Goto Parent.
+                
+                // If I am at a node completely before my range, I should try Next Sibling.
+                // If no next sibling, go to parent.
             }
-            continue;
+             continue;
         }
         
         // Node overlaps our range
@@ -370,12 +395,14 @@ std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t en
                 .endRow = ep.row,
                 .endCol = ep.column,
                 .type = type,
-                .highlightId = static_cast<uint16_t>(MapNodeTypeToHighlight(type))
+                .highlightId = static_cast<uint16_t>(MapNodeTypeToHighlight(type)),
+                .depth = static_cast<uint16_t>(currentDepth)
             });
         }
         
         // Try to descend into children
         if (visitChildren && ts_tree_cursor_goto_first_child(&cursor)) {
+            currentDepth++;
             visitChildren = true;
             continue;
         }
@@ -391,6 +418,7 @@ std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t en
             if (!ts_tree_cursor_goto_parent(&cursor)) {
                 goto done;
             }
+            currentDepth--;
             if (ts_tree_cursor_goto_next_sibling(&cursor)) {
                 visitChildren = true;
                 break;
@@ -424,6 +452,82 @@ HighlightGroup TextBuffer::GetHighlightAt(size_t pos) const {
     }
     
     return MapNodeTypeToHighlight(ts_node_type(node));
+}
+
+std::pair<size_t, size_t> TextBuffer::GetScopeRange(size_t pos) const {
+    if (!m_Tree) return {0, 0};
+    
+    TSNode root = ts_tree_root_node(m_Tree);
+    TSNode node = ts_node_descendant_for_byte_range(root, (uint32_t)pos, (uint32_t)pos);
+    
+    TSNode current = node;
+    while (!ts_node_is_null(current)) {
+        const char* type = ts_node_type(current);
+        std::string_view typeSv(type);
+        
+        // Check for common scope types or block containers
+        if (typeSv == "compound_statement" || 
+            typeSv == "block" || 
+            typeSv == "function_definition" || 
+            typeSv == "class_definition" ||
+            typeSv == "translation_unit" || // file scope
+            typeSv == "body") {
+                return { ts_node_start_byte(current), ts_node_end_byte(current) };
+        }
+        
+        // Also check if it's a statement block (often has braces)
+        // Some languages use 'statement_block', 'block' etc.
+        if (typeSv.find("block") != std::string_view::npos) {
+             return { ts_node_start_byte(current), ts_node_end_byte(current) };
+        }
+
+        current = ts_node_parent(current);
+    }
+    
+    return {0, 0};
+}
+
+size_t TextBuffer::GetMatchingBracket(size_t pos) const {
+    if (!m_Tree) return SIZE_MAX;
+    
+    TSNode root = ts_tree_root_node(m_Tree);
+    TSNode node = ts_node_descendant_for_byte_range(root, (uint32_t)pos, (uint32_t)pos + 1);
+    
+    if (ts_node_is_null(node)) return SIZE_MAX;
+    
+    const char* type = ts_node_type(node);
+    if (!type) return SIZE_MAX; // Should not happen for valid node
+    std::string_view typeSv(type);
+    
+    bool isOpen = (typeSv == "{" || typeSv == "(" || typeSv == "[");
+    bool isClose = (typeSv == "}" || typeSv == ")" || typeSv == "]");
+    
+    if (!isOpen && !isClose) return SIZE_MAX;
+    
+    TSNode parent = ts_node_parent(node);
+    if (ts_node_is_null(parent)) return SIZE_MAX;
+    
+    uint32_t count = ts_node_child_count(parent);
+    
+    const char* target = nullptr;
+    if (typeSv == "{") target = "}";
+    else if (typeSv == "}") target = "{";
+    else if (typeSv == "(") target = ")";
+    else if (typeSv == ")") target = "(";
+    else if (typeSv == "[") target = "]";
+    else if (typeSv == "]") target = "[";
+    
+    for (uint32_t i = 0; i < count; ++i) {
+        TSNode child = ts_node_child(parent, i);
+        if (ts_node_eq(child, node)) continue;
+        
+        const char* childType = ts_node_type(child);
+        if (childType && strcmp(childType, target) == 0) {
+            return ts_node_start_byte(child);
+        }
+    }
+    
+    return SIZE_MAX;
 }
 
 HighlightGroup TextBuffer::MapNodeTypeToHighlight(const char* nodeType) const {

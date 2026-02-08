@@ -29,6 +29,7 @@ struct SyntaxToken {
     size_t endCol;
     const char* type;       // Tree-sitter node type
     uint16_t highlightId;   // Mapped highlight group
+    uint16_t depth;         // Nesting depth for rainbow brackets
 };
 
 // Highlight groups (similar to Neovim)
@@ -136,6 +137,10 @@ public:
     // Get syntax tokens for a line range (for rendering)
     std::vector<SyntaxToken> GetSyntaxTokens(size_t startLine, size_t endLine) const;
     HighlightGroup GetHighlightAt(size_t pos) const;
+
+    // Advanced syntax features
+    std::pair<size_t, size_t> GetScopeRange(size_t pos) const;
+    size_t GetMatchingBracket(size_t pos) const; // Returns pos, or -1 (SIZE_MAX) if none
     
     // Built-in completion
     std::vector<std::string> GetWordCompletions(const std::string& prefix, size_t cursorPos = 0) const;

@@ -41,6 +41,10 @@ struct SyntaxTheme {
     ImU32 selection = IM_COL32(38, 79, 120, 255);     // Selection blue
     ImU32 cursor = IM_COL32(255, 255, 255, 255);      // White cursor
     
+    ImU32 scopeBackground = IM_COL32(50, 50, 60, 60); // Transparent scope highlight
+    std::vector<ImU32> rainbowIndents;
+    std::vector<ImU32> rainbowBrackets;
+
     ImU32 GetColor(HighlightGroup group) const {
         switch (group) {
             case HighlightGroup::Keyword: return keyword;
@@ -97,6 +101,12 @@ private:
     void RenderSpan(ImDrawList* drawList, std::string_view lineText, size_t start, size_t end, float& x, float y, ImU32 color);
     void RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine);
     void RenderSelection(TextBuffer& buffer, const ImVec2& textPos, float lineHeight, size_t firstLine, size_t lastLine);
+    
+    // New features
+    void RenderScope(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
+    void RenderIndentGuides(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
+    void RenderMatchingBracket(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine);
+
     void RenderStatusLine(TextBuffer& buffer, const ImVec2& pos, float width);
     
     float GetCharWidth() const;
