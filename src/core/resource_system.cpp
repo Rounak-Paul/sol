@@ -32,6 +32,21 @@ TextResource::TextResource(const std::filesystem::path& path)
 
 bool TextResource::Load() {
     try {
+        // Only use disk buffering for extremely large files (> 100MB) where loading to RAM is dangerous
+        // For standard "large" files (1-100MB), we use the Rope structure which supports editing
+        if (std::filesystem::file_size(m_Path) > 100 * 1024 * 1024) { 
+            // Large file > 100MB: Use Disk Buffering
+             m_Buffer.EnableDiskBuffering(m_Path);
+             // We still set language but we won't load content
+             auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(m_Path);
+            if (lang) {
+                m_Buffer.SetLanguage(lang);
+            }
+             m_Modified = false;
+             Logger::Info("Loaded file (streamed): " + m_Path.string());
+             return true;
+        }
+
         std::ifstream file(m_Path);
         if (!file.is_open()) {
             Logger::Error("Failed to open file: " + m_Path.string());

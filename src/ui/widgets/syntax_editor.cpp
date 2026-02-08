@@ -155,6 +155,9 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     const size_t visibleLineCount = static_cast<size_t>(contentSize.y / lineHeight) + 2;
     const size_t lastVisibleLine = std::min(firstVisibleLine + visibleLineCount, lineCount);
     
+    // Prepare visible range for large file optimizations
+    buffer.PrepareVisibleRange(firstVisibleLine, lastVisibleLine);
+    
     // Ensure buffer is parsed
     if (!buffer.IsParsed() && buffer.HasLanguage()) {
         buffer.Parse();

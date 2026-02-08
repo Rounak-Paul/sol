@@ -72,7 +72,7 @@ void TextBuffer::Insert(size_t pos, std::string_view text) {
     m_Modified = true;
     ParseIncremental();
     
-    if (m_Language) {
+    if (m_Language && !m_Rope.IsLargeFile()) {
         LSPManager::GetInstance().DidChange(m_FilePath.string(), std::string(m_Rope.CStr(), m_Rope.Length()), m_Language->name);
     }
 }
@@ -82,7 +82,7 @@ void TextBuffer::Delete(size_t pos, size_t len) {
     m_Modified = true;
     ParseIncremental();
     
-    if (m_Language) {
+    if (m_Language && !m_Rope.IsLargeFile()) {
         LSPManager::GetInstance().DidChange(m_FilePath.string(), std::string(m_Rope.CStr(), m_Rope.Length()), m_Language->name);
     }
 }
@@ -92,7 +92,7 @@ void TextBuffer::Replace(size_t pos, size_t len, std::string_view text) {
     m_Modified = true;
     ParseIncremental();
     
-    if (m_Language) {
+    if (m_Language && !m_Rope.IsLargeFile()) {
         LSPManager::GetInstance().DidChange(m_FilePath.string(), std::string(m_Rope.CStr(), m_Rope.Length()), m_Language->name);
     }
 }
@@ -132,6 +132,8 @@ void TextBuffer::Parse() {
         return;
     }
     
+    if (m_Rope.IsLargeFile()) return;
+    
     ReleaseTree();
     
     // Use cached buffer directly — no copy needed
@@ -149,6 +151,8 @@ void TextBuffer::ParseIncremental() {
     if (!m_Parser || !m_Language || !m_Language->tsLanguage) {
         return;
     }
+    
+    if (m_Rope.IsLargeFile()) return;
     
     if (!m_Tree) {
         Parse();
@@ -190,6 +194,113 @@ void TextBuffer::ParseIncremental() {
     
     ReleaseTree();
     m_Tree = newTree;
+}
+
+void TextBuffer::EnableDiskBuffering(const std::filesystem::path& path) {
+    if (m_IsDiskBuffered) return;
+    
+    m_FilePath = path;
+    m_IsDiskBuffered = true;
+    IndexDiskFile();
+}
+
+void TextBuffer::IndexDiskFile() {
+    m_DiskLineStarts.clear();
+    m_DiskLineStarts.push_back(0);
+    
+    // Get file size
+    try {
+        m_DiskFileSize = std::filesystem::file_size(m_FilePath);
+    } catch (...) {
+        m_DiskFileSize = 0;
+    }
+    
+    std::ifstream file(m_FilePath, std::ios::binary);
+    if (!file.is_open()) {
+        m_IsDiskBuffered = false;
+        return;
+    }
+    
+    // We can read in chunks to find newlines without loading whole file
+    const size_t CHUNK_SIZE = 1024 * 64;
+    std::vector<char> buffer(CHUNK_SIZE);
+    
+    size_t offset = 0;
+    while (file.read(buffer.data(), CHUNK_SIZE) || file.gcount() > 0) {
+        size_t count = file.gcount();
+        for (size_t i = 0; i < count; ++i) {
+            if (buffer[i] == '\n') {
+                m_DiskLineStarts.push_back(offset + i + 1);
+            }
+        }
+        offset += count;
+    }
+    
+    // Create an empty rope just to satisfy structure, 
+    // but we will override access methods.
+    // Actually, we must ensure Rope is NOT used if m_IsDiskBuffered
+}
+
+std::string TextBuffer::Line(size_t lineNum) const {
+    if (m_IsDiskBuffered) {
+        return std::string(LineView(lineNum));
+    }
+    return m_Rope.Line(lineNum);
+}
+
+std::string_view TextBuffer::LineView(size_t lineNum) const {
+    if (m_IsDiskBuffered) {
+        size_t start = LineStart(lineNum);
+        size_t end = LineEnd(lineNum);
+        
+        // Ensure end includes start
+        if (end < start) end = start;
+        
+        // NOTE: LineEnd logic for disk should probably exclude newline if possible,
+        // but since we just read raw bytes, it depends on what we want.
+        // Rope::LineView usually excludes the newline?
+        // Let's assume we want to return the raw bytes we have, excluding newline if prevalent.
+        // But we don't know where newline is without reading.
+        // Wait, m_DiskLineStarts stores the start of line.
+        // LineEnd returns start of NEXT line - 1?
+        // Let's re-verify LineEnd logic in header.
+        // return next > 0 ? next - 1 : 0;
+        // So it points to the newline character usually.
+        // If we want LineView to NOT include newline, we rely on the caller or just return what we have?
+        // Standard Rope::LineView tries to exclude newline.
+        
+        size_t len = end - start;
+        std::string_view view = m_Rope.GetVisibleBufferView(start, len);
+        
+        // If we successfully got the view, check for newline at the end
+        if (!view.empty() && view.back() == '\n') {
+            view.remove_suffix(1);
+        }
+        return view;
+    }
+    return m_Rope.LineView(lineNum);
+}
+
+void TextBuffer::PrepareVisibleRange(size_t firstLine, size_t lastLine) {
+    if (m_IsDiskBuffered) {
+        size_t startByte = LineStart(firstLine);
+        size_t endByte = LineEnd(lastLine);
+        if (endByte < startByte) endByte = startByte;
+        size_t len = endByte - startByte;
+        
+        std::string buffer;
+        buffer.resize(len);
+        
+        std::ifstream file(m_FilePath, std::ios::binary);
+        if (file.is_open()) {
+            file.seekg(startByte);
+            file.read(buffer.data(), len);
+        }
+        
+        m_Rope.SetVisibleBuffer(buffer, firstLine, lastLine, startByte);
+    } else {
+        m_Rope.PrepareVisibleRange(firstLine, lastLine);
+    }
 }
 
 std::vector<SyntaxToken> TextBuffer::GetSyntaxTokens(size_t startLine, size_t endLine) const {

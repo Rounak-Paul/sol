@@ -7,6 +7,7 @@
 #include <memory>
 #include <functional>
 #include <filesystem>
+#include <fstream>
 
 // Forward declare tree-sitter types
 extern "C" {
@@ -83,13 +84,44 @@ public:
     bool Empty() const { return m_Rope.Empty(); }
     
     // Line operations
-    size_t LineCount() const { return m_Rope.LineCount(); }
-    std::string Line(size_t lineNum) const { return m_Rope.Line(lineNum); }
-    std::string_view LineView(size_t lineNum) const { return m_Rope.LineView(lineNum); }
-    size_t LineStart(size_t lineNum) const { return m_Rope.LineStart(lineNum); }
-    size_t LineEnd(size_t lineNum) const { return m_Rope.LineEnd(lineNum); }
-    std::pair<size_t, size_t> PosToLineCol(size_t pos) const { return m_Rope.PosToLineCol(pos); }
+    size_t LineCount() const { 
+        if (m_IsDiskBuffered) return m_DiskLineStarts.size();
+        return m_Rope.LineCount(); 
+    }
+    std::string Line(size_t lineNum) const;
+    std::string_view LineView(size_t lineNum) const;
+    
+    size_t LineStart(size_t lineNum) const { 
+        if (m_IsDiskBuffered) {
+             if (lineNum >= m_DiskLineStarts.size()) return 0;
+             return m_DiskLineStarts[lineNum];
+        }
+        return m_Rope.LineStart(lineNum); 
+    }
+    size_t LineEnd(size_t lineNum) const { 
+        if (m_IsDiskBuffered) {
+            if (lineNum + 1 < m_DiskLineStarts.size()) {
+                 size_t next = m_DiskLineStarts[lineNum+1];
+                 return next > 0 ? next - 1 : 0;
+            }
+            return m_DiskFileSize;
+        }
+        return m_Rope.LineEnd(lineNum); 
+    }
+    std::pair<size_t, size_t> PosToLineCol(size_t pos) const { 
+         if (m_IsDiskBuffered) {
+              // Binary search m_DiskLineStarts
+              auto it = std::upper_bound(m_DiskLineStarts.begin(), m_DiskLineStarts.end(), pos);
+              size_t line = 0;
+              if (it != m_DiskLineStarts.begin()) {
+                  line = static_cast<size_t>(it - m_DiskLineStarts.begin()) - 1;
+              }
+              return {line, pos - m_DiskLineStarts[line]};
+         }
+         return m_Rope.PosToLineCol(pos); 
+    }
     size_t LineColToPos(size_t line, size_t col) const { return m_Rope.LineColToPos(line, col); }
+    void PrepareVisibleRange(size_t firstLine, size_t lastLine);
     
     // Language/syntax
     void SetLanguage(const Language* lang);
@@ -118,8 +150,13 @@ public:
     void SetFilePath(const std::filesystem::path& path) { m_FilePath = path; }
     const std::filesystem::path& GetFilePath() const { return m_FilePath; }
     
+    // Streaming support
+    void EnableDiskBuffering(const std::filesystem::path& path);
+    bool IsDiskBuffered() const { return m_IsDiskBuffered; }
+
     // Modified state
     bool IsModified() const { return m_Modified; }
+
     void SetModified(bool modified) { m_Modified = modified; }
     void MarkModified() { m_Modified = true; }
     
@@ -132,6 +169,13 @@ public:
     
 private:
     Rope m_Rope;
+    // Disk buffering members
+    bool m_IsDiskBuffered = false;
+    mutable std::ifstream m_FileStream; // Unused but kept for ABI compat if needed? No, I can remove users.
+    mutable std::vector<size_t> m_DiskLineStarts;
+    size_t m_DiskFileSize = 0;
+    void IndexDiskFile();
+    
     TSParser* m_Parser = nullptr;
     TSTree* m_Tree = nullptr;
     const Language* m_Language = nullptr;

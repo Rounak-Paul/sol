@@ -188,11 +188,13 @@ void Rope::Insert(size_t pos, std::string_view text) {
     
     pos = std::min(pos, Length());
     
-    // Ensure caches are materialized before edit so we can patch them
-    EnsureCache();
-    EnsureLineStarts();
+    // Ensure caches are materialized before edit ONLY for small files
+    if (!IsLargeFile()) {
+        EnsureCache();
+        EnsureLineStarts();
+    }
     
-    // Record edit info for tree-sitter (use cached line starts — still valid pre-edit)
+    // Record edit info for tree-sitter
     auto [startLine, startCol] = PosToLineCol(pos);
     m_LastEdit.startByte = pos;
     m_LastEdit.oldEndByte = pos;
@@ -206,12 +208,16 @@ void Rope::Insert(size_t pos, std::string_view text) {
     auto temp = Concat(std::move(left), std::move(middle));
     m_Root = Concat(std::move(temp), std::move(right));
     
-    // Patch cache and line starts incrementally (O(inserted_text) not O(total_doc))
-    PatchCacheInsert(pos, text);
-    
-    // Compute newEndPoint from the now-updated line starts
-    auto [endLine, endCol] = PosToLineCol(pos + text.length());
-    m_LastEdit.newEndPoint = {endLine, endCol};
+    if (IsLargeFile()) {
+        m_VisibleRangeBuf.clear();
+        auto [endLine, endCol] = PosToLineCol(pos + text.length());
+        m_LastEdit.newEndPoint = {endLine, endCol};
+    } else {
+        // Patch cache and line starts incrementally
+        PatchCacheInsert(pos, text);
+        auto [endLine, endCol] = PosToLineCol(pos + text.length());
+        m_LastEdit.newEndPoint = {endLine, endCol};
+    }
 }
 
 void Rope::Delete(size_t pos, size_t len) {
@@ -221,11 +227,12 @@ void Rope::Delete(size_t pos, size_t len) {
     pos = std::min(pos, totalLen);
     len = std::min(len, totalLen - pos);
     
-    // Ensure caches are materialized before edit
-    EnsureCache();
-    EnsureLineStarts();
+    if (!IsLargeFile()) {
+        EnsureCache();
+        EnsureLineStarts();
+    }
     
-    // Record edit info for tree-sitter (use cached line starts — still valid pre-edit)
+    // Record edit info for tree-sitter
     auto [startLine, startCol] = PosToLineCol(pos);
     auto [endLine, endCol] = PosToLineCol(pos + len);
     m_LastEdit.startByte = pos;
@@ -244,8 +251,11 @@ void Rope::Delete(size_t pos, size_t len) {
         m_Root = std::make_unique<Leaf>("");
     }
     
-    // Patch cache and line starts incrementally
-    PatchCacheDelete(pos, len);
+    if (IsLargeFile()) {
+        m_VisibleRangeBuf.clear();
+    } else {
+        PatchCacheDelete(pos, len);
+    }
 }
 
 void Rope::Replace(size_t pos, size_t len, std::string_view text) {
@@ -282,11 +292,18 @@ size_t Rope::Length() const {
 }
 
 size_t Rope::LineCount() const {
+    if (IsLargeFile()) {
+        return (m_Root ? m_Root->LineCount() : 0) + 1; // +1 for the last implicit line? Or 0-based?
+        // Metrics store "newlineCount".
+        // "A\nB" has 1 newline, 2 lines.
+        // So return newlineCount + 1.
+    }
     EnsureLineStarts();
     return m_LineStarts.size();
 }
 
 void Rope::EnsureLineStarts() const {
+    if (IsLargeFile()) return;
     if (!m_LineStartsDirty) return;
     
     EnsureCache();
@@ -303,6 +320,9 @@ void Rope::EnsureLineStarts() const {
 }
 
 size_t Rope::LineStart(size_t lineNum) const {
+    if (IsLargeFile()) {
+        return FindLineStartDirect(lineNum);
+    }
     EnsureLineStarts();
     if (lineNum >= m_LineStarts.size()) {
         return m_Cache.length();
@@ -311,6 +331,21 @@ size_t Rope::LineStart(size_t lineNum) const {
 }
 
 size_t Rope::LineEnd(size_t lineNum) const {
+    if (IsLargeFile()) {
+        size_t nextStart = FindLineStartDirect(lineNum + 1);
+        if (nextStart == 0) return 0;
+
+        size_t currentStart = FindLineStartDirect(lineNum);
+        if (nextStart <= currentStart) return currentStart;
+        
+        size_t len = Length();
+        if (nextStart > len) nextStart = len;
+        
+        if (At(nextStart - 1) == '\n') {
+            return nextStart - 1;
+        }
+        return nextStart;
+    }
     EnsureLineStarts();
     if (lineNum + 1 < m_LineStarts.size()) {
         size_t nextLineStart = m_LineStarts[lineNum + 1];
@@ -331,6 +366,52 @@ std::string Rope::Line(size_t lineNum) const {
 }
 
 std::string_view Rope::LineView(size_t lineNum) const {
+    if (IsLargeFile()) {
+        if (lineNum >= m_VisibleFirstLine && lineNum < m_VisibleLastLine) {
+            size_t globalStart = FindLineStartDirect(lineNum);
+            size_t globalEnd = FindLineStartDirect(lineNum + 1);
+            if (globalEnd > 0 && At(globalEnd - 1) == '\n') globalEnd--; // Exclude newline? 
+            // Better: LineView usually excludes newline? 
+            // The original implementation:
+            // start = LineStart(lineNum), end = LineEnd(lineNum)
+            // LineEnd returns position BEFORE newline if it exists?
+            // LineEnd implementation: return nextLineStart > 0 ? nextLineStart - 1 : 0
+            // Wait, nextLineStart is index AFTER \n. So -1 is the \n.
+            // So LineEnd includes the content UP TO \n? Or excludes \n?
+            // "return nextLineStart > 0 ? nextLineStart - 1 : 0" 
+            // If text is "A\nB", line 0 start=0, line 1 start=2.
+            // LineEnd(0) = 2 - 1 = 1. Substring(0, 1) -> "A".
+            // So LineEnd excludes \n.
+            
+            // Adjust for VisibleRange logic
+            if (globalStart >= m_VisibleRangeStart) {
+                size_t localStart = globalStart - m_VisibleRangeStart;
+                size_t len = globalEnd - globalStart;
+                if (len > 0 && globalEnd > 0) {
+                     // Check if ends with newline
+                     // We can peek into visible buffer
+                     size_t localEnd = localStart + len;
+                     if (localEnd <= m_VisibleRangeBuf.length()) {
+                         if (localEnd > 0 && m_VisibleRangeBuf[localEnd-1] == '\n') {
+                             len--;
+                         }
+                         return std::string_view(m_VisibleRangeBuf.data() + localStart, len);
+                     }
+                }
+            }
+        }
+        // Fallback for lines outside visible range (slow path)
+        static std::string temp;
+        size_t s = FindLineStartDirect(lineNum);
+        size_t nextS = FindLineStartDirect(lineNum + 1);
+        size_t e = (nextS > 0 && nextS > s) ? nextS - 1 : s; // approximate
+        // Accurate check for newline:
+        // We'd have to read char at e.
+        temp = SubstringDirect(s, nextS - s);
+        if (!temp.empty() && temp.back() == '\n') temp.pop_back();
+        return temp;
+    }
+
     EnsureCache();
     size_t start = LineStart(lineNum);
     size_t end = LineEnd(lineNum);
@@ -338,6 +419,35 @@ std::string_view Rope::LineView(size_t lineNum) const {
 }
 
 std::pair<size_t, size_t> Rope::PosToLineCol(size_t pos) const {
+    if (IsLargeFile()) {
+        size_t len = Length();
+        if (pos > len) pos = len;
+
+        size_t offset = pos;
+        size_t line = 0;
+        const Node* node = m_Root.get();
+
+        while (node) {
+            if (auto* leaf = dynamic_cast<const Leaf*>(node)) {
+                 size_t limit = std::min(offset, leaf->text.length());
+                 for (size_t i = 0; i < limit; ++i) {
+                     if (leaf->text[i] == '\n') line++;
+                 }
+                 break;
+            } else if (auto* branch = dynamic_cast<const Branch*>(node)) {
+                 if (offset < branch->leftLen) {
+                     node = branch->left.get();
+                 } else {
+                     line += branch->leftLines;
+                     offset -= branch->leftLen;
+                     node = branch->right.get();
+                 }
+            }
+        }
+        size_t start = FindLineStartDirect(line);
+        return {line, (pos >= start) ? (pos - start) : 0};
+    }
+
     EnsureLineStarts();
     if (m_LineStarts.empty()) {
         return {0, 0};
@@ -374,6 +484,7 @@ void Rope::ForEachInRange(size_t start, size_t end, CharCallback callback) const
 }
 
 void Rope::EnsureCache() const {
+    if (IsLargeFile()) return;
     if (m_CacheDirty) {
         m_Cache.clear();
         if (m_Root) {
@@ -473,6 +584,124 @@ void Rope::PatchCacheDelete(size_t pos, size_t len) {
 
 size_t Rope::CountNewlines(std::string_view text) const {
     return std::count(text.begin(), text.end(), '\n');
+}
+
+// -------------------------------------------------------------------------------------------------
+// Large File Optimizations
+// -------------------------------------------------------------------------------------------------
+
+size_t Rope::Leaf::FindLineStart(size_t lineNum, size_t& linesSkipped) const {
+    size_t targetIndex = lineNum - linesSkipped;
+    if (targetIndex == 0) return 0; // Starts at beginning of this leaf range
+    
+    size_t count = 0;
+    for (size_t i = 0; i < text.length(); ++i) {
+        if (text[i] == '\n') {
+            count++;
+            if (count == targetIndex) {
+                return i + 1; // Start of next line
+            }
+        }
+    }
+    return text.length(); 
+}
+
+void Rope::Leaf::CollectRange(std::string& out, size_t start, size_t end) const {
+    size_t len = text.length();
+    if (start >= len) return;
+    
+    size_t realEnd = std::min(end, len);
+    if (realEnd > start) {
+        out.append(text, start, realEnd - start);
+    }
+}
+
+size_t Rope::Branch::FindLineStart(size_t lineNum, size_t& linesSkipped) const {
+    size_t currentLines = linesSkipped;
+    
+    if (lineNum <= currentLines + leftLines) {
+         // It's in the left child
+         return left->FindLineStart(lineNum, linesSkipped);
+    }
+    
+    // It's in the right child
+    linesSkipped += leftLines;
+    return leftLen + right->FindLineStart(lineNum, linesSkipped);
+}
+
+void Rope::Branch::CollectRange(std::string& out, size_t start, size_t end) const {
+    if (start < leftLen) {
+        left->CollectRange(out, start, end); 
+    }
+    if (end > leftLen) {
+        size_t rightStart = (start > leftLen) ? (start - leftLen) : 0;
+        size_t rightEnd = end - leftLen; // Safe because end > leftLen
+        right->CollectRange(out, rightStart, rightEnd);
+    }
+}
+
+size_t Rope::FindLineStartDirect(size_t lineNum) const {
+    if (lineNum == 0) return 0;
+    if (!m_Root) return 0;
+    
+    size_t skippedLines = 0;
+    return m_Root->FindLineStart(lineNum, skippedLines);
+}
+
+std::string Rope::SubstringDirect(size_t pos, size_t len) const {
+    std::string out;
+    out.reserve(len);
+    if (m_Root) {
+        m_Root->CollectRange(out, pos, pos + len);
+    }
+    return out;
+}
+
+void Rope::PrepareVisibleRange(size_t firstLine, size_t lastLine) {
+    if (!IsLargeFile()) return;
+    
+    size_t pad = 50;
+    size_t startL = (firstLine > pad) ? (firstLine - pad) : 0;
+    size_t endL = lastLine + pad;
+    size_t maxL = LineCount(); // This might be slow if using old LineCount? No, LineCount needs optimization too.
+    
+    // For large files, LineCount() comes from root metrics which is fast.
+    if (m_Root) maxL = m_Root->LineCount() + 1; // +1 because line count is newlines + 1 roughly
+    
+    if (endL > maxL) endL = maxL;
+    
+    // Check coverage
+    if (startL >= m_VisibleFirstLine && endL <= m_VisibleLastLine && !m_VisibleRangeBuf.empty()) {
+        return;
+    }
+    
+    m_VisibleFirstLine = startL;
+    m_VisibleLastLine = endL;
+    
+    size_t startByte = FindLineStartDirect(startL);
+    size_t endByte = FindLineStartDirect(endL); 
+    
+    if (endByte < startByte) endByte = startByte;
+    
+    m_VisibleRangeStart = startByte;
+    m_VisibleRangeBuf = SubstringDirect(startByte, endByte - startByte);
+}
+
+void Rope::SetVisibleBuffer(const std::string& buffer, size_t firstLine, size_t lastLine, size_t startByte) {
+    m_VisibleRangeBuf = buffer;
+    m_VisibleFirstLine = firstLine;
+    m_VisibleLastLine = lastLine;
+    m_VisibleRangeStart = startByte;
+}
+
+std::string_view Rope::GetVisibleBufferView(size_t globalStart, size_t len) const {
+    if (globalStart >= m_VisibleRangeStart) {
+        size_t localStart = globalStart - m_VisibleRangeStart;
+        if (localStart + len <= m_VisibleRangeBuf.length()) {
+            return std::string_view(m_VisibleRangeBuf.data() + localStart, len);
+        }
+    }
+    return "";
 }
 
 } // namespace sol

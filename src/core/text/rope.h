@@ -42,6 +42,15 @@ public:
     std::pair<size_t, size_t> PosToLineCol(size_t pos) const;  // Returns (line, col)
     size_t LineColToPos(size_t line, size_t col) const;
     
+    // Large file optimization: prepare visible line range for efficient rendering
+    void PrepareVisibleRange(size_t firstLine, size_t lastLine);
+    void SetVisibleBuffer(const std::string& buffer, size_t firstLine, size_t lastLine, size_t startByte);
+    
+    // Helper to get view into visible buffer using global offsets
+    std::string_view GetVisibleBufferView(size_t globalStart, size_t len) const;
+    
+    bool IsLargeFile() const { return Length() > LARGE_FILE_THRESHOLD; }
+
     // Iteration
     using CharCallback = std::function<bool(size_t pos, char c)>;
     void ForEach(CharCallback callback) const;
@@ -75,6 +84,10 @@ private:
         virtual void CollectString(std::string& out) const = 0;
         virtual std::unique_ptr<Node> Clone() const = 0;
         virtual size_t Depth() const = 0;
+        
+        // Tree-based line operations (O(log N))
+        virtual size_t FindLineStart(size_t lineNum, size_t& linesSkipped) const = 0;
+        virtual void CollectRange(std::string& out, size_t start, size_t end) const = 0;
     };
     
     struct Leaf : Node {
@@ -88,6 +101,10 @@ private:
         void CollectString(std::string& out) const override { out += text; }
         std::unique_ptr<Node> Clone() const override;
         size_t Depth() const override { return 1; }
+        
+        size_t FindLineStart(size_t lineNum, size_t& linesSkipped) const override;
+        void CollectRange(std::string& out, size_t start, size_t end) const override;
+        
         void UpdateNewlineCount();
     };
     
@@ -104,6 +121,10 @@ private:
         void CollectString(std::string& out) const override;
         std::unique_ptr<Node> Clone() const override;
         size_t Depth() const override;
+        
+        size_t FindLineStart(size_t lineNum, size_t& linesSkipped) const override;
+        void CollectRange(std::string& out, size_t start, size_t end) const override;
+        
         void UpdateMetrics();
     };
     
@@ -118,11 +139,22 @@ private:
     mutable std::vector<size_t> m_LineStarts;
     mutable bool m_LineStartsDirty = true;
     
+    // Large file optimization:
+    // Instead of caching the whole file string, we only cache the visible range + padding
+    mutable std::string m_VisibleRangeBuf;
+    mutable size_t m_VisibleFirstLine = 0;
+    mutable size_t m_VisibleLastLine = 0;
+    mutable size_t m_VisibleRangeStart = 0;
+    static constexpr size_t LARGE_FILE_THRESHOLD = 1024 * 1024; // 1MB
+
     // Internal helpers
     static std::unique_ptr<Node> BuildFromText(std::string_view text);
     static std::pair<std::unique_ptr<Node>, std::unique_ptr<Node>> Split(std::unique_ptr<Node> node, size_t pos);
     static std::unique_ptr<Node> Concat(std::unique_ptr<Node> left, std::unique_ptr<Node> right);
     static std::unique_ptr<Node> Rebalance(std::unique_ptr<Node> node);
+    
+    size_t FindLineStartDirect(size_t lineNum) const;
+    std::string SubstringDirect(size_t pos, size_t len) const;
     
     void InvalidateCache() { m_CacheDirty = true; m_LineStartsDirty = true; }
     void EnsureCache() const;
