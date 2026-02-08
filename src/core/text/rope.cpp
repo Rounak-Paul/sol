@@ -277,6 +277,10 @@ std::string Rope::Substring(size_t pos, size_t len) const {
     pos = std::min(pos, totalLen);
     len = std::min(len, totalLen - pos);
     
+    if (IsLargeFile()) {
+        return SubstringDirect(pos, len);
+    }
+    
     // For small substrings, use the cache
     EnsureCache();
     return m_Cache.substr(pos, len);

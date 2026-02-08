@@ -14,10 +14,17 @@ SyntaxEditor::SyntaxEditor() {
 }
 
 void SyntaxEditor::UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
-    m_Diagnostics.clear();
-    for (const auto& diag : diagnostics) {
-        // Group by line for easier rendering
-        m_Diagnostics[diag.range.start.line].push_back(diag);
+    if (!diagnostics.empty()) {
+        m_Diagnostics.clear();
+        for (const auto& diag : diagnostics) {
+            // Group by line for easier rendering
+            m_Diagnostics[diag.range.start.line].push_back(diag);
+        }
+        m_PendingClearDiagnostics = false;
+    } else {
+        // Queue a clear instead of clearing immediately
+        m_PendingClearDiagnostics = true;
+        m_DiagnosticsClearTimer = 0.0f;
     }
 }
 
@@ -84,6 +91,15 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     const ImGuiStyle& style = g.Style;
     const ImGuiID id = window->GetID(label);
     
+    // Handle diagnostics debounce
+    if (m_PendingClearDiagnostics) {
+        m_DiagnosticsClearTimer += ImGui::GetIO().DeltaTime;
+        if (m_DiagnosticsClearTimer > DIAGNOSTICS_CLEAR_DELAY) {
+            m_Diagnostics.clear();
+            m_PendingClearDiagnostics = false;
+        }
+    }
+
     const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
     m_CharWidth = GetCharWidth();
     
@@ -505,6 +521,12 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
     // Render each visible line
     for (size_t lineIdx = firstLine; lineIdx < lastLine; ++lineIdx) {
         std::string_view lineText = buffer.LineView(lineIdx);
+        
+        // Strip trailing newlines/CR to prevent whitespace rendering issues
+        while (!lineText.empty() && (lineText.back() == '\n' || lineText.back() == '\r')) {
+            lineText.remove_suffix(1);
+        }
+        
         float y = pos.y + (lineIdx - firstLine) * lineHeight;
         float x = pos.x;
         
