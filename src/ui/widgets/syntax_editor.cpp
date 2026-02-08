@@ -186,30 +186,31 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
                                windowPos.y + windowPadding.y - scrollOffset);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
-    // Render line numbers
-    if (m_ShowLineNumbers) {
-        RenderLineNumbers(buffer, cursorPos, lineHeight, firstVisibleLine, lastVisibleLine);
-    }
-    
     // Text area position
     ImVec2 textPos = ImVec2(cursorPos.x + lineNumberWidth, cursorPos.y);
-    
-    // Render selection background
-    if (m_HasSelection) {
-        RenderSelection(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
-    }
     
     // Render current line highlight
     if ((m_IsFocused || m_ShowCompletion) && !m_HasSelection) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
             float y = textPos.y + (cursorLine - firstVisibleLine) * lineHeight;
+            float textHeight = ImGui::GetTextLineHeight();
             drawList->AddRectFilled(
                 ImVec2(cursorPos.x, y),
-                ImVec2(cursorPos.x + contentSize.x, y + lineHeight),
+                ImVec2(cursorPos.x + contentSize.x, y + textHeight),
                 m_Theme.currentLine
             );
         }
+    }
+
+    // Render line numbers
+    if (m_ShowLineNumbers) {
+        RenderLineNumbers(buffer, cursorPos, lineHeight, firstVisibleLine, lastVisibleLine);
+    }
+    
+    // Render selection background
+    if (m_HasSelection) {
+        RenderSelection(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
     }
     
     // Render syntax-highlighted text
@@ -652,13 +653,10 @@ void SyntaxEditor::RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float
     float x = textPos.x + cursorCol * m_CharWidth;
     float y = textPos.y + (cursorLine - firstLine) * lineHeight;
     
-    // Get line height without spacing for cursor
-    float cursorHeight = ImGui::GetTextLineHeight();
-    
     // Draw cursor line (thin vertical bar)
     drawList->AddRectFilled(
-        ImVec2(x, y + 2),
-        ImVec2(x + 2, y + cursorHeight - 2),
+        ImVec2(x, y),
+        ImVec2(x + 2, y + ImGui::GetTextLineHeight()),
         m_Theme.cursor
     );
 }
