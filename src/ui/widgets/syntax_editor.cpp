@@ -14,17 +14,10 @@ SyntaxEditor::SyntaxEditor() {
 }
 
 void SyntaxEditor::UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
-    if (!diagnostics.empty()) {
-        m_Diagnostics.clear();
-        for (const auto& diag : diagnostics) {
-            // Group by line for easier rendering
-            m_Diagnostics[diag.range.start.line].push_back(diag);
-        }
-        m_PendingClearDiagnostics = false;
-    } else {
-        // Queue a clear instead of clearing immediately
-        m_PendingClearDiagnostics = true;
-        m_DiagnosticsClearTimer = 0.0f;
+    m_Diagnostics.clear();
+    for (const auto& diag : diagnostics) {
+        // Group by line for easier rendering
+        m_Diagnostics[diag.range.start.line].push_back(diag);
     }
 }
 
@@ -91,15 +84,6 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     const ImGuiStyle& style = g.Style;
     const ImGuiID id = window->GetID(label);
     
-    // Handle diagnostics debounce
-    if (m_PendingClearDiagnostics) {
-        m_DiagnosticsClearTimer += ImGui::GetIO().DeltaTime;
-        if (m_DiagnosticsClearTimer > DIAGNOSTICS_CLEAR_DELAY) {
-            m_Diagnostics.clear();
-            m_PendingClearDiagnostics = false;
-        }
-    }
-
     const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
     m_CharWidth = GetCharWidth();
     

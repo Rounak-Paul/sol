@@ -143,11 +143,6 @@ private:
     // Blink timer for cursor
     float m_CursorBlinkTimer = 0.0f;
     static constexpr float CURSOR_BLINK_RATE = 0.5f;
-
-    // Diagnostics clearing debounce
-    float m_DiagnosticsClearTimer = 0.0f;
-    bool m_PendingClearDiagnostics = false; 
-    static constexpr float DIAGNOSTICS_CLEAR_DELAY = 0.2f;
 };
 
 } // namespace sol
