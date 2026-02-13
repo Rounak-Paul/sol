@@ -36,3 +36,7 @@
 #define ICON_NF_TERMINAL        "\ue795" // devicons-terminal
 #define ICON_NF_LOCK            "\uf023" // fa-lock
 #define ICON_NF_CONFIG          "\ue615" // custom-settings
+
+// UI Icons (FontAwesome / Material Design)
+#define ICON_NF_CHEVRON_RIGHT   "\uf054" // fa-chevron-right
+#define ICON_NF_CHEVRON_DOWN    "\uf078" // fa-chevron-down

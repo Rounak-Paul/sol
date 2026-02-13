@@ -32,6 +32,13 @@ struct SyntaxToken {
     uint16_t depth;         // Nesting depth for rainbow brackets
 };
 
+// Foldable range (for collapsible scopes)
+struct FoldRange {
+    size_t startLine;   // Line where fold starts (has the fold indicator)
+    size_t endLine;     // Line where fold ends (inclusive)
+    const char* type;   // Node type (for potential icons/hints)
+};
+
 // Highlight groups (similar to Neovim)
 enum class HighlightGroup : uint16_t {
     None = 0,
@@ -141,6 +148,9 @@ public:
     // Advanced syntax features
     std::pair<size_t, size_t> GetScopeRange(size_t pos) const;
     size_t GetMatchingBracket(size_t pos) const; // Returns pos, or -1 (SIZE_MAX) if none
+    
+    // Code folding - returns all foldable ranges sorted by startLine
+    std::vector<FoldRange> GetFoldRanges() const;
     
     // Built-in completion
     std::vector<std::string> GetWordCompletions(const std::string& prefix, size_t cursorPos = 0) const;

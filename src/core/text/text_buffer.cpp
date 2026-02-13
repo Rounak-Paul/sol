@@ -530,6 +530,114 @@ size_t TextBuffer::GetMatchingBracket(size_t pos) const {
     return SIZE_MAX;
 }
 
+std::vector<FoldRange> TextBuffer::GetFoldRanges() const {
+    std::vector<FoldRange> ranges;
+    if (!m_Tree) return ranges;
+    
+    TSNode root = ts_tree_root_node(m_Tree);
+    TSTreeCursor cursor = ts_tree_cursor_new(root);
+    
+    // Only fold meaningful constructs with headers - NOT raw blocks/compound_statements
+    // Raw blocks inside functions/if/etc are redundant since the parent is foldable
+    auto isFoldableType = [](std::string_view type) -> bool {
+        // Functions and methods
+        if (type == "function_definition" || type == "function_declaration" ||
+            type == "method_definition" || type == "method_declaration" ||
+            type == "arrow_function" || type == "function_expression" ||
+            type == "lambda_expression") return true;
+        
+        // Classes, structs, enums
+        if (type == "class_definition" || type == "class_declaration" ||
+            type == "class_specifier" || type == "struct_specifier" ||
+            type == "enum_specifier" || type == "union_specifier" ||
+            type == "interface_declaration" || type == "trait_definition") return true;
+        
+        // Control flow
+        if (type == "if_statement" || type == "else_clause" ||
+            type == "for_statement" || type == "while_statement" ||
+            type == "do_statement" || type == "for_in_statement" ||
+            type == "for_range_loop" || type == "enhanced_for_statement") return true;
+        
+        // Switch/match
+        if (type == "switch_statement" || type == "case_statement" ||
+            type == "match_expression" || type == "switch_expression") return true;
+        
+        // Try/catch
+        if (type == "try_statement" || type == "catch_clause" ||
+            type == "finally_clause" || type == "except_clause") return true;
+        
+        // Namespace and modules
+        if (type == "namespace_definition" || type == "module" ||
+            type == "module_definition") return true;
+        
+        // Preprocessor
+        if (type == "preproc_if" || type == "preproc_ifdef" ||
+            type == "preproc_elif" || type == "preproc_else") return true;
+        
+        // Comments (multi-line)
+        if (type == "comment" || type == "block_comment") return true;
+        
+        return false;
+    };
+    
+    // Iterative tree traversal
+    bool visitChildren = true;
+    
+    while (true) {
+        TSNode node = ts_tree_cursor_current_node(&cursor);
+        
+        if (visitChildren) {
+            const char* type = ts_node_type(node);
+            std::string_view typeSv(type);
+            
+            TSPoint start = ts_node_start_point(node);
+            TSPoint end = ts_node_end_point(node);
+            
+            // Only fold if spans multiple lines
+            if (start.row < end.row && isFoldableType(typeSv)) {
+                ranges.push_back(FoldRange{
+                    .startLine = start.row,
+                    .endLine = end.row,
+                    .type = type
+                });
+            }
+        }
+        
+        // Try to descend into children
+        if (visitChildren && ts_tree_cursor_goto_first_child(&cursor)) {
+            visitChildren = true;
+            continue;
+        }
+        
+        // Try to go to sibling
+        if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+            visitChildren = true;
+            continue;
+        }
+        
+        // Go up and try siblings of ancestors
+        while (true) {
+            if (!ts_tree_cursor_goto_parent(&cursor)) {
+                goto done;
+            }
+            if (ts_tree_cursor_goto_next_sibling(&cursor)) {
+                visitChildren = true;
+                break;
+            }
+        }
+    }
+    
+done:
+    ts_tree_cursor_delete(&cursor);
+    
+    // Sort by start line
+    std::sort(ranges.begin(), ranges.end(), [](const FoldRange& a, const FoldRange& b) {
+        return a.startLine < b.startLine;
+    });
+    
+    return ranges;
+}
+
 HighlightGroup TextBuffer::MapNodeTypeToHighlight(const char* nodeType) const {
     if (!nodeType) return HighlightGroup::None;
     

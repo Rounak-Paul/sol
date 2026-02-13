@@ -1,5 +1,6 @@
 #include "syntax_editor.h"
 #include "ui/editor_settings.h"
+#include "ui/icons_nerd.h"
 #include "core/lsp/lsp_manager.h"
 #include <imgui_internal.h>
 #include <algorithm>
@@ -49,7 +50,12 @@ float SyntaxEditor::GetLineNumberWidth(size_t lineCount) const {
     size_t n = lineCount;
     while (n >= 10) { n /= 10; ++digits; }
     digits = std::max(digits, 3); // Minimum 3 digits
-    return GetCharWidth() * (digits + 2); // Extra padding
+    return GetCharWidth() * (digits + 3); // Extra padding
+}
+
+float SyntaxEditor::GetFoldGutterWidth() const {
+    if (!m_ShowLineNumbers) return 0.0f;
+    return GetCharWidth() * 2.0f; // Width for fold indicator column
 }
 
 bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& size) {
@@ -112,7 +118,9 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     const size_t lineCount = buffer.LineCount();
     const float lineNumberWidth = GetLineNumberWidth(lineCount);
-    const float textAreaWidth = contentSize.x - lineNumberWidth;
+    const float foldGutterWidth = GetFoldGutterWidth();
+    const float totalGutterWidth = lineNumberWidth + foldGutterWidth;
+    const float textAreaWidth = contentSize.x - totalGutterWidth;
     
     // Begin child region for scrolling
     ImGui::PushStyleColor(ImGuiCol_ChildBg, m_Theme.background);
@@ -147,9 +155,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         // Horizontal scrolling
         float cursorX = cursorCol * m_CharWidth;
         float currentScrollX = ImGui::GetScrollX();
-        // Adjust width for line numbers
-        const float actualNumberWidth = GetLineNumberWidth(lineCount);
-        float displayWidth = region.x - actualNumberWidth;
+        // Adjust width for line numbers and fold gutter
+        float displayWidth = region.x - totalGutterWidth;
         
         // Horizontal scrolling logic
         // Use symmetric margins (10% of width or min 4 chars)
@@ -179,7 +186,11 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Ensure buffer is parsed
     if (!buffer.IsParsed() && buffer.HasLanguage()) {
         buffer.Parse();
+        m_FoldRangesDirty = true;
     }
+    
+    // Update fold ranges from tree-sitter
+    UpdateFoldRanges(buffer);
     
     // Calculate max line width for horizontal scrollbar (use cached line lengths)
     float maxLineWidth = 0.0f;
@@ -190,7 +201,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     // Set total content size for scrolling
     float totalHeight = lineCount * lineHeight;
-    ImGui::Dummy(ImVec2(maxLineWidth + lineNumberWidth, totalHeight));
+    ImGui::Dummy(ImVec2(maxLineWidth + totalGutterWidth, totalHeight));
     
     // Get window position for drawing (not affected by scroll, we handle scroll ourselves)
     ImVec2 windowPos = ImGui::GetWindowPos();
@@ -204,8 +215,11 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
                                windowPos.y + windowPadding.y - scrollOffset);
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     
-    // Text area position
-    ImVec2 textPos = ImVec2(cursorPos.x + lineNumberWidth, cursorPos.y);
+    // Fold gutter position (between line numbers and text)
+    ImVec2 foldGutterPos = ImVec2(cursorPos.x + lineNumberWidth, cursorPos.y);
+    
+    // Text area position (after line numbers and fold gutter)
+    ImVec2 textPos = ImVec2(cursorPos.x + totalGutterWidth, cursorPos.y);
     
     // Render Scope Highlight 
     RenderScope(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
@@ -213,8 +227,13 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Render current line highlight
     if ((m_IsFocused || m_ShowCompletion) && !m_HasSelection) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
-        if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
-            float y = textPos.y + (cursorLine - firstVisibleLine) * lineHeight;
+        if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine && !IsLineHidden(cursorLine)) {
+            // Calculate screen row for cursor line
+            size_t screenRow = 0;
+            for (size_t i = firstVisibleLine; i < cursorLine; ++i) {
+                if (!IsLineHidden(i)) screenRow++;
+            }
+            float y = textPos.y + screenRow * lineHeight;
             float textHeight = ImGui::GetTextLineHeight();
             drawList->AddRectFilled(
                 ImVec2(cursorPos.x, y),
@@ -224,9 +243,10 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         }
     }
 
-    // Render line numbers
+    // Render line numbers and fold indicators
     if (m_ShowLineNumbers) {
         RenderLineNumbers(buffer, cursorPos, lineHeight, firstVisibleLine, lastVisibleLine);
+        RenderFoldIndicators(buffer, foldGutterPos, lineHeight, firstVisibleLine, lastVisibleLine);
     }
     
     // Render selection background
@@ -259,12 +279,28 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Handle mouse input for clicking and dragging
     ImVec2 mousePos = ImGui::GetMousePos();
     
-    // Helper lambda to convert mouse position to buffer position
+    // Helper lambda to convert mouse position to buffer position (accounting for folds)
     auto mouseToBufPos = [&](ImVec2 pos) -> size_t {
         float relX = pos.x - textPos.x;
         float relY = pos.y - textPos.y;
         
-        size_t clickedLine = firstVisibleLine + static_cast<size_t>(std::max(0.0f, relY) / lineHeight);
+        // Convert screen row to buffer line (account for folded lines)
+        size_t targetScreenRow = static_cast<size_t>(std::max(0.0f, relY) / lineHeight);
+        size_t clickedLine = firstVisibleLine;
+        size_t screenRow = 0;
+        
+        while (clickedLine < lineCount && screenRow < targetScreenRow) {
+            if (!IsLineHidden(clickedLine)) {
+                screenRow++;
+            }
+            clickedLine++;
+        }
+        
+        // Skip any hidden lines at the click position
+        while (clickedLine < lineCount && IsLineHidden(clickedLine)) {
+            clickedLine++;
+        }
+        
         clickedLine = std::min(clickedLine, lineCount > 0 ? lineCount - 1 : 0);
         
         size_t clickedCol = static_cast<size_t>(std::max(0.0f, relX) / m_CharWidth);
@@ -335,8 +371,14 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         size_t firstVisibleLine = static_cast<size_t>(m_ScrollY / lineHeight);
         
+        // Calculate screen row for cursor (accounting for folds)
+        size_t screenRow = 0;
+        for (size_t i = firstVisibleLine; i < cursorLine; ++i) {
+            if (!IsLineHidden(i)) screenRow++;
+        }
+        
         cursorScreenPos.x = textPos.x + cursorCol * m_CharWidth;
-        cursorScreenPos.y = textPos.y + (cursorLine - firstVisibleLine) * lineHeight;
+        cursorScreenPos.y = textPos.y + screenRow * lineHeight;
         
         // Get buffer region bounds (child window bounds)
         ImVec2 childMin = ImGui::GetWindowPos();
@@ -385,6 +427,7 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
         }
         if (textResult.textChanged) {
              buffer.MarkModified();
+             m_FoldRangesDirty = true;  // Recalculate fold ranges after edit
 
             // Auto-trigger and Update Completion
             // We run this even if completion is already shown to update/filter the list
@@ -478,8 +521,12 @@ void SyntaxEditor::RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, floa
     
     auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
     
+    size_t screenRow = 0;
     for (size_t i = firstLine; i < lastLine; ++i) {
-        float y = pos.y + (i - firstLine) * lineHeight;
+        // Skip hidden (folded) lines
+        if (IsLineHidden(i)) continue;
+        
+        float y = pos.y + screenRow * lineHeight;
         
         // Highlight current line number
         bool isFocused = (m_IsFocused || m_ShowCompletion);
@@ -493,12 +540,25 @@ void SyntaxEditor::RenderLineNumbers(TextBuffer& buffer, const ImVec2& pos, floa
         float x = pos.x + lineNumWidth - textWidth - m_CharWidth;
         
         drawList->AddText(ImVec2(x, y), color, lineNumStr);
+        
+        // If this line is folded, show "..." indicator after line number
+        if (IsLineFolded(i)) {
+            auto it = m_FoldEndLines.find(i);
+            if (it != m_FoldEndLines.end()) {
+                size_t foldedCount = it->second - i;
+                char foldInfo[32];
+                snprintf(foldInfo, sizeof(foldInfo), "... %zu lines", foldedCount);
+                // This will be drawn in the text area by RenderText if needed
+            }
+        }
+        
+        screenRow++;
     }
     
     // Draw separator line
     drawList->AddLine(
         ImVec2(pos.x + lineNumWidth - m_CharWidth * 0.5f, pos.y),
-        ImVec2(pos.x + lineNumWidth - m_CharWidth * 0.5f, pos.y + (lastLine - firstLine) * lineHeight),
+        ImVec2(pos.x + lineNumWidth - m_CharWidth * 0.5f, pos.y + screenRow * lineHeight),
         m_Theme.lineNumber,
         1.0f
     );
@@ -541,7 +601,11 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
     });
     
     // Render each visible line
+    size_t screenRow = 0;
     for (size_t lineIdx = firstLine; lineIdx < lastLine; ++lineIdx) {
+        // Skip hidden (folded) lines
+        if (IsLineHidden(lineIdx)) continue;
+        
         std::string_view lineText = buffer.LineView(lineIdx);
         
         // Strip trailing newlines/CR to prevent whitespace rendering issues
@@ -549,10 +613,22 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
             lineText.remove_suffix(1);
         }
         
-        float y = pos.y + (lineIdx - firstLine) * lineHeight;
+        float y = pos.y + screenRow * lineHeight;
         float x = pos.x;
         
-        if (lineText.empty()) continue;
+        // Draw fold ellipsis if this line is folded
+        if (IsLineFolded(lineIdx)) {
+            auto it = m_FoldEndLines.find(lineIdx);
+            if (it != m_FoldEndLines.end()) {
+                // Render the first line content, then append "..."
+                // First render the line normally, then add ellipsis
+            }
+        }
+        
+        if (lineText.empty()) {
+            screenRow++;
+            continue;
+        }
         
         size_t lineStart = buffer.LineStart(lineIdx);
         size_t lineEnd = lineStart + lineText.length();
@@ -618,6 +694,19 @@ void SyntaxEditor::RenderText(TextBuffer& buffer, const ImVec2& pos, float lineH
         if (lineText.length() > spanStart) {
             RenderSpan(drawList, lineText, spanStart, lineText.length(), x, y, spanColor);
         }
+        
+        // Draw fold indicator "..." after the line if folded
+        if (IsLineFolded(lineIdx)) {
+            auto foldIt = m_FoldEndLines.find(lineIdx);
+            if (foldIt != m_FoldEndLines.end()) {
+                size_t foldedLines = foldIt->second - lineIdx;
+                char foldText[32];
+                snprintf(foldText, sizeof(foldText), " ... %zu lines", foldedLines);
+                drawList->AddText(ImVec2(x + 4.0f, y), IM_COL32(128, 128, 128, 255), foldText);
+            }
+        }
+        
+        screenRow++;
     }
 }
 
@@ -684,9 +773,15 @@ void SyntaxEditor::RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float
     // Get cursor line/col from buffer
     auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
     
+    // Calculate screen row for cursor (accounting for folds)
+    size_t screenRow = 0;
+    for (size_t i = firstLine; i < cursorLine; ++i) {
+        if (!IsLineHidden(i)) screenRow++;
+    }
+    
     // Calculate cursor screen position
     float x = textPos.x + cursorCol * m_CharWidth;
-    float y = textPos.y + (cursorLine - firstLine) * lineHeight;
+    float y = textPos.y + screenRow * lineHeight;
     
     // Draw cursor line (thin vertical bar)
     drawList->AddRectFilled(
@@ -712,23 +807,29 @@ void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, fl
     // to avoid selection looking "larger" than the text line
     float textHeight = ImGui::GetTextLineHeight();
     
-    for (size_t line = startLine; line <= endLine && line < lastLine; ++line) {
-        if (line < firstLine) continue;
+    // Build screen row mapping
+    size_t screenRow = 0;
+    for (size_t line = firstLine; line <= endLine && line < lastLine; ++line) {
+        if (IsLineHidden(line)) continue;
         
-        size_t lineLen = buffer.LineEnd(line) - buffer.LineStart(line);
-        float y = textPos.y + (line - firstLine) * lineHeight;
+        if (line >= startLine) {
+            size_t lineLen = buffer.LineEnd(line) - buffer.LineStart(line);
+            float y = textPos.y + screenRow * lineHeight;
+            
+            size_t colStart = (line == startLine) ? startCol : 0;
+            size_t colEnd = (line == endLine) ? endCol : lineLen;
+            
+            float xStart = textPos.x + colStart * m_CharWidth;
+            float xEnd = textPos.x + colEnd * m_CharWidth;
+            
+            drawList->AddRectFilled(
+                ImVec2(xStart, y),
+                ImVec2(xEnd, y + textHeight),
+                m_Theme.selection
+            );
+        }
         
-        size_t colStart = (line == startLine) ? startCol : 0;
-        size_t colEnd = (line == endLine) ? endCol : lineLen;
-        
-        float xStart = textPos.x + colStart * m_CharWidth;
-        float xEnd = textPos.x + colEnd * m_CharWidth;
-        
-        drawList->AddRectFilled(
-            ImVec2(xStart, y),
-            ImVec2(xEnd, y + textHeight),
-            m_Theme.selection
-        );
+        screenRow++;
     }
 }
 
@@ -745,20 +846,28 @@ void SyntaxEditor::RenderScope(TextBuffer& buffer, const ImVec2& textPos, float 
     size_t drawStartLine = std::max(startLine, firstLine);
     size_t drawEndLine = std::min(endLine, lastLine - 1);
     
-    for (size_t i = drawStartLine; i <= drawEndLine; ++i) {
-        float y = textPos.y + (i - firstLine) * lineHeight;
+    // Build screen row mapping for the render range
+    size_t screenRow = 0;
+    for (size_t i = firstLine; i <= drawEndLine; ++i) {
+        if (IsLineHidden(i)) continue;
         
-        float xStart = textPos.x;
-        float xEnd = textPos.x + ImGui::GetContentRegionAvail().x;
+        if (i >= drawStartLine) {
+            float y = textPos.y + screenRow * lineHeight;
+            
+            float xStart = textPos.x;
+            float xEnd = textPos.x + ImGui::GetContentRegionAvail().x;
+            
+            // Only constrain width on first and last lines for block effect
+            if (i == startLine) xStart += startCol * m_CharWidth;
+            if (i == endLine) xEnd = textPos.x + endCol * m_CharWidth;
+            
+            // Ensure min width for empty scope or cursor
+            if (xEnd <= xStart) xEnd = xStart + m_CharWidth;
+            
+            drawList->AddRectFilled(ImVec2(xStart, y), ImVec2(xEnd, y + lineHeight), m_Theme.scopeBackground);
+        }
         
-        // Only constrain width on first and last lines for block effect
-        if (i == startLine) xStart += startCol * m_CharWidth;
-        if (i == endLine) xEnd = textPos.x + endCol * m_CharWidth;
-        
-        // Ensure min width for empty scope or cursor
-        if (xEnd <= xStart) xEnd = xStart + m_CharWidth;
-        
-        drawList->AddRectFilled(ImVec2(xStart, y), ImVec2(xEnd, y + lineHeight), m_Theme.scopeBackground);
+        screenRow++;
     }
 }
 
@@ -770,7 +879,11 @@ void SyntaxEditor::RenderIndentGuides(TextBuffer& buffer, const ImVec2& textPos,
     // Offset x starting position by line number width if shown
     // textPos already includes line number width from Render()
     
+    size_t screenRow = 0;
     for (size_t i = firstLine; i < lastLine; ++i) {
+        // Skip hidden (folded) lines
+        if (IsLineHidden(i)) continue;
+        
         std::string_view line = buffer.LineView(i);
         size_t indentLevel = 0;
         size_t spaces = 0;
@@ -797,11 +910,13 @@ void SyntaxEditor::RenderIndentGuides(TextBuffer& buffer, const ImVec2& textPos,
         
         for (size_t j = 0; j < indentLevel; ++j) {
             float x = textPos.x + (j * m_TabSize) * m_CharWidth;
-            float y = textPos.y + (i - firstLine) * lineHeight;
+            float y = textPos.y + screenRow * lineHeight;
             
             ImU32 color = m_Theme.rainbowIndents[j % m_Theme.rainbowIndents.size()];
             drawList->AddLine(ImVec2(x, y), ImVec2(x, y + lineHeight), color, 1.0f);
         }
+        
+        screenRow++;
     }
 }
 
@@ -821,10 +936,16 @@ void SyntaxEditor::RenderMatchingBracket(TextBuffer& buffer, const ImVec2& textP
         
         auto drawBox = [&](size_t pos) {
             auto [line, col] = buffer.PosToLineCol(pos);
-            if (line < firstLine) return;
+            if (line < firstLine || IsLineHidden(line)) return;
+            
+            // Calculate screen row (accounting for folds)
+            size_t screenRow = 0;
+            for (size_t i = firstLine; i < line; ++i) {
+                if (!IsLineHidden(i)) screenRow++;
+            }
             
             float x = textPos.x + col * m_CharWidth;
-            float y = textPos.y + (line - firstLine) * lineHeight;
+            float y = textPos.y + screenRow * lineHeight;
             
             drawList->AddRect(
                 ImVec2(x, y), 
@@ -835,6 +956,142 @@ void SyntaxEditor::RenderMatchingBracket(TextBuffer& buffer, const ImVec2& textP
         
         drawBox(bracketPos);
         drawBox(matchPos);
+    }
+}
+
+// Code Folding Implementation
+
+void SyntaxEditor::UpdateFoldRanges(TextBuffer& buffer) {
+    if (!m_FoldRangesDirty) return;
+    
+    m_FoldRanges = buffer.GetFoldRanges();
+    m_FoldEndLines.clear();
+    
+    for (const auto& range : m_FoldRanges) {
+        m_FoldEndLines[range.startLine] = range.endLine;
+    }
+    
+    m_FoldRangesDirty = false;
+}
+
+bool SyntaxEditor::IsLineFolded(size_t line) const {
+    return m_FoldedLines.count(line) > 0;
+}
+
+bool SyntaxEditor::IsLineHidden(size_t line) const {
+    // A line is hidden if it's inside any folded region (but not the start line)
+    for (size_t foldStart : m_FoldedLines) {
+        auto it = m_FoldEndLines.find(foldStart);
+        if (it != m_FoldEndLines.end()) {
+            if (line > foldStart && line <= it->second) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+size_t SyntaxEditor::ScreenLineToBufferLine(size_t screenLine) const {
+    size_t bufferLine = 0;
+    size_t visibleCount = 0;
+    
+    while (visibleCount < screenLine) {
+        if (!IsLineHidden(bufferLine)) {
+            visibleCount++;
+        }
+        bufferLine++;
+        
+        // Safety check
+        if (bufferLine > 1000000) break;
+    }
+    
+    // Skip any remaining hidden lines to get to the actual visible line
+    while (IsLineHidden(bufferLine)) {
+        bufferLine++;
+    }
+    
+    return bufferLine;
+}
+
+size_t SyntaxEditor::BufferLineToScreenLine(size_t bufferLine) const {
+    size_t screenLine = 0;
+    
+    for (size_t i = 0; i < bufferLine; ++i) {
+        if (!IsLineHidden(i)) {
+            screenLine++;
+        }
+    }
+    
+    return screenLine;
+}
+
+size_t SyntaxEditor::GetVisibleLineCount() const {
+    // This would be called on total line count, but we need to know it
+    // Returns the count of visible lines (total - hidden)
+    size_t hidden = 0;
+    for (size_t foldStart : m_FoldedLines) {
+        auto it = m_FoldEndLines.find(foldStart);
+        if (it != m_FoldEndLines.end()) {
+            hidden += (it->second - foldStart); // endLine - startLine = hidden lines
+        }
+    }
+    return hidden; // Actually returns hidden count, caller subtracts from total
+}
+
+void SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, 
+                                         size_t firstLine, size_t lastLine) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    ImGuiIO& io = ImGui::GetIO();
+    ImFont* font = ImGui::GetFont();
+    
+    float foldGutterWidth = GetFoldGutterWidth();
+    float fontSize = ImGui::GetFontSize() * 0.75f; // Slightly smaller for low profile
+    
+    size_t screenRow = 0;
+    for (size_t i = firstLine; i < lastLine; ++i) {
+        // Skip hidden lines
+        if (IsLineHidden(i)) continue;
+        
+        // Check if this line starts a foldable region
+        auto it = m_FoldEndLines.find(i);
+        if (it != m_FoldEndLines.end()) {
+            float y = pos.y + screenRow * lineHeight;
+            
+            bool isFolded = IsLineFolded(i);
+            bool isHovered = false;
+            
+            // Hit test for click - entire fold gutter column
+            ImVec2 hitMin(pos.x, y);
+            ImVec2 hitMax(pos.x + foldGutterWidth, y + lineHeight);
+            
+            ImVec2 mousePos = io.MousePos;
+            if (mousePos.x >= hitMin.x && mousePos.x <= hitMax.x &&
+                mousePos.y >= hitMin.y && mousePos.y <= hitMax.y) {
+                isHovered = true;
+                
+                // Handle click to toggle fold
+                if (ImGui::IsMouseClicked(0)) {
+                    if (isFolded) {
+                        m_FoldedLines.erase(i);
+                    } else {
+                        m_FoldedLines.insert(i);
+                    }
+                }
+            }
+            
+            // Draw the fold indicator using font icon
+            ImU32 color = isHovered ? IM_COL32(255, 255, 255, 255) : m_Theme.lineNumber;
+            const char* icon = isFolded ? ICON_NF_CHEVRON_RIGHT : ICON_NF_CHEVRON_DOWN;
+            
+            // Center the icon in the gutter (adjusted up for visual alignment)
+            ImVec2 iconSize = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, icon);
+            float iconX = pos.x + (foldGutterWidth - iconSize.x) * 0.5f;
+            float iconY = y + (lineHeight - iconSize.y) * 0.4f;
+            
+            drawList->AddText(font, fontSize, ImVec2(iconX, iconY), color, icon);
+        }
+        
+        screenRow++;
     }
 }
 
@@ -1028,6 +1285,7 @@ bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
     
     if (modified) {
         buffer.MarkModified();
+        m_FoldRangesDirty = true;  // Recalculate fold ranges after edit
     }
     return result.handled;
 }
@@ -1041,70 +1299,76 @@ void SyntaxEditor::RenderDiagnostics(TextBuffer& buffer, const ImVec2& textPos, 
     // Simple squiggly line rendering
     // A real implementation would use a sine wave or texture
     
+    size_t screenRow = 0;
     for (size_t line = firstLine; line < lastLine; ++line) {
+        // Skip hidden (folded) lines
+        if (IsLineHidden(line)) continue;
+        
         // Since diagnostics are mapped by 0-based line index in syntax_editor
-        if (m_Diagnostics.count(line) == 0) continue;
-        
-        float y = textPos.y + (line - firstLine) * lineHeight + lineHeight; // Bottom of line
-        
-        for (const auto& diag : m_Diagnostics[line]) {
-            // Calculate X start/end
-            size_t startCol = diag.range.start.character;
-            size_t endCol = diag.range.end.character;
+        if (m_Diagnostics.count(line) > 0) {
+            float y = textPos.y + screenRow * lineHeight + lineHeight; // Bottom of line
             
-            float x1 = textPos.x + startCol * m_CharWidth;
-            float x2 = textPos.x + endCol * m_CharWidth;
-            
-            ImU32 color = m_Theme.error; // Default error
-            if (diag.severity == 2) color = IM_COL32(255, 180, 0, 255); // Warning
-            else if (diag.severity > 2) color = IM_COL32(0, 200, 255, 255); // Info/Hint
-            
-            // Draw zigzag
-            float x = x1;
-            float zigLen = 3.0f;
-            bool up = true;
-            while (x < x2) {
-                float nextX = std::min(x + zigLen, x2);
-                float yOffset = up ? -2.0f : 0.0f;
-                drawList->AddLine(ImVec2(x, y + (up ? 0 : -2)), ImVec2(nextX, y + (up ? -2 : 0)), color, 1.0f);
-                x = nextX;
-                up = !up;
-            }
-
-            // Hover check
-            if (ImGui::IsWindowHovered() && 
-                mousePos.x >= x1 && mousePos.x <= x2 &&
-                mousePos.y >= y - lineHeight && mousePos.y <= y) {
+            for (const auto& diag : m_Diagnostics[line]) {
+                // Calculate X start/end
+                size_t startCol = diag.range.start.character;
+                size_t endCol = diag.range.end.character;
                 
-                if (!tooltipShown) {
-                    ImGui::BeginTooltip();
-                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 16.0f);
-                    tooltipShown = true;
-                } else {
-                    ImGui::Separator();
+                float x1 = textPos.x + startCol * m_CharWidth;
+                float x2 = textPos.x + endCol * m_CharWidth;
+                
+                ImU32 color = m_Theme.error; // Default error
+                if (diag.severity == 2) color = IM_COL32(255, 180, 0, 255); // Warning
+                else if (diag.severity > 2) color = IM_COL32(0, 200, 255, 255); // Info/Hint
+                
+                // Draw zigzag
+                float x = x1;
+                float zigLen = 3.0f;
+                bool up = true;
+                while (x < x2) {
+                    float nextX = std::min(x + zigLen, x2);
+                    float yOffset = up ? -2.0f : 0.0f;
+                    drawList->AddLine(ImVec2(x, y + (up ? 0 : -2)), ImVec2(nextX, y + (up ? -2 : 0)), color, 1.0f);
+                    x = nextX;
+                    up = !up;
                 }
 
-                ImVec4 titleColor = ImVec4(1, 1, 1, 1);
-                const char* title = "Diagnostic";
-                
-                if (diag.severity == 1) {
-                    title = "Error";
-                    titleColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
-                } else if (diag.severity == 2) {
-                    title = "Warning";
-                    titleColor = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
-                } else if (diag.severity == 3) {
-                    title = "Info";
-                    titleColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
-                } else {
-                    title = "Hint";
-                    titleColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+                // Hover check
+                if (ImGui::IsWindowHovered() && 
+                    mousePos.x >= x1 && mousePos.x <= x2 &&
+                    mousePos.y >= y - lineHeight && mousePos.y <= y) {
+                    
+                    if (!tooltipShown) {
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 16.0f);
+                        tooltipShown = true;
+                    } else {
+                        ImGui::Separator();
+                    }
+
+                    ImVec4 titleColor = ImVec4(1, 1, 1, 1);
+                    const char* title = "Diagnostic";
+                    
+                    if (diag.severity == 1) {
+                        title = "Error";
+                        titleColor = ImVec4(1.0f, 0.4f, 0.4f, 1.0f);
+                    } else if (diag.severity == 2) {
+                        title = "Warning";
+                        titleColor = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+                    } else if (diag.severity == 3) {
+                        title = "Info";
+                        titleColor = ImVec4(0.4f, 0.8f, 1.0f, 1.0f);
+                    } else {
+                        title = "Hint";
+                        titleColor = ImVec4(0.6f, 0.6f, 0.6f, 1.0f);
+                    }
+                    
+                    ImGui::TextColored(titleColor, "%s", title);
+                    ImGui::TextWrapped("%s", diag.message.c_str());
                 }
-                
-                ImGui::TextColored(titleColor, "%s", title);
-                ImGui::TextWrapped("%s", diag.message.c_str());
             }
         }
+        
+        screenRow++;
     }
 
     if (tooltipShown) {

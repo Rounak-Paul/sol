@@ -10,6 +10,7 @@
 #include <vector>
 #include <unordered_map>
 #include <map>
+#include <set>
 #include <mutex>
 #include <optional>
 
@@ -106,11 +107,21 @@ private:
     void RenderScope(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderIndentGuides(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void RenderMatchingBracket(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine);
+    
+    // Code folding
+    void RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
+    void UpdateFoldRanges(TextBuffer& buffer);
+    bool IsLineFolded(size_t line) const;      // Check if line is inside a folded region
+    bool IsLineHidden(size_t line) const;       // Check if line should be hidden (inside fold, not the first line)
+    size_t ScreenLineToBufferLine(size_t screenLine) const;  // Convert visible line to actual buffer line
+    size_t BufferLineToScreenLine(size_t bufferLine) const;  // Convert buffer line to visible line
+    size_t GetVisibleLineCount() const;         // Total visible lines after folding
 
     void RenderStatusLine(TextBuffer& buffer, const ImVec2& pos, float width);
     
     float GetCharWidth() const;
     float GetLineNumberWidth(size_t lineCount) const;
+    float GetFoldGutterWidth() const;
     
     SyntaxTheme m_Theme;
     bool m_ShowLineNumbers = true;
@@ -149,6 +160,12 @@ private:
     // Diagnostics state
     std::string m_LastDiagnosticsPath;
     std::map<size_t, std::vector<LSPDiagnostic>> m_Diagnostics;
+    
+    // Code folding state
+    std::set<size_t> m_FoldedLines;              // Set of start lines that are folded
+    std::vector<FoldRange> m_FoldRanges;         // Cached fold ranges from tree-sitter
+    std::map<size_t, size_t> m_FoldEndLines;     // Map: startLine -> endLine for quick lookup
+    bool m_FoldRangesDirty = true;               // Flag to recalculate fold ranges
 
     // Blink timer for cursor
     float m_CursorBlinkTimer = 0.0f;
