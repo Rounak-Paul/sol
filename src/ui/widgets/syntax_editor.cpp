@@ -132,6 +132,19 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     ImGui::BeginChild(id, contentSize, false, childFlags);
     
     m_IsFocused = ImGui::IsWindowFocused();
+    
+    // Ensure buffer is parsed first (needed for fold ranges)
+    if (!buffer.IsParsed() && buffer.HasLanguage()) {
+        buffer.Parse();
+        m_FoldRangesDirty = true;
+    }
+    
+    // Update fold ranges from tree-sitter (must be before any fold-related calculations)
+    UpdateFoldRanges(buffer);
+    
+    // Calculate total visible lines (total - hidden from folds)
+    const size_t hiddenLineCount = GetHiddenLineCount();
+    const size_t visibleTotalLines = lineCount > hiddenLineCount ? lineCount - hiddenLineCount : lineCount;
 
     // Auto-scroll to cursor only when cursor moved (not every frame)
     if (m_NeedsScrollToCursor && m_IsFocused) {
@@ -141,8 +154,21 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         
         ImVec2 region = ImGui::GetContentRegionAvail();
 
-        // Vertical scrolling
-        float cursorY = cursorLine * lineHeight;
+        // Vertical scrolling - use screen line (accounting for folds)
+        // If cursor is hidden, scroll to the fold start line instead
+        size_t targetLine = cursorLine;
+        if (IsLineHidden(cursorLine)) {
+            // Find the fold containing this line
+            for (const auto& [foldStart, foldEnd] : m_FoldEndLines) {
+                if (cursorLine > foldStart && cursorLine <= foldEnd && m_FoldedLines.count(foldStart)) {
+                    targetLine = foldStart;
+                    break;
+                }
+            }
+        }
+        
+        size_t screenLine = BufferLineToScreenLine(targetLine);
+        float cursorY = screenLine * lineHeight;
         float currentScrollY = ImGui::GetScrollY();
         float displayHeight = region.y;
         
@@ -155,18 +181,12 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         // Horizontal scrolling
         float cursorX = cursorCol * m_CharWidth;
         float currentScrollX = ImGui::GetScrollX();
-        // Adjust width for line numbers and fold gutter
         float displayWidth = region.x - totalGutterWidth;
-        
-        // Horizontal scrolling logic
-        // Use symmetric margins (10% of width or min 4 chars)
         float scrollMargin = std::max(displayWidth * 0.1f, m_CharWidth * 4.0f); 
 
         if (cursorX < currentScrollX + scrollMargin) {
-             // Scroll to keep cursor at left margin
             ImGui::SetScrollX(std::max(0.0f, cursorX - scrollMargin));
         } else if (cursorX > currentScrollX + displayWidth - scrollMargin) {
-            // Scroll to keep cursor at right margin
             ImGui::SetScrollX(cursorX - displayWidth + scrollMargin);
         }
     }
@@ -175,32 +195,37 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     m_ScrollX = ImGui::GetScrollX();
     m_ScrollY = ImGui::GetScrollY();
     
-    // Calculate visible lines
-    const size_t firstVisibleLine = static_cast<size_t>(m_ScrollY / lineHeight);
-    const size_t visibleLineCount = static_cast<size_t>(contentSize.y / lineHeight) + 2;
-    const size_t lastVisibleLine = std::min(firstVisibleLine + visibleLineCount, lineCount);
+    // Calculate visible lines based on screen rows (not buffer lines)
+    const size_t firstScreenLine = static_cast<size_t>(m_ScrollY / lineHeight);
+    const size_t screenLineCount = static_cast<size_t>(contentSize.y / lineHeight) + 2;
+    
+    // Convert screen lines to buffer lines
+    const size_t firstVisibleLine = ScreenLineToBufferLine(firstScreenLine, lineCount);
+    
+    // Calculate last visible buffer line by counting visible screen rows
+    size_t lastVisibleLine = firstVisibleLine;
+    size_t visibleCount = 0;
+    while (lastVisibleLine < lineCount && visibleCount < screenLineCount) {
+        if (!IsLineHidden(lastVisibleLine)) {
+            visibleCount++;
+        }
+        lastVisibleLine++;
+    }
+    lastVisibleLine = std::min(lastVisibleLine, lineCount);
     
     // Prepare visible range for large file optimizations
     buffer.PrepareVisibleRange(firstVisibleLine, lastVisibleLine);
     
-    // Ensure buffer is parsed
-    if (!buffer.IsParsed() && buffer.HasLanguage()) {
-        buffer.Parse();
-        m_FoldRangesDirty = true;
-    }
-    
-    // Update fold ranges from tree-sitter
-    UpdateFoldRanges(buffer);
-    
     // Calculate max line width for horizontal scrollbar (use cached line lengths)
     float maxLineWidth = 0.0f;
     for (size_t i = firstVisibleLine; i < lastVisibleLine; ++i) {
+        if (IsLineHidden(i)) continue;
         size_t lineLen = buffer.LineEnd(i) - buffer.LineStart(i);
         maxLineWidth = std::max(maxLineWidth, lineLen * m_CharWidth);
     }
     
-    // Set total content size for scrolling
-    float totalHeight = lineCount * lineHeight;
+    // Set total content size for scrolling (using visible line count)
+    float totalHeight = visibleTotalLines * lineHeight;
     ImGui::Dummy(ImVec2(maxLineWidth + totalGutterWidth, totalHeight));
     
     // Get window position for drawing (not affected by scroll, we handle scroll ourselves)
@@ -208,7 +233,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     ImVec2 windowPadding = ImGui::GetStyle().WindowPadding;
     
     // Calculate the offset within the first visible line due to partial scroll
-    float scrollOffset = m_ScrollY - (firstVisibleLine * lineHeight);
+    float scrollOffset = m_ScrollY - (firstScreenLine * lineHeight);
     
     // Base position for drawing: window position + padding - partial line offset
     ImVec2 cursorPos = ImVec2(windowPos.x + windowPadding.x - m_ScrollX, 
@@ -979,10 +1004,11 @@ bool SyntaxEditor::IsLineFolded(size_t line) const {
 }
 
 bool SyntaxEditor::IsLineHidden(size_t line) const {
-    // A line is hidden if it's inside any folded region (but not the start line)
+    // A line is hidden if it's inside any actively folded region (but not the start line)
     for (size_t foldStart : m_FoldedLines) {
         auto it = m_FoldEndLines.find(foldStart);
         if (it != m_FoldEndLines.end()) {
+            // Hidden if: after fold start AND at or before fold end
             if (line > foldStart && line <= it->second) {
                 return true;
             }
@@ -991,51 +1017,57 @@ bool SyntaxEditor::IsLineHidden(size_t line) const {
     return false;
 }
 
-size_t SyntaxEditor::ScreenLineToBufferLine(size_t screenLine) const {
+size_t SyntaxEditor::ScreenLineToBufferLine(size_t screenLine, size_t maxLine) const {
+    if (m_FoldedLines.empty()) {
+        return screenLine; // No folds, direct mapping
+    }
+    
     size_t bufferLine = 0;
     size_t visibleCount = 0;
     
-    while (visibleCount < screenLine) {
+    while (bufferLine < maxLine && visibleCount < screenLine) {
         if (!IsLineHidden(bufferLine)) {
             visibleCount++;
         }
         bufferLine++;
-        
-        // Safety check
-        if (bufferLine > 1000000) break;
     }
     
-    // Skip any remaining hidden lines to get to the actual visible line
-    while (IsLineHidden(bufferLine)) {
+    // Find the next visible line at this screen position
+    while (bufferLine < maxLine && IsLineHidden(bufferLine)) {
         bufferLine++;
     }
     
-    return bufferLine;
+    return std::min(bufferLine, maxLine > 0 ? maxLine - 1 : 0);
 }
 
 size_t SyntaxEditor::BufferLineToScreenLine(size_t bufferLine) const {
-    size_t screenLine = 0;
+    if (m_FoldedLines.empty()) {
+        return bufferLine; // No folds, direct mapping
+    }
     
+    size_t screenLine = 0;
     for (size_t i = 0; i < bufferLine; ++i) {
         if (!IsLineHidden(i)) {
             screenLine++;
         }
     }
-    
     return screenLine;
 }
 
-size_t SyntaxEditor::GetVisibleLineCount() const {
-    // This would be called on total line count, but we need to know it
-    // Returns the count of visible lines (total - hidden)
+size_t SyntaxEditor::GetHiddenLineCount() const {
+    if (m_FoldedLines.empty()) {
+        return 0;
+    }
+    
     size_t hidden = 0;
     for (size_t foldStart : m_FoldedLines) {
         auto it = m_FoldEndLines.find(foldStart);
         if (it != m_FoldEndLines.end()) {
-            hidden += (it->second - foldStart); // endLine - startLine = hidden lines
+            // Count lines from (foldStart+1) to foldEnd inclusive
+            hidden += (it->second - foldStart);
         }
     }
-    return hidden; // Actually returns hidden count, caller subtracts from total
+    return hidden;
 }
 
 void SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, 

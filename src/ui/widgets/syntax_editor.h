@@ -111,11 +111,11 @@ private:
     // Code folding
     void RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
     void UpdateFoldRanges(TextBuffer& buffer);
-    bool IsLineFolded(size_t line) const;      // Check if line is inside a folded region
+    bool IsLineFolded(size_t line) const;       // Check if line is start of a folded region
     bool IsLineHidden(size_t line) const;       // Check if line should be hidden (inside fold, not the first line)
-    size_t ScreenLineToBufferLine(size_t screenLine) const;  // Convert visible line to actual buffer line
-    size_t BufferLineToScreenLine(size_t bufferLine) const;  // Convert buffer line to visible line
-    size_t GetVisibleLineCount() const;         // Total visible lines after folding
+    size_t ScreenLineToBufferLine(size_t screenLine, size_t maxLine) const;  // Convert visible row to buffer line
+    size_t BufferLineToScreenLine(size_t bufferLine) const;  // Convert buffer line to visible row
+    size_t GetHiddenLineCount() const;          // Count of lines hidden by folds
 
     void RenderStatusLine(TextBuffer& buffer, const ImVec2& pos, float width);
     

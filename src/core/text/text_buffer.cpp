@@ -537,47 +537,46 @@ std::vector<FoldRange> TextBuffer::GetFoldRanges() const {
     TSNode root = ts_tree_root_node(m_Tree);
     TSTreeCursor cursor = ts_tree_cursor_new(root);
     
-    // Only fold meaningful constructs with headers - NOT raw blocks/compound_statements
-    // Raw blocks inside functions/if/etc are redundant since the parent is foldable
-    auto isFoldableType = [](std::string_view type) -> bool {
-        // Functions and methods
-        if (type == "function_definition" || type == "function_declaration" ||
-            type == "method_definition" || type == "method_declaration" ||
-            type == "arrow_function" || type == "function_expression" ||
-            type == "lambda_expression") return true;
-        
-        // Classes, structs, enums
-        if (type == "class_definition" || type == "class_declaration" ||
-            type == "class_specifier" || type == "struct_specifier" ||
-            type == "enum_specifier" || type == "union_specifier" ||
-            type == "interface_declaration" || type == "trait_definition") return true;
-        
-        // Control flow
-        if (type == "if_statement" || type == "else_clause" ||
-            type == "for_statement" || type == "while_statement" ||
-            type == "do_statement" || type == "for_in_statement" ||
-            type == "for_range_loop" || type == "enhanced_for_statement") return true;
-        
-        // Switch/match
-        if (type == "switch_statement" || type == "case_statement" ||
-            type == "match_expression" || type == "switch_expression") return true;
-        
-        // Try/catch
-        if (type == "try_statement" || type == "catch_clause" ||
-            type == "finally_clause" || type == "except_clause") return true;
-        
-        // Namespace and modules
-        if (type == "namespace_definition" || type == "module" ||
-            type == "module_definition") return true;
-        
-        // Preprocessor
-        if (type == "preproc_if" || type == "preproc_ifdef" ||
-            type == "preproc_elif" || type == "preproc_else") return true;
-        
-        // Comments (multi-line)
-        if (type == "comment" || type == "block_comment") return true;
-        
-        return false;
+    // Helper to get the end line, adjusting for tree-sitter's end point behavior
+    auto getEndLine = [](TSNode node) -> uint32_t {
+        TSPoint end = ts_node_end_point(node);
+        TSPoint start = ts_node_start_point(node);
+        // If end.column == 0, content ended on previous line
+        if (end.column == 0 && end.row > start.row) {
+            return end.row - 1;
+        }
+        return end.row;
+    };
+    
+    // Helper to find a named child by field name
+    auto findChildByField = [](TSNode node, const char* fieldName) -> TSNode {
+        return ts_node_child_by_field_name(node, fieldName, strlen(fieldName));
+    };
+    
+    // Helper to find first child of a specific type
+    auto findChildByType = [](TSNode node, const char* typeName) -> TSNode {
+        uint32_t count = ts_node_child_count(node);
+        for (uint32_t i = 0; i < count; ++i) {
+            TSNode child = ts_node_child(node, i);
+            if (strcmp(ts_node_type(child), typeName) == 0) {
+                return child;
+            }
+        }
+        return TSNode{}; // null node
+    };
+    
+    // Helper to add a fold range if valid
+    auto addFoldRange = [&](TSNode node, const char* type) {
+        if (ts_node_is_null(node)) return;
+        TSPoint start = ts_node_start_point(node);
+        uint32_t endLine = getEndLine(node);
+        if (start.row < endLine) {
+            ranges.push_back(FoldRange{
+                .startLine = start.row,
+                .endLine = endLine,
+                .type = type
+            });
+        }
     };
     
     // Iterative tree traversal
@@ -591,15 +590,225 @@ std::vector<FoldRange> TextBuffer::GetFoldRanges() const {
             std::string_view typeSv(type);
             
             TSPoint start = ts_node_start_point(node);
-            TSPoint end = ts_node_end_point(node);
+            uint32_t endLine = getEndLine(node);
             
-            // Only fold if spans multiple lines
-            if (start.row < end.row && isFoldableType(typeSv)) {
-                ranges.push_back(FoldRange{
-                    .startLine = start.row,
-                    .endLine = end.row,
-                    .type = type
-                });
+            // Handle different node types with specific folding logic
+            
+            // Functions/methods - fold the whole definition
+            if (typeSv == "function_definition" || typeSv == "function_declaration" ||
+                typeSv == "method_definition" || typeSv == "method_declaration" ||
+                typeSv == "arrow_function" || typeSv == "function_expression" ||
+                typeSv == "lambda_expression") {
+                // Try to find the body for more precise folding
+                TSNode body = findChildByField(node, "body");
+                if (ts_node_is_null(body)) body = findChildByType(node, "compound_statement");
+                if (ts_node_is_null(body)) body = findChildByType(node, "block");
+                
+                if (!ts_node_is_null(body) && start.row < getEndLine(body)) {
+                    ranges.push_back(FoldRange{
+                        .startLine = start.row,  // Start from function header
+                        .endLine = getEndLine(body),
+                        .type = type
+                    });
+                } else if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // Classes, structs, enums - fold the whole definition
+            else if (typeSv == "class_definition" || typeSv == "class_declaration" ||
+                     typeSv == "class_specifier" || typeSv == "struct_specifier" ||
+                     typeSv == "enum_specifier" || typeSv == "union_specifier" ||
+                     typeSv == "interface_declaration" || typeSv == "trait_definition") {
+                if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // if_statement - fold only the consequence (body), NOT including else
+            else if (typeSv == "if_statement") {
+                // Find the consequence/body of the if
+                TSNode consequence = findChildByField(node, "consequence");
+                if (ts_node_is_null(consequence)) consequence = findChildByType(node, "compound_statement");
+                if (ts_node_is_null(consequence)) consequence = findChildByType(node, "block");
+                
+                if (!ts_node_is_null(consequence)) {
+                    uint32_t bodyEnd = getEndLine(consequence);
+                    if (start.row < bodyEnd) {
+                        ranges.push_back(FoldRange{
+                            .startLine = start.row,  // if keyword line
+                            .endLine = bodyEnd,
+                            .type = "if"
+                        });
+                    }
+                }
+            }
+            // else_clause - fold the body of else
+            else if (typeSv == "else_clause" || typeSv == "elif_clause") {
+                TSNode body = findChildByField(node, "consequence");
+                if (ts_node_is_null(body)) body = findChildByField(node, "body");
+                if (ts_node_is_null(body)) body = findChildByType(node, "compound_statement");
+                if (ts_node_is_null(body)) body = findChildByType(node, "block");
+                // Could also be another if_statement for "else if"
+                if (ts_node_is_null(body)) body = findChildByType(node, "if_statement");
+                
+                if (!ts_node_is_null(body)) {
+                    uint32_t bodyEnd = getEndLine(body);
+                    if (start.row < bodyEnd) {
+                        ranges.push_back(FoldRange{
+                            .startLine = start.row,
+                            .endLine = bodyEnd,
+                            .type = type
+                        });
+                    }
+                } else if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // for/while/do - fold the body
+            else if (typeSv == "for_statement" || typeSv == "while_statement" ||
+                     typeSv == "do_statement" || typeSv == "for_in_statement" ||
+                     typeSv == "for_range_loop" || typeSv == "enhanced_for_statement") {
+                TSNode body = findChildByField(node, "body");
+                if (ts_node_is_null(body)) body = findChildByType(node, "compound_statement");
+                if (ts_node_is_null(body)) body = findChildByType(node, "block");
+                
+                if (!ts_node_is_null(body)) {
+                    uint32_t bodyEnd = getEndLine(body);
+                    if (start.row < bodyEnd) {
+                        ranges.push_back(FoldRange{
+                            .startLine = start.row,
+                            .endLine = bodyEnd,
+                            .type = type
+                        });
+                    }
+                } else if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // switch - fold the body
+            else if (typeSv == "switch_statement") {
+                TSNode body = findChildByField(node, "body");
+                if (ts_node_is_null(body)) body = findChildByType(node, "compound_statement");
+                
+                if (!ts_node_is_null(body)) {
+                    uint32_t bodyEnd = getEndLine(body);
+                    if (start.row < bodyEnd) {
+                        ranges.push_back(FoldRange{
+                            .startLine = start.row,
+                            .endLine = bodyEnd,
+                            .type = type
+                        });
+                    }
+                } else if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // case statements
+            else if (typeSv == "case_statement" || typeSv == "match_expression" || 
+                     typeSv == "switch_expression") {
+                if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // try/catch/finally - fold each block separately
+            else if (typeSv == "try_statement") {
+                TSNode body = findChildByField(node, "body");
+                if (ts_node_is_null(body)) body = findChildByType(node, "compound_statement");
+                
+                if (!ts_node_is_null(body)) {
+                    uint32_t bodyEnd = getEndLine(body);
+                    if (start.row < bodyEnd) {
+                        ranges.push_back(FoldRange{
+                            .startLine = start.row,
+                            .endLine = bodyEnd,
+                            .type = "try"
+                        });
+                    }
+                }
+            }
+            else if (typeSv == "catch_clause" || typeSv == "except_clause" || 
+                     typeSv == "finally_clause") {
+                TSNode body = findChildByField(node, "body");
+                if (ts_node_is_null(body)) body = findChildByType(node, "compound_statement");
+                if (ts_node_is_null(body)) body = findChildByType(node, "block");
+                
+                if (!ts_node_is_null(body)) {
+                    uint32_t bodyEnd = getEndLine(body);
+                    if (start.row < bodyEnd) {
+                        ranges.push_back(FoldRange{
+                            .startLine = start.row,
+                            .endLine = bodyEnd,
+                            .type = type
+                        });
+                    }
+                } else if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // Namespace and modules
+            else if (typeSv == "namespace_definition" || typeSv == "module" ||
+                     typeSv == "module_definition") {
+                if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
+            }
+            // Preprocessor: #if/#ifdef - fold to the line BEFORE #else/#elif/#endif
+            else if (typeSv == "preproc_if" || typeSv == "preproc_ifdef") {
+                // Find where the #if block ends (before #else, #elif, or #endif)
+                uint32_t foldEnd = start.row;
+                uint32_t count = ts_node_child_count(node);
+                
+                for (uint32_t i = 0; i < count; ++i) {
+                    TSNode child = ts_node_child(node, i);
+                    const char* childType = ts_node_type(child);
+                    
+                    // Stop at #else, #elif, or #endif directive
+                    if (strcmp(childType, "preproc_else") == 0 ||
+                        strcmp(childType, "preproc_elif") == 0 ||
+                        strcmp(childType, "#endif") == 0) {
+                        // Fold ends on line before this directive
+                        TSPoint childStart = ts_node_start_point(child);
+                        if (childStart.row > start.row) {
+                            foldEnd = childStart.row - 1;
+                        }
+                        break;
+                    }
+                    // Track the last content line
+                    uint32_t childEnd = getEndLine(child);
+                    if (childEnd > foldEnd) {
+                        foldEnd = childEnd;
+                    }
+                }
+                
+                // If no #else/#endif found, use the node end
+                if (foldEnd == start.row) {
+                    foldEnd = endLine > 0 ? endLine - 1 : endLine; // Exclude #endif line
+                }
+                
+                if (start.row < foldEnd) {
+                    ranges.push_back(FoldRange{
+                        .startLine = start.row,
+                        .endLine = foldEnd,
+                        .type = type
+                    });
+                }
+            }
+            // #else / #elif blocks
+            else if (typeSv == "preproc_else" || typeSv == "preproc_elif") {
+                // Fold from #else to line before #endif or next #elif
+                uint32_t foldEnd = endLine > 0 ? endLine - 1 : endLine;
+                if (start.row < foldEnd) {
+                    ranges.push_back(FoldRange{
+                        .startLine = start.row,
+                        .endLine = foldEnd,
+                        .type = type
+                    });
+                }
+            }
+            // Multi-line comments
+            else if (typeSv == "comment" || typeSv == "block_comment") {
+                if (start.row < endLine) {
+                    addFoldRange(node, type);
+                }
             }
         }
         
