@@ -179,7 +179,7 @@ int Application::GetDockspaceFlags() {
 }
 
 float Application::GetDockspaceBottomOffset() {
-    return UISystem::StatusBarHeight;
+    return UISystem::StatusBarHeight * ImGui::GetIO().FontGlobalScale;
 }
 
 } // namespace sol

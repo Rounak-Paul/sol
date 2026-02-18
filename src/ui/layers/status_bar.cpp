@@ -12,7 +12,7 @@ StatusBar::StatusBar(const Id& id)
 void StatusBar::OnUI() {
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     
-    const float height = UISystem::StatusBarHeight;
+    const float height = UISystem::StatusBarHeight * ImGui::GetIO().FontGlobalScale;
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height));
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, height));
     ImGui::SetNextWindowViewport(viewport->ID);
