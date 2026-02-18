@@ -269,9 +269,10 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     }
 
     // Render line numbers and fold indicators
+    bool foldClickConsumed = false;
     if (m_ShowLineNumbers) {
         RenderLineNumbers(buffer, cursorPos, lineHeight, firstVisibleLine, lastVisibleLine);
-        RenderFoldIndicators(buffer, foldGutterPos, lineHeight, firstVisibleLine, lastVisibleLine);
+        foldClickConsumed = RenderFoldIndicators(buffer, foldGutterPos, lineHeight, firstVisibleLine, lastVisibleLine);
     }
     
     // Render selection background
@@ -335,8 +336,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         return buffer.LineColToPos(clickedLine, clickedCol);
     };
     
-    // Mouse click - start selection or set cursor
-    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0)) {
+    // Mouse click - start selection or set cursor (skip if fold gutter consumed the click)
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) && !foldClickConsumed) {
         m_CursorPos = mouseToBufPos(mousePos);
         m_NeedsScrollToCursor = true;
         
@@ -1070,7 +1071,7 @@ size_t SyntaxEditor::GetHiddenLineCount() const {
     return hidden;
 }
 
-void SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, 
+bool SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, 
                                          size_t firstLine, size_t lastLine) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     ImGuiIO& io = ImGui::GetIO();
@@ -1079,6 +1080,7 @@ void SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, f
     float foldGutterWidth = GetFoldGutterWidth();
     float fontSize = ImGui::GetFontSize() * 0.75f; // Slightly smaller for low profile
     
+    bool clickConsumed = false;
     size_t screenRow = 0;
     for (size_t i = firstLine; i < lastLine; ++i) {
         // Skip hidden lines
@@ -1108,6 +1110,7 @@ void SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, f
                     } else {
                         m_FoldedLines.insert(i);
                     }
+                    clickConsumed = true;  // Prevent text area from also handling this click
                 }
             }
             
@@ -1125,6 +1128,8 @@ void SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, f
         
         screenRow++;
     }
+    
+    return clickConsumed;
 }
 
 bool SyntaxEditor::HandleInput(TextBuffer& buffer) {

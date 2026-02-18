@@ -109,7 +109,7 @@ private:
     void RenderMatchingBracket(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine);
     
     // Code folding
-    void RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);
+    bool RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, float lineHeight, size_t firstLine, size_t lastLine);  // Returns true if click was consumed
     void UpdateFoldRanges(TextBuffer& buffer);
     bool IsLineFolded(size_t line) const;       // Check if line is start of a folded region
     bool IsLineHidden(size_t line) const;       // Check if line should be hidden (inside fold, not the first line)
