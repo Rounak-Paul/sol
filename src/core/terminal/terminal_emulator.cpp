@@ -258,11 +258,108 @@ void TerminalEmulator::HandleChar(char32_t c) {
 void TerminalEmulator::Resize(int rows, int cols) {
     if (rows == m_Rows && cols == m_Cols) return;
     
-    // Resize screen buffer
+    int oldCols = m_Cols;
+    int oldRows = m_Rows;
+    
+    // Only reflow if width changed
+    if (cols != oldCols) {
+        // Collect all content as logical lines (joined wrapped sequences)
+        std::vector<std::vector<TerminalCell>> logicalLines;
+        
+        // Process scrollback first
+        std::vector<TerminalCell> currentLogical;
+        for (auto& line : m_Scrollback) {
+            for (auto& cell : line.cells) {
+                currentLogical.push_back(cell);
+            }
+            if (!line.wrapped) {
+                logicalLines.push_back(std::move(currentLogical));
+                currentLogical.clear();
+            }
+        }
+        
+        // Then process screen
+        for (auto& line : m_Screen) {
+            for (auto& cell : line.cells) {
+                currentLogical.push_back(cell);
+            }
+            if (!line.wrapped) {
+                logicalLines.push_back(std::move(currentLogical));
+                currentLogical.clear();
+            }
+        }
+        
+        // Handle any remaining content
+        if (!currentLogical.empty()) {
+            logicalLines.push_back(std::move(currentLogical));
+        }
+        
+        // Rewrap to new width and rebuild buffers
+        m_Scrollback.clear();
+        m_Screen.clear();
+        
+        std::vector<TerminalLine> wrappedLines;
+        for (auto& logical : logicalLines) {
+            // Trim trailing spaces
+            while (!logical.empty() && logical.back().codepoint == ' ') {
+                logical.pop_back();
+            }
+            
+            if (logical.empty()) {
+                // Empty line
+                TerminalLine newLine;
+                newLine.cells.resize(static_cast<size_t>(cols));
+                for (auto& cell : newLine.cells) {
+                    cell.codepoint = ' ';
+                    cell.attr = m_DefaultAttr;
+                }
+                newLine.wrapped = false;
+                wrappedLines.push_back(std::move(newLine));
+            } else {
+                // Wrap to new width
+                size_t pos = 0;
+                while (pos < logical.size()) {
+                    TerminalLine newLine;
+                    newLine.cells.resize(static_cast<size_t>(cols));
+                    
+                    size_t lineLen = std::min(static_cast<size_t>(cols), logical.size() - pos);
+                    for (size_t i = 0; i < lineLen; i++) {
+                        newLine.cells[i] = logical[pos + i];
+                    }
+                    for (size_t i = lineLen; i < static_cast<size_t>(cols); i++) {
+                        newLine.cells[i].codepoint = ' ';
+                        newLine.cells[i].attr = m_DefaultAttr;
+                    }
+                    
+                    pos += lineLen;
+                    newLine.wrapped = (pos < logical.size());  // More content follows
+                    wrappedLines.push_back(std::move(newLine));
+                }
+            }
+        }
+        
+        // Distribute lines between scrollback and screen
+        // Keep last 'rows' lines on screen, rest goes to scrollback
+        if (wrappedLines.size() <= static_cast<size_t>(rows)) {
+            // All fits on screen
+            m_Screen = std::move(wrappedLines);
+        } else {
+            // Split between scrollback and screen
+            size_t scrollbackCount = wrappedLines.size() - static_cast<size_t>(rows);
+            for (size_t i = 0; i < scrollbackCount && i < MaxScrollback; i++) {
+                m_Scrollback.push_back(std::move(wrappedLines[i]));
+            }
+            for (size_t i = scrollbackCount; i < wrappedLines.size(); i++) {
+                m_Screen.push_back(std::move(wrappedLines[i]));
+            }
+        }
+    }
+    
+    // Ensure screen has exactly 'rows' lines
     m_Screen.resize(static_cast<size_t>(rows));
     for (auto& line : m_Screen) {
-        line.resize(static_cast<size_t>(cols));
-        for (auto& cell : line) {
+        line.cells.resize(static_cast<size_t>(cols));
+        for (auto& cell : line.cells) {
             if (cell.codepoint == 0) {
                 cell.codepoint = ' ';
                 cell.attr = m_DefaultAttr;
@@ -283,7 +380,7 @@ void TerminalEmulator::Resize(int rows, int cols) {
     m_Cols = cols;
     
     // Resize empty line
-    s_EmptyLine.resize(static_cast<size_t>(cols));
+    s_EmptyLine.cells.resize(static_cast<size_t>(cols));
     
     // Notify PTY
     if (m_Pty) {
@@ -755,6 +852,8 @@ void TerminalEmulator::ExecuteOSC() {
 void TerminalEmulator::PutChar(char32_t c) {
     if (m_CursorCol >= m_Cols) {
         if (m_AutoWrap) {
+            // Mark current line as wrapped (soft wrap, not hard newline)
+            m_Screen[static_cast<size_t>(m_CursorRow)].wrapped = true;
             CarriageReturn();
             Newline();
         } else {
@@ -762,7 +861,7 @@ void TerminalEmulator::PutChar(char32_t c) {
         }
     }
     
-    auto& cell = m_Screen[static_cast<size_t>(m_CursorRow)][static_cast<size_t>(m_CursorCol)];
+    auto& cell = m_Screen[static_cast<size_t>(m_CursorRow)].cells[static_cast<size_t>(m_CursorCol)];
     cell.codepoint = c;
     cell.attr = m_CurrentAttr;
     cell.dirty = true;

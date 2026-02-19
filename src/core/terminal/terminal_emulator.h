@@ -35,8 +35,24 @@ struct TerminalCell {
     bool dirty = true;  // Needs redraw
 };
 
-// A line in the terminal
-using TerminalLine = std::vector<TerminalCell>;
+// A line in the terminal with wrap tracking
+struct TerminalLine {
+    std::vector<TerminalCell> cells;
+    bool wrapped = false;  // True if line continues to next (soft wrap), false if hard newline
+    
+    // Convenience accessors to maintain compatibility
+    size_t size() const { return cells.size(); }
+    bool empty() const { return cells.empty(); }
+    void resize(size_t n) { cells.resize(n); }
+    void clear() { cells.clear(); wrapped = false; }
+    TerminalCell& operator[](size_t i) { return cells[i]; }
+    const TerminalCell& operator[](size_t i) const { return cells[i]; }
+    auto begin() { return cells.begin(); }
+    auto end() { return cells.end(); }
+    auto begin() const { return cells.begin(); }
+    auto end() const { return cells.end(); }
+    void push_back(const TerminalCell& c) { cells.push_back(c); }
+};
 
 // Terminal color palette (256 color)
 class TerminalPalette {
