@@ -36,6 +36,8 @@ set(SRCS
     src/ui/input/input_mode.cpp
     src/ui/input/standard_mode.cpp
     src/ui/input/input_manager.cpp
+    src/ui/input/keybinding.cpp
+    src/ui/input/command.cpp
     src/ui/layers/menu_bar.cpp
     src/ui/layers/explorer.cpp
     src/ui/layers/status_bar.cpp

@@ -26,6 +26,8 @@ private:
 
     void SetupEvents();
     void SetupUILayers();
+    void SetupInputSystem();
+    void ProcessInput();
 };
 
 } // namespace sol

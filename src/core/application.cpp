@@ -12,6 +12,7 @@
 #include "ui/layers/settings.h"
 #include "ui/layers/terminal_panel.h"
 #include "ui/editor_settings.h"
+#include "ui/input/command.h"
 #include <imgui.h>
 
 using sol::Logger;
@@ -41,6 +42,7 @@ void Application::OnStart() {
     
     SetupEvents();
     SetupUILayers();
+    SetupInputSystem();
     Logger::Info("Application initialized successfully");
 }
 
@@ -48,13 +50,8 @@ void Application::OnUpdate() {
 }
 
 void Application::OnUI() {
-    // Handle global keyboard shortcuts
-    ImGuiIO& io = ImGui::GetIO();
-    
-    // Ctrl+` to toggle terminal
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_GraveAccent)) {
-        EventSystem::Execute("toggle_terminal");
-    }
+    // Process input through the new InputSystem
+    ProcessInput();
     
     m_UISystem.RenderLayers();
 }
@@ -205,6 +202,131 @@ int Application::GetDockspaceFlags() {
 
 float Application::GetDockspaceBottomOffset() {
     return UISystem::StatusBarHeight * ImGui::GetIO().FontGlobalScale;
+}
+
+void Application::SetupInputSystem() {
+    auto& input = InputSystem::GetInstance();
+    auto& registry = CommandRegistry::GetInstance();
+    auto keymap = input.GetActiveKeymap();
+    
+    // Register commands with actual handlers
+    registry.Register("file.save", "Save File", [](const CommandArgs&) {
+        EventSystem::Execute("save_file");
+        return CommandResult::Success();
+    });
+    registry.Get("file.save")->SetCategory("File").SetDescription("Save the current file");
+    
+    registry.Register("file.saveAll", "Save All Files", [](const CommandArgs&) {
+        EventSystem::Execute("save_all_files");
+        return CommandResult::Success();
+    });
+    registry.Get("file.saveAll")->SetCategory("File").SetDescription("Save all open files");
+    
+    registry.Register("file.open", "Open File", [](const CommandArgs&) {
+        EventSystem::Execute("open_file_dialog");
+        return CommandResult::Success();
+    });
+    registry.Get("file.open")->SetCategory("File").SetDescription("Open a file");
+    
+    registry.Register("file.openFolder", "Open Folder", [](const CommandArgs&) {
+        EventSystem::Execute("open_folder_dialog");
+        return CommandResult::Success();
+    });
+    registry.Get("file.openFolder")->SetCategory("File").SetDescription("Open a folder");
+    
+    registry.Register("file.close", "Close File", [](const CommandArgs&) {
+        EventSystem::Execute("close_buffer");
+        return CommandResult::Success();
+    });
+    registry.Get("file.close")->SetCategory("File").SetDescription("Close the current file");
+    
+    registry.Register("view.toggleTerminal", "Toggle Terminal", [this](const CommandArgs&) {
+        if (m_TerminalPanel) {
+            m_TerminalPanel->Toggle();
+        }
+        return CommandResult::Success();
+    });
+    registry.Get("view.toggleTerminal")->SetCategory("View").SetDescription("Toggle the terminal panel");
+    
+    registry.Register("view.toggleExplorer", "Toggle Explorer", [this](const CommandArgs&) {
+        auto explorer = m_UISystem.GetLayer("Explorer");
+        if (explorer) {
+            explorer->SetEnabled(!explorer->IsEnabled());
+        }
+        return CommandResult::Success();
+    });
+    registry.Get("view.toggleExplorer")->SetCategory("View").SetDescription("Toggle the file explorer");
+    
+    registry.Register("app.quit", "Quit Application", [this](const CommandArgs&) {
+        Quit();
+        return CommandResult::Success();
+    });
+    registry.Get("app.quit")->SetCategory("Application").SetDescription("Quit the application");
+    
+    // Set up keybindings
+    keymap->Bind("Ctrl+S", "file.save");
+    keymap->Bind("Ctrl+Shift+S", "file.saveAll");
+    keymap->Bind("Ctrl+O", "file.open");
+    keymap->Bind("Ctrl+Shift+O", "file.openFolder");
+    keymap->Bind("Ctrl+W", "file.close");
+    keymap->Bind("Ctrl+`", "view.toggleTerminal");
+    keymap->Bind("Ctrl+B", "view.toggleExplorer");
+    keymap->Bind("Ctrl+Q", "app.quit");
+    
+    Logger::Info("Input system initialized with default keybindings");
+}
+
+void Application::ProcessInput() {
+    auto& input = InputSystem::GetInstance();
+    
+    // Check all keys to see if any keybinding matches
+    // This is a simple approach - check each key that was pressed this frame
+    ImGuiIO& io = ImGui::GetIO();
+    
+    // Skip if any text input widget has focus (they handle their own input)
+    if (io.WantTextInput) {
+        input.ResetPendingSequence();
+        return;
+    }
+    
+    // Get current modifiers
+    Modifier mods = KeyChord::GetCurrentModifiers();
+    
+    // Check common keys
+    static const ImGuiKey s_CheckKeys[] = {
+        // Letters
+        ImGuiKey_A, ImGuiKey_B, ImGuiKey_C, ImGuiKey_D, ImGuiKey_E, ImGuiKey_F,
+        ImGuiKey_G, ImGuiKey_H, ImGuiKey_I, ImGuiKey_J, ImGuiKey_K, ImGuiKey_L,
+        ImGuiKey_M, ImGuiKey_N, ImGuiKey_O, ImGuiKey_P, ImGuiKey_Q, ImGuiKey_R,
+        ImGuiKey_S, ImGuiKey_T, ImGuiKey_U, ImGuiKey_V, ImGuiKey_W, ImGuiKey_X,
+        ImGuiKey_Y, ImGuiKey_Z,
+        // Numbers
+        ImGuiKey_0, ImGuiKey_1, ImGuiKey_2, ImGuiKey_3, ImGuiKey_4,
+        ImGuiKey_5, ImGuiKey_6, ImGuiKey_7, ImGuiKey_8, ImGuiKey_9,
+        // Function keys
+        ImGuiKey_F1, ImGuiKey_F2, ImGuiKey_F3, ImGuiKey_F4, ImGuiKey_F5, ImGuiKey_F6,
+        ImGuiKey_F7, ImGuiKey_F8, ImGuiKey_F9, ImGuiKey_F10, ImGuiKey_F11, ImGuiKey_F12,
+        // Navigation
+        ImGuiKey_UpArrow, ImGuiKey_DownArrow, ImGuiKey_LeftArrow, ImGuiKey_RightArrow,
+        ImGuiKey_Home, ImGuiKey_End, ImGuiKey_PageUp, ImGuiKey_PageDown,
+        // Editing
+        ImGuiKey_Insert, ImGuiKey_Delete, ImGuiKey_Backspace, ImGuiKey_Enter,
+        ImGuiKey_Tab, ImGuiKey_Escape, ImGuiKey_Space,
+        // Punctuation
+        ImGuiKey_GraveAccent, ImGuiKey_Minus, ImGuiKey_Equal,
+        ImGuiKey_LeftBracket, ImGuiKey_RightBracket, ImGuiKey_Backslash,
+        ImGuiKey_Semicolon, ImGuiKey_Apostrophe, ImGuiKey_Comma, ImGuiKey_Period, ImGuiKey_Slash,
+    };
+    
+    for (ImGuiKey key : s_CheckKeys) {
+        if (ImGui::IsKeyPressed(key, false)) {
+            KeyChord chord(key, mods);
+            if (input.ProcessKey(chord, input.GetContext())) {
+                // Key was handled by a binding
+                break;
+            }
+        }
+    }
 }
 
 } // namespace sol
