@@ -69,6 +69,14 @@ void MenuBar::RenderViewMenu() {
             }
         }
 
+        auto terminalPanel = m_UISystem->GetLayer("terminal_panel");
+        if (terminalPanel) {
+            bool enabled = terminalPanel->IsEnabled();
+            if (ImGui::MenuItem("Terminal", "Ctrl+`", &enabled)) {
+                EventSystem::Execute("toggle_terminal");
+            }
+        }
+
         auto settings = m_UISystem->GetLayer("Settings");
         if (settings) {
             bool enabled = settings->IsEnabled();

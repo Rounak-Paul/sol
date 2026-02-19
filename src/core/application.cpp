@@ -10,6 +10,7 @@
 #include "ui/layers/explorer.h"
 #include "ui/layers/status_bar.h"
 #include "ui/layers/settings.h"
+#include "ui/layers/terminal_panel.h"
 #include "ui/editor_settings.h"
 #include <imgui.h>
 
@@ -47,6 +48,14 @@ void Application::OnUpdate() {
 }
 
 void Application::OnUI() {
+    // Handle global keyboard shortcuts
+    ImGuiIO& io = ImGui::GetIO();
+    
+    // Ctrl+` to toggle terminal
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_GraveAccent)) {
+        EventSystem::Execute("toggle_terminal");
+    }
+    
     m_UISystem.RenderLayers();
 }
 
@@ -146,6 +155,17 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(closeBufferEvent);
+    
+    // Terminal toggle event
+    auto toggleTerminalEvent = std::make_shared<Event>("toggle_terminal");
+    toggleTerminalEvent->SetHandler([this](const EventData& data) {
+        if (m_TerminalPanel) {
+            m_TerminalPanel->Toggle();
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(toggleTerminalEvent);
 }
 
 void Application::SetupUILayers() {
@@ -172,6 +192,11 @@ void Application::SetupUILayers() {
     auto settings = std::make_shared<SettingsWindow>();
     settings->SetEnabled(false);
     m_UISystem.RegisterLayer(settings);
+    
+    // Terminal panel - disabled by default, toggle with Ctrl+`
+    m_TerminalPanel = std::make_shared<TerminalPanel>();
+    m_TerminalPanel->SetEnabled(false);
+    m_UISystem.RegisterLayer(m_TerminalPanel);
 }
 
 int Application::GetDockspaceFlags() {

@@ -31,6 +31,7 @@ set(SRCS
     src/core/text/rope.cpp
     src/core/text/text_buffer.cpp
     src/core/text/undo_tree.cpp
+    src/core/terminal/terminal_emulator.cpp
     src/ui/ui_system.cpp
     src/ui/input/input_mode.cpp
     src/ui/input/standard_mode.cpp
@@ -40,7 +41,9 @@ set(SRCS
     src/ui/layers/status_bar.cpp
     src/ui/layers/workspace.cpp
     src/ui/layers/settings.cpp
+    src/ui/layers/terminal_panel.cpp
     src/ui/widgets/syntax_editor.cpp
+    src/ui/widgets/terminal.cpp
     src/ui/editor_settings.cpp
     src/core/lsp/lsp_client.cpp
     src/core/lsp/lsp_manager.cpp
@@ -51,6 +54,7 @@ if(APPLE)
     list(APPEND SRCS 
         src/core/platform/file_dialog_macos.mm
         src/core/platform/process_macos.cpp
+        src/core/terminal/pty_unix.cpp
     )
 elseif(WIN32)
     list(APPEND SRCS 
@@ -61,6 +65,7 @@ else()
     list(APPEND SRCS 
         src/core/platform/file_dialog_linux.cpp
         src/core/platform/process_linux.cpp
+        src/core/terminal/pty_unix.cpp
     )
 endif()
 

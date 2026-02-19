@@ -2,8 +2,11 @@
 
 #include <tinyvk/tinyvk.h>
 #include "ui/ui_system.h"
+#include <memory>
 
 namespace sol {
+
+class TerminalPanel;
 
 class Application : public tvk::App {
 public:
@@ -19,6 +22,7 @@ protected:
 
 private:
     UISystem m_UISystem;
+    std::shared_ptr<TerminalPanel> m_TerminalPanel;
 
     void SetupEvents();
     void SetupUILayers();
