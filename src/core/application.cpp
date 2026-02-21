@@ -166,6 +166,38 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(toggleTerminalEvent);
+    
+    // New terminal event
+    auto newTerminalEvent = std::make_shared<Event>("new_terminal");
+    newTerminalEvent->SetHandler([this](const EventData& data) {
+        if (m_TerminalPanel) {
+            m_TerminalPanel->CreateTerminal();
+            m_TerminalPanel->SetEnabled(true);
+            m_TerminalPanel->Focus();
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(newTerminalEvent);
+    
+    // New buffer event
+    auto newBufferEvent = std::make_shared<Event>("new_buffer");
+    newBufferEvent->SetHandler([](const EventData& data) {
+        auto buffer = ResourceSystem::GetInstance().CreateNewBuffer();
+        return buffer != nullptr;
+    });
+    EventSystem::Register(newBufferEvent);
+    
+    // Write file event (alias for save_file, matches vim :w)
+    auto writeFileEvent = std::make_shared<Event>("write_file");
+    writeFileEvent->SetHandler([](const EventData& data) {
+        auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
+        if (activeBuffer) {
+            return ResourceSystem::GetInstance().SaveBuffer(activeBuffer->GetId());
+        }
+        return false;
+    });
+    EventSystem::Register(writeFileEvent);
 }
 
 void Application::SetupUILayers() {

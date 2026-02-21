@@ -79,13 +79,17 @@ ImGuiKey ImGuiKeyFromString(const std::string& str) {
 std::vector<KeybindEntry> GetDefaultKeybindings() {
     // Format: "Leader X" means press leader key, then X
     // Format: "Ctrl+S" means traditional modifier+key
+    // Multi-key sequences: "Leader N T" means leader, then N, then T
     return {
         {"Leader Q", "exit", "Global"},
         {"Leader S", "save_file", "Global"},
         {"Leader Shift+S", "save_all_files", "Global"},
         {"Leader O", "open_file_dialog", "Global"},
-        {"Leader W", "close_buffer", "Global"},
-        {"Leader `", "toggle_terminal", "Global"},
+        {"Leader W", "write_file", "Global"},
+        {"Leader T", "toggle_terminal", "Global"},
+        {"Leader N T", "new_terminal", "Global"},
+        {"Leader B X", "close_buffer", "Global"},
+        {"Leader B N", "new_buffer", "Global"},
     };
 }
 

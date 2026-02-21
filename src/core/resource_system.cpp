@@ -177,6 +177,31 @@ std::shared_ptr<Buffer> ResourceSystem::OpenFile(const std::filesystem::path& pa
     return buffer;
 }
 
+std::shared_ptr<Buffer> ResourceSystem::CreateNewBuffer() {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
+    // Generate unique untitled name
+    static int untitledCounter = 1;
+    std::string name = "Untitled-" + std::to_string(untitledCounter++);
+    std::filesystem::path fakePath = name;
+    
+    // Create an empty text resource
+    auto resource = std::make_shared<TextResource>(fakePath);
+    resource->SetModified(true);  // Mark as modified since it's new
+    
+    // Create buffer
+    auto buffer = std::make_shared<Buffer>(resource);
+    m_Buffers.push_back(buffer);
+    
+    if (m_OnBufferOpened) {
+        m_OnBufferOpened(buffer);
+    }
+    
+    SetActiveBuffer(buffer->GetId());
+    Logger::Info("Created new buffer: " + name);
+    return buffer;
+}
+
 void ResourceSystem::CloseBuffer(Buffer::Id id) {
     std::lock_guard<std::recursive_mutex> lock(m_Mutex);
     

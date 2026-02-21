@@ -105,6 +105,7 @@ public:
     
     // File operations
     std::shared_ptr<Buffer> OpenFile(const std::filesystem::path& path);
+    std::shared_ptr<Buffer> CreateNewBuffer();  // Create untitled buffer
     void CloseBuffer(Buffer::Id id);
     void CloseAllBuffers();
     bool SaveBuffer(Buffer::Id id);
