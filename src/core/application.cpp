@@ -32,6 +32,11 @@ Application::~Application() {
 void Application::OnStart() {
     Logger::Info("Application starting...");
     
+    // Load user settings from config
+    EditorSettings::Get().Load();
+    EditorSettings::Get().LoadKeybinds();
+    Logger::Info("User settings loaded");
+    
     // Initialize language registry for syntax highlighting
     LanguageRegistry::GetInstance().InitializeBuiltins();
     Logger::Info("Language registry initialized");
@@ -101,9 +106,8 @@ void Application::SetupEvents() {
         if (path) {
             ResourceSystem::GetInstance().OpenFile(*path);
             Logger::Info("Opened file: " + path->string());
-            return true;
         }
-        return false;
+        return true; // Dialog opened successfully, user cancel is not a failure
     });
     EventSystem::Register(openFileEvent);
     
@@ -120,9 +124,8 @@ void Application::SetupEvents() {
             if (explorer) {
                 explorer->Refresh();
             }
-            return true;
         }
-        return false;
+        return true; // Dialog opened successfully, user cancel is not a failure
     });
     EventSystem::Register(openFolderEvent);
     
@@ -205,75 +208,9 @@ float Application::GetDockspaceBottomOffset() {
 }
 
 void Application::SetupInputSystem() {
-    auto& input = InputSystem::GetInstance();
-    auto& registry = CommandRegistry::GetInstance();
-    auto keymap = input.GetActiveKeymap();
-    
-    // Register commands with actual handlers
-    registry.Register("file.save", "Save File", [](const CommandArgs&) {
-        EventSystem::Execute("save_file");
-        return CommandResult::Success();
-    });
-    registry.Get("file.save")->SetCategory("File").SetDescription("Save the current file");
-    
-    registry.Register("file.saveAll", "Save All Files", [](const CommandArgs&) {
-        EventSystem::Execute("save_all_files");
-        return CommandResult::Success();
-    });
-    registry.Get("file.saveAll")->SetCategory("File").SetDescription("Save all open files");
-    
-    registry.Register("file.open", "Open File", [](const CommandArgs&) {
-        EventSystem::Execute("open_file_dialog");
-        return CommandResult::Success();
-    });
-    registry.Get("file.open")->SetCategory("File").SetDescription("Open a file");
-    
-    registry.Register("file.openFolder", "Open Folder", [](const CommandArgs&) {
-        EventSystem::Execute("open_folder_dialog");
-        return CommandResult::Success();
-    });
-    registry.Get("file.openFolder")->SetCategory("File").SetDescription("Open a folder");
-    
-    registry.Register("file.close", "Close File", [](const CommandArgs&) {
-        EventSystem::Execute("close_buffer");
-        return CommandResult::Success();
-    });
-    registry.Get("file.close")->SetCategory("File").SetDescription("Close the current file");
-    
-    registry.Register("view.toggleTerminal", "Toggle Terminal", [this](const CommandArgs&) {
-        if (m_TerminalPanel) {
-            m_TerminalPanel->Toggle();
-        }
-        return CommandResult::Success();
-    });
-    registry.Get("view.toggleTerminal")->SetCategory("View").SetDescription("Toggle the terminal panel");
-    
-    registry.Register("view.toggleExplorer", "Toggle Explorer", [this](const CommandArgs&) {
-        auto explorer = m_UISystem.GetLayer("Explorer");
-        if (explorer) {
-            explorer->SetEnabled(!explorer->IsEnabled());
-        }
-        return CommandResult::Success();
-    });
-    registry.Get("view.toggleExplorer")->SetCategory("View").SetDescription("Toggle the file explorer");
-    
-    registry.Register("app.quit", "Quit Application", [this](const CommandArgs&) {
-        Quit();
-        return CommandResult::Success();
-    });
-    registry.Get("app.quit")->SetCategory("Application").SetDescription("Quit the application");
-    
-    // Set up keybindings
-    keymap->Bind("Ctrl+S", "file.save");
-    keymap->Bind("Ctrl+Shift+S", "file.saveAll");
-    keymap->Bind("Ctrl+O", "file.open");
-    keymap->Bind("Ctrl+Shift+O", "file.openFolder");
-    keymap->Bind("Ctrl+W", "file.close");
-    keymap->Bind("Ctrl+`", "view.toggleTerminal");
-    keymap->Bind("Ctrl+B", "view.toggleExplorer");
-    keymap->Bind("Ctrl+Q", "app.quit");
-    
-    Logger::Info("Input system initialized with default keybindings");
+    // Setup default keybindings (Leader+Q for quit)
+    InputSystem::GetInstance().SetupDefaultBindings();
+    Logger::Info("Input system initialized");
 }
 
 void Application::ProcessInput() {

@@ -1,5 +1,7 @@
 #include "command.h"
 #include "core/logger.h"
+#include "core/event_system.h"
+#include "ui/editor_settings.h"
 #include <algorithm>
 
 namespace sol {
@@ -200,6 +202,9 @@ InputSystem::InputSystem() {
     auto defaultKeymap = std::make_unique<Keymap>("default");
     m_ActiveKeymap = defaultKeymap.get();
     m_Keymaps["default"] = std::move(defaultKeymap);
+    
+    // Initialize mode from settings
+    m_InputMode = EditorSettings::Get().GetKeybinds().defaultMode;
 }
 
 InputSystem& InputSystem::GetInstance() {
@@ -208,6 +213,30 @@ InputSystem& InputSystem::GetInstance() {
 }
 
 bool InputSystem::ProcessKey(const KeyChord& chord, InputContext context) {
+    auto& settings = EditorSettings::Get();
+    const auto& keybinds = settings.GetKeybinds();
+    
+    // Check for mode switching keys first (always active)
+    if (chord.mods == Modifier::None) {
+        if (m_InputMode == EditorInputMode::Insert && chord.key == keybinds.modeKey) {
+            // Escape (or mode key) switches to Command mode from Insert
+            SwitchToCommandMode();
+            return true;
+        }
+        
+        if (m_InputMode == EditorInputMode::Command && chord.key == keybinds.insertKey) {
+            // I (or insert key) switches to Insert mode from Command
+            SwitchToInsertMode();
+            return true;
+        }
+    }
+    
+    // In Insert mode, only mode switching keys are handled
+    if (m_InputMode == EditorInputMode::Insert) {
+        return false;
+    }
+    
+    // Command mode: process keybindings
     if (!m_ActiveKeymap) return false;
     
     // Update matcher bindings if needed
@@ -219,13 +248,10 @@ bool InputSystem::ProcessKey(const KeyChord& chord, InputContext context) {
     
     switch (result) {
         case KeySequenceMatcher::MatchResult::FullMatch: {
-            // Find and execute the command
+            // Find binding and trigger the corresponding event
             auto binding = m_ActiveKeymap->FindBinding(m_Matcher.GetCurrentSequence(), context);
             if (binding) {
-                auto cmdResult = CommandRegistry::GetInstance().Execute(binding->commandId);
-                if (!cmdResult.success) {
-                    Logger::Error("Command failed: " + binding->commandId + " - " + cmdResult.error);
-                }
+                EventSystem::Execute(binding->commandId);
                 m_Matcher.Reset();
                 return true;
             }
@@ -291,123 +317,33 @@ void InputSystem::RemoveKeymap(const std::string& name) {
 }
 
 void InputSystem::SetupDefaultBindings() {
-    auto& registry = CommandRegistry::GetInstance();
     auto keymap = GetActiveKeymap();
     if (!keymap) return;
     
-    // File commands
-    registry.Register("file.save", "Save File", [](const CommandArgs&) {
-        // Will be connected to actual save function
-        return CommandResult::Success();
-    });
-    registry.Get("file.save")->SetCategory("File");
+    // Clear existing bindings
+    keymap->Clear();
     
-    registry.Register("file.saveAll", "Save All Files", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("file.saveAll")->SetCategory("File");
-
-    registry.Register("file.open", "Open File", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("file.open")->SetCategory("File");
+    // Load bindings from settings
+    auto& settings = EditorSettings::Get();
+    const auto& keybinds = settings.GetKeybinds();
     
-    registry.Register("file.openFolder", "Open Folder", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("file.openFolder")->SetCategory("File");
+    // If no bindings in settings, use defaults
+    const auto& bindings = keybinds.bindings.empty() ? 
+        GetDefaultKeybindings() : keybinds.bindings;
     
-    registry.Register("file.close", "Close File", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("file.close")->SetCategory("File");
+    for (const auto& entry : bindings) {
+        InputContext ctx = InputContext::Global;
+        if (entry.context == "Editor") ctx = InputContext::Editor;
+        else if (entry.context == "Terminal") ctx = InputContext::Terminal;
+        else if (entry.context == "Explorer") ctx = InputContext::Explorer;
+        else if (entry.context == "CommandPalette") ctx = InputContext::CommandPalette;
+        else if (entry.context == "Search") ctx = InputContext::Search;
+        else if (entry.context == "Menu") ctx = InputContext::Menu;
+        
+        keymap->Bind(entry.keys, entry.eventId, ctx);
+    }
     
-    // Edit commands
-    registry.Register("edit.undo", "Undo", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("edit.undo")->SetCategory("Edit");
-    
-    registry.Register("edit.redo", "Redo", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("edit.redo")->SetCategory("Edit");
-    
-    registry.Register("edit.cut", "Cut", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("edit.cut")->SetCategory("Edit");
-    
-    registry.Register("edit.copy", "Copy", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("edit.copy")->SetCategory("Edit");
-    
-    registry.Register("edit.paste", "Paste", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("edit.paste")->SetCategory("Edit");
-    
-    registry.Register("edit.selectAll", "Select All", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("edit.selectAll")->SetCategory("Edit");
-    
-    // View commands
-    registry.Register("view.toggleTerminal", "Toggle Terminal", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("view.toggleTerminal")->SetCategory("View");
-    
-    registry.Register("view.toggleExplorer", "Toggle Explorer", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("view.toggleExplorer")->SetCategory("View");
-    
-    registry.Register("view.commandPalette", "Show Command Palette", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("view.commandPalette")->SetCategory("View");
-    
-    // Application commands
-    registry.Register("app.quit", "Quit", [](const CommandArgs&) {
-        return CommandResult::Success();
-    });
-    registry.Get("app.quit")->SetCategory("Application");
-    
-    // Default keybindings
-    keymap->Bind("Ctrl+S", "file.save");
-    keymap->Bind("Ctrl+Shift+S", "file.saveAll");
-    keymap->Bind("Ctrl+O", "file.open");
-    keymap->Bind("Ctrl+Shift+O", "file.openFolder");
-    keymap->Bind("Ctrl+W", "file.close");
-    
-    keymap->Bind("Ctrl+Z", "edit.undo");
-    keymap->Bind("Ctrl+Shift+Z", "edit.redo");
-    keymap->Bind("Ctrl+Y", "edit.redo");  // Alternative
-    keymap->Bind("Ctrl+X", "edit.cut");
-    keymap->Bind("Ctrl+C", "edit.copy");
-    keymap->Bind("Ctrl+V", "edit.paste");
-    keymap->Bind("Ctrl+A", "edit.selectAll");
-    
-    keymap->Bind("Ctrl+`", "view.toggleTerminal");
-    keymap->Bind("Ctrl+B", "view.toggleExplorer");
-    keymap->Bind("Ctrl+Shift+P", "view.commandPalette");
-    keymap->Bind("Ctrl+P", "view.commandPalette");  // Quick open could be separate
-    
-    keymap->Bind("Ctrl+Q", "app.quit");
-    
-    // Editor-specific bindings (only active when editor has focus)
-    keymap->Bind("Ctrl+/", "editor.toggleComment", InputContext::Editor);
-    keymap->Bind("Ctrl+D", "editor.duplicateLine", InputContext::Editor);
-    keymap->Bind("Ctrl+Shift+K", "editor.deleteLine", InputContext::Editor);
-    keymap->Bind("Alt+Up", "editor.moveLineUp", InputContext::Editor);
-    keymap->Bind("Alt+Down", "editor.moveLineDown", InputContext::Editor);
-    keymap->Bind("Ctrl+F", "editor.find", InputContext::Editor);
-    keymap->Bind("Ctrl+H", "editor.replace", InputContext::Editor);
-    keymap->Bind("Ctrl+G", "editor.gotoLine", InputContext::Editor);
-    
-    Logger::Info("Default keybindings initialized");
+    Logger::Info("Keybindings initialized (" + std::to_string(bindings.size()) + " bindings)");
 }
 
 } // namespace sol

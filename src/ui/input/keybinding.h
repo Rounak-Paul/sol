@@ -17,6 +17,9 @@ enum class Modifier : uint8_t {
     Super = 1 << 3,  // Cmd on macOS, Win on Windows
 };
 
+// Get the configured leader key from settings
+ImGuiKey GetLeaderKey();
+
 inline Modifier operator|(Modifier a, Modifier b) {
     return static_cast<Modifier>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
 }

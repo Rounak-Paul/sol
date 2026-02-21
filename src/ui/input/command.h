@@ -1,6 +1,7 @@
 #pragma once
 
 #include "keybinding.h"
+#include "ui/editor_settings.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -119,6 +120,9 @@ public:
     // Get all bindings for a context
     std::vector<const Keybinding*> GetBindings(InputContext context) const;
     
+    // Get all bindings
+    const std::vector<Keybinding>& GetAllBindings() const { return m_Bindings; }
+    
     // Get all bindings for a command
     std::vector<const Keybinding*> GetBindingsForCommand(const std::string& commandId) const;
     
@@ -138,7 +142,7 @@ class InputSystem {
 public:
     static InputSystem& GetInstance();
     
-    // Process a key chord - returns true if a command was executed
+    // Process a key chord - returns true if a command was executed or input was consumed
     bool ProcessKey(const KeyChord& chord, InputContext context);
     
     // Get current partial sequence (for status display)
@@ -147,6 +151,12 @@ public:
     
     // Reset pending sequence
     void ResetPendingSequence();
+    
+    // Modal editing state
+    EditorInputMode GetInputMode() const { return m_InputMode; }
+    void SetInputMode(EditorInputMode mode) { m_InputMode = mode; }
+    void SwitchToCommandMode() { m_InputMode = EditorInputMode::Command; ResetPendingSequence(); }
+    void SwitchToInsertMode() { m_InputMode = EditorInputMode::Insert; ResetPendingSequence(); }
     
     // Keymap management
     void SetActiveKeymap(const std::string& name);
@@ -174,6 +184,7 @@ private:
     
     InputContext m_CurrentContext = InputContext::Global;
     KeySequenceMatcher m_Matcher;
+    EditorInputMode m_InputMode = EditorInputMode::Insert;  // Modal editing state
 };
 
 // Convenience macros for registering commands

@@ -2,9 +2,39 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
+#include <filesystem>
 #include <imgui.h>
 
 namespace sol {
+
+// Global input mode for modal editing (like Vim)
+enum class EditorInputMode {
+    Insert,   // Normal text input - keybinds mostly disabled
+    Command,  // Keybinds active, navigation/commands
+};
+
+const char* EditorInputModeToString(EditorInputMode mode);
+
+// Serializable keybinding entry
+struct KeybindEntry {
+    std::string keys;      // e.g., "Leader Q" or "Ctrl+S"
+    std::string eventId;   // e.g., "exit"
+    std::string context;   // e.g., "Global", "Editor"
+};
+
+// Keybinding settings
+struct KeybindSettings {
+    ImGuiKey leaderKey = ImGuiKey_Space;     // Prefix key for keybinds (default: Space)
+    ImGuiKey modeKey = ImGuiKey_Escape;      // Key to enter Command mode from Insert
+    ImGuiKey insertKey = ImGuiKey_I;         // Key to enter Insert mode from Command
+    EditorInputMode defaultMode = EditorInputMode::Insert; // Editor starts in Insert mode
+    std::vector<KeybindEntry> bindings;
+};
+
+// Helper functions for key serialization
+std::string ImGuiKeyToString(ImGuiKey key);
+ImGuiKey ImGuiKeyFromString(const std::string& str);
 
 // Editor/buffer area colors (syntax highlighting, gutter, cursor, etc.)
 struct EditorColors {
@@ -108,12 +138,24 @@ struct Theme {
     EditorColors editor;
 };
 
+// Default keybindings
+std::vector<KeybindEntry> GetDefaultKeybindings();
+
 class EditorSettings {
 public:
     static EditorSettings& Get() {
         static EditorSettings instance;
         return instance;
     }
+    
+    // Config persistence
+    static std::filesystem::path GetConfigDir();
+    static std::filesystem::path GetConfigPath();
+    static std::filesystem::path GetKeybindsPath();
+    bool Load();
+    bool Save() const;
+    bool LoadKeybinds();
+    bool SaveKeybinds() const;
     
     // Cursor position for status bar
     size_t GetCursorLine() const { return m_CursorLine; }
@@ -122,6 +164,10 @@ public:
 
     Theme& GetTheme() { return m_Theme; }
     const Theme& GetTheme() const { return m_Theme; }
+
+    // Keybinding settings
+    KeybindSettings& GetKeybinds() { return m_Keybinds; }
+    const KeybindSettings& GetKeybinds() const { return m_Keybinds; }
 
     // Apply current theme to ImGui
     void ApplyTheme();
@@ -133,13 +179,19 @@ public:
     bool FontDirty() const { return m_FontDirty; }
     void SetFontDirty(bool dirty) { m_FontDirty = dirty; }
 
+    // Mark that keybindings need reload
+    bool KeybindsDirty() const { return m_KeybindsDirty; }
+    void SetKeybindsDirty(bool dirty) { m_KeybindsDirty = dirty; }
+
 private:
     EditorSettings() = default;
     
     size_t m_CursorLine = 1;
     size_t m_CursorCol = 1;
     Theme m_Theme;
+    KeybindSettings m_Keybinds;
     bool m_FontDirty = false;
+    bool m_KeybindsDirty = false;
 };
 
 } // namespace sol

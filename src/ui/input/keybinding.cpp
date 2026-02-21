@@ -1,10 +1,17 @@
 #include "keybinding.h"
+#include "ui/editor_settings.h"
 #include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
 
 namespace sol {
+
+// Get the configured leader key from settings (default: Space)
+ImGuiKey GetLeaderKey() {
+    auto& settings = EditorSettings::Get();
+    return settings.GetKeybinds().leaderKey;
+}
 
 // Key name mappings
 static const std::unordered_map<std::string, ImGuiKey> s_KeyNameMap = {
@@ -132,7 +139,20 @@ std::optional<KeyChord> KeyChord::Parse(const std::string& str) {
         lower += static_cast<char>(std::tolower(c));
     }
     
-    // Parse modifiers
+    // Trim whitespace
+    while (!lower.empty() && std::isspace(lower.front())) lower.erase(0, 1);
+    while (!lower.empty() && std::isspace(lower.back())) lower.pop_back();
+    
+    if (lower.empty()) return std::nullopt;
+    
+    // Check if this is just "Leader" - returns the configured leader key
+    if (lower == "leader") {
+        chord.key = GetLeaderKey();
+        chord.mods = Modifier::None;
+        return chord;
+    }
+    
+    // Parse modifiers (only Ctrl, Shift, Alt, Super - not Leader)
     size_t pos = 0;
     while (true) {
         size_t plus = lower.find('+', pos);
@@ -205,7 +225,7 @@ std::string KeySequence::ToString() const {
 std::optional<KeySequence> KeySequence::Parse(const std::string& str) {
     KeySequence seq;
     
-    // Split by space to get individual chords
+    // Split by space to get individual chords (e.g., "Leader Q" becomes two chords)
     std::istringstream iss(str);
     std::string token;
     

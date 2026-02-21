@@ -1,9 +1,12 @@
 #include "settings.h"
 #include "ui/editor_settings.h"
+#include "ui/input/command.h"
+#include "ui/input/keybinding.h"
 #include <tinyvk/tinyvk.h>
 #include <tinyvk/ui/imgui_layer.h>
 #include <imgui.h>
 #include <cstring>
+#include <algorithm>
 
 namespace sol {
 
@@ -45,6 +48,10 @@ void SettingsWindow::OnUI() {
                 RenderThemeTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Keybindings")) {
+                RenderKeybindingsTab();
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
     }
@@ -79,6 +86,7 @@ void SettingsWindow::RenderFontSection() {
                 m_SelectedFont = i;
                 font.fontId = fonts[i].id;
                 settings.SetFontDirty(true);
+                settings.Save();
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
@@ -88,11 +96,13 @@ void SettingsWindow::RenderFontSection() {
     // Font size
     if (ImGui::DragFloat("Font Size", &font.fontSize, 0.5f, 8.0f, 32.0f, "%.1f")) {
         settings.SetFontDirty(true);
+        settings.Save();
     }
 
     // Font scale
     if (ImGui::DragFloat("UI Scale", &font.fontScale, 0.01f, 0.5f, 2.0f, "%.2f")) {
         ImGui::GetIO().FontGlobalScale = font.fontScale;
+        settings.Save();
     }
 
     // Apply font button (font reload is expensive so we do it on demand)
@@ -122,6 +132,7 @@ void SettingsWindow::RenderColorSection() {
             if (ImGui::Selectable(s_PresetNames[i], selected)) {
                 m_SelectedPreset = i;
                 settings.SetPreset(s_PresetNames[i]);
+                settings.Save();
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
@@ -208,6 +219,7 @@ void SettingsWindow::RenderColorSection() {
 
     if (changed) {
         settings.ApplyTheme();
+        settings.Save();
     }
 }
 
@@ -250,6 +262,257 @@ void SettingsWindow::RenderStyleSection() {
 
     if (changed) {
         settings.ApplyTheme();
+        settings.Save();
+    }
+}
+
+void SettingsWindow::RenderKeybindingsTab() {
+    auto& settings = EditorSettings::Get();
+    auto& keybinds = settings.GetKeybinds();
+    auto& inputSystem = InputSystem::GetInstance();
+    auto* keymap = inputSystem.GetActiveKeymap();
+    
+    if (!keymap) {
+        ImGui::TextUnformatted("No active keymap");
+        return;
+    }
+    
+    bool settingsChanged = false;
+    bool rebindNeeded = false;
+    
+    // Modal Keys Configuration Section
+    ImGui::TextUnformatted("Modal Editing Keys");
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Leader key
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Leader Key: %s", ImGuiKeyToString(keybinds.leaderKey).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##Leader")) {
+        m_CapturingKeyType = 1;
+        m_IsCapturingKey = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Prefix key for keybinds)");
+    
+    // Mode key (to enter Command mode)
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Command Mode Key: %s", ImGuiKeyToString(keybinds.modeKey).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##Mode")) {
+        m_CapturingKeyType = 2;
+        m_IsCapturingKey = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Enter command mode from insert)");
+    
+    // Insert key (to enter Insert mode)
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Insert Mode Key: %s", ImGuiKeyToString(keybinds.insertKey).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##Insert")) {
+        m_CapturingKeyType = 3;
+        m_IsCapturingKey = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Enter insert mode from command)");
+    
+    // Current mode indicator
+    ImGui::Spacing();
+    const char* modeStr = inputSystem.GetInputMode() == EditorInputMode::Command ? "COMMAND" : "INSERT";
+    ImGui::Text("Current Mode: %s", modeStr);
+    
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Use settings bindings as source of truth, not keymap
+    auto& bindingsFromSettings = keybinds.bindings;
+    
+    // Search filter
+    static char searchBuf[128] = "";
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##search", "Search keybindings...", searchBuf, sizeof(searchBuf));
+    ImGui::Spacing();
+    
+    // Key capture modal
+    if (m_IsCapturingKey) {
+        ImGui::OpenPopup("Capture Key");
+    }
+    
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal("Capture Key", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const char* captureTitle = "";
+        switch (m_CapturingKeyType) {
+            case 0: captureTitle = m_RebindingCommandId.c_str(); break;
+            case 1: captureTitle = "Leader Key"; break;
+            case 2: captureTitle = "Command Mode Key"; break;
+            case 3: captureTitle = "Insert Mode Key"; break;
+        }
+        ImGui::Text("Press key for: %s", captureTitle);
+        ImGui::Spacing();
+        ImGui::TextDisabled("Press Escape to cancel");
+        
+        // Capture key input
+        for (ImGuiKey key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key = (ImGuiKey)(key + 1)) {
+            // Skip modifier keys for all captures
+            if (key == ImGuiKey_LeftCtrl || key == ImGuiKey_RightCtrl ||
+                key == ImGuiKey_LeftShift || key == ImGuiKey_RightShift ||
+                key == ImGuiKey_LeftAlt || key == ImGuiKey_RightAlt ||
+                key == ImGuiKey_LeftSuper || key == ImGuiKey_RightSuper) {
+                continue;
+            }
+            
+            if (ImGui::IsKeyPressed(key, false)) {
+                if (key == ImGuiKey_Escape && m_CapturingKeyType == 0) {
+                    // Only cancel for keybind capture, not for mode key capture
+                    m_IsCapturingKey = false;
+                    m_RebindingCommandId.clear();
+                    m_CapturingKeyType = 0;
+                    ImGui::CloseCurrentPopup();
+                } else {
+                    switch (m_CapturingKeyType) {
+                        case 1: // Leader key
+                            keybinds.leaderKey = key;
+                            settingsChanged = true;
+                            rebindNeeded = true;
+                            break;
+                        case 2: // Mode key
+                            keybinds.modeKey = key;
+                            settingsChanged = true;
+                            break;
+                        case 3: // Insert key
+                            keybinds.insertKey = key;
+                            settingsChanged = true;
+                            break;
+                        case 0: // Keybind capture
+                        default: {
+                            // Build the new key string with optional modifiers
+                            Modifier mods = KeyChord::GetCurrentModifiers();
+                            std::string keyStr;
+                            
+                            // Check if using leader key
+                            if (key == keybinds.leaderKey && mods == Modifier::None) {
+                                // This is just the leader key pressed, start "Leader X" sequence
+                                // For now, require full sequence typing
+                            }
+                            
+                            // Build modifier string
+                            if (HasModifier(mods, Modifier::Ctrl)) keyStr += "Ctrl+";
+                            if (HasModifier(mods, Modifier::Shift)) keyStr += "Shift+";
+                            if (HasModifier(mods, Modifier::Alt)) keyStr += "Alt+";
+                            if (HasModifier(mods, Modifier::Super)) keyStr += "Cmd+";
+                            
+                            keyStr += ImGuiKeyToString(key);
+                            
+                            // Update the binding in settings
+                            for (auto& entry : bindingsFromSettings) {
+                                if (entry.eventId == m_RebindingCommandId) {
+                                    entry.keys = keyStr;
+                                    break;
+                                }
+                            }
+                            settingsChanged = true;
+                            rebindNeeded = true;
+                            break;
+                        }
+                    }
+                    
+                    m_IsCapturingKey = false;
+                    m_RebindingCommandId.clear();
+                    m_CapturingKeyType = 0;
+                    ImGui::CloseCurrentPopup();
+                }
+                break;
+            }
+        }
+        
+        ImGui::EndPopup();
+    }
+    
+    // Keybindings table - display from settings, not keymap
+    if (ImGui::BeginTable("KeybindingsTable", 3, 
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+        ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 2))) {
+        
+        ImGui::TableSetupColumn("Event", ImGuiTableColumnFlags_WidthStretch, 0.45f);
+        ImGui::TableSetupColumn("Keybinding", ImGuiTableColumnFlags_WidthStretch, 0.35f);
+        ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableHeadersRow();
+        
+        std::string searchStr = searchBuf;
+        std::transform(searchStr.begin(), searchStr.end(), searchStr.begin(), ::tolower);
+        
+        int indexToRemove = -1;
+        for (size_t i = 0; i < bindingsFromSettings.size(); ++i) {
+            const auto& entry = bindingsFromSettings[i];
+            
+            // Filter by search
+            if (!searchStr.empty()) {
+                std::string eventId = entry.eventId;
+                std::string keyStr = entry.keys;
+                std::transform(eventId.begin(), eventId.end(), eventId.begin(), ::tolower);
+                std::transform(keyStr.begin(), keyStr.end(), keyStr.begin(), ::tolower);
+                if (eventId.find(searchStr) == std::string::npos && 
+                    keyStr.find(searchStr) == std::string::npos) {
+                    continue;
+                }
+            }
+            
+            ImGui::TableNextRow();
+            
+            // Event ID
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(entry.eventId.c_str());
+            
+            // Keybinding - show the original string with "Leader"
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(entry.keys.c_str());
+            
+            // Actions
+            ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::SmallButton("Edit")) {
+                m_RebindingCommandId = entry.eventId;
+                m_CapturingKeyType = 0;
+                m_IsCapturingKey = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove")) {
+                indexToRemove = static_cast<int>(i);
+            }
+            ImGui::PopID();
+        }
+        
+        ImGui::EndTable();
+        
+        if (indexToRemove >= 0) {
+            bindingsFromSettings.erase(bindingsFromSettings.begin() + indexToRemove);
+            settingsChanged = true;
+            rebindNeeded = true;
+        }
+    }
+    
+    // Buttons row
+    if (ImGui::Button("Reset to Defaults")) {
+        keybinds.leaderKey = ImGuiKey_Space;
+        keybinds.modeKey = ImGuiKey_Escape;
+        keybinds.insertKey = ImGuiKey_I;
+        keybinds.defaultMode = EditorInputMode::Insert;
+        keybinds.bindings = GetDefaultKeybindings();
+        settingsChanged = true;
+        rebindNeeded = true;
+    }
+    
+    // Save and rebuild keymap if needed
+    if (settingsChanged) {
+        settings.SaveKeybinds();
+    }
+    if (rebindNeeded) {
+        inputSystem.SetupDefaultBindings();
     }
 }
 
