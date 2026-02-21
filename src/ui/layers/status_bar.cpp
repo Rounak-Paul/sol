@@ -15,7 +15,7 @@ void StatusBar::OnUI() {
     
     // Use a base height that scales with UI
     float scale = ImGui::GetIO().FontGlobalScale;
-    const float height = 22.0f * scale;
+    const float height = 16.0f * scale;
     
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height));
     ImGui::SetNextWindowSize(ImVec2(viewport->WorkSize.x, height));
@@ -29,7 +29,8 @@ void StatusBar::OnUI() {
         ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoDocking;
     
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+    auto& themeColors = EditorSettings::Get().GetTheme().colors;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, themeColors.menuBarBg);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
@@ -37,6 +38,7 @@ void StatusBar::OnUI() {
     if (ImGui::Begin("##StatusBar", nullptr, windowFlags)) {
         auto& settings = EditorSettings::Get();
         auto& inputSystem = InputSystem::GetInstance();
+        auto& colors = themeColors;
         
         // Use the actual set position and dimensions, not ImGui's calculated ones
         ImVec2 barPos = ImVec2(viewport->WorkPos.x, viewport->WorkPos.y + viewport->WorkSize.y - height);
@@ -59,7 +61,7 @@ void StatusBar::OnUI() {
         float badgePadding = 8.0f * scale;
         float badgeWidth = ImGui::CalcTextSize("COMMAND").x + badgePadding * 2.0f;
         
-        // Colors: blue for command, green for insert
+        // Colors: blue for command, green for insert (these stay distinct for visibility)
         ImVec4 bgColor = isCommandMode ? ImVec4(0.2f, 0.4f, 0.7f, 1.0f) : ImVec4(0.2f, 0.5f, 0.3f, 1.0f);
         ImVec4 textColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
         
@@ -82,7 +84,7 @@ void StatusBar::OnUI() {
             modeText
         );
         
-        // Right side: Cursor position - vertically centered
+        // Right side: Cursor position - vertically centered, use theme text color
         float rightMargin = 8.0f * scale;
         float rightX = windowWidth - posWidth - rightMargin;
         ImVec2 posTextSize = ImGui::CalcTextSize(posStr);
@@ -90,7 +92,7 @@ void StatusBar::OnUI() {
         
         drawList->AddText(
             ImVec2(barPos.x + rightX, barPos.y + posTextY),
-            ImGui::ColorConvertFloat4ToU32(ImVec4(0.7f, 0.7f, 0.7f, 1.0f)),
+            ImGui::ColorConvertFloat4ToU32(colors.textDisabled),
             posStr
         );
     }

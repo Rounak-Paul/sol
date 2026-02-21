@@ -14,6 +14,7 @@
 #include "ui/editor_settings.h"
 #include "ui/input/command.h"
 #include <imgui.h>
+#include <cstring>
 
 using sol::Logger;
 using sol::EventSystem;
@@ -59,6 +60,9 @@ void Application::OnUI() {
     ProcessInput();
     
     m_UISystem.RenderLayers();
+    
+    // Render SaveAs dialog if open
+    RenderSaveAsDialog();
 }
 
 void Application::SetupEvents() {
@@ -130,9 +134,13 @@ void Application::SetupEvents() {
     EventSystem::Register(openFolderEvent);
     
     auto saveFileEvent = std::make_shared<Event>("save_file");
-    saveFileEvent->SetHandler([](const EventData& data) {
+    saveFileEvent->SetHandler([this](const EventData& data) {
         auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
         if (activeBuffer) {
+            if (activeBuffer->GetResource()->IsUntitled()) {
+                OpenSaveAsDialog(activeBuffer);
+                return true;  // Dialog will handle the save
+            }
             return ResourceSystem::GetInstance().SaveBuffer(activeBuffer->GetId());
         }
         return false;
@@ -190,9 +198,13 @@ void Application::SetupEvents() {
     
     // Write file event (alias for save_file, matches vim :w)
     auto writeFileEvent = std::make_shared<Event>("write_file");
-    writeFileEvent->SetHandler([](const EventData& data) {
+    writeFileEvent->SetHandler([this](const EventData& data) {
         auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
         if (activeBuffer) {
+            if (activeBuffer->GetResource()->IsUntitled()) {
+                OpenSaveAsDialog(activeBuffer);
+                return true;  // Dialog will handle the save
+            }
             return ResourceSystem::GetInstance().SaveBuffer(activeBuffer->GetId());
         }
         return false;
@@ -295,6 +307,117 @@ void Application::ProcessInput() {
                 break;
             }
         }
+    }
+}
+
+void Application::OpenSaveAsDialog(std::shared_ptr<Buffer> buffer) {
+    m_ShowSaveAsDialog = true;
+    m_SaveAsBuffer = buffer;
+    
+    // Initialize filename from buffer name (e.g., "Untitled-1")
+    std::string name = buffer->GetName();
+    strncpy(m_SaveAsFilename, name.c_str(), sizeof(m_SaveAsFilename) - 1);
+    m_SaveAsFilename[sizeof(m_SaveAsFilename) - 1] = '\0';
+    
+    // Initialize path to empty (will use working directory or runtime directory)
+    m_SaveAsPath[0] = '\0';
+}
+
+void Application::RenderSaveAsDialog() {
+    if (!m_ShowSaveAsDialog) return;
+    
+    ImGui::OpenPopup("Save As");
+    
+    // Center the modal
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImVec2 center = viewport->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Always);
+    
+    bool hasWorkingDir = ResourceSystem::GetInstance().HasWorkingDirectory();
+    
+    if (ImGui::BeginPopupModal("Save As", &m_ShowSaveAsDialog, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Save file to disk");
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Filename input
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##filename", m_SaveAsFilename, sizeof(m_SaveAsFilename));
+        ImGui::TextDisabled("Filename (e.g., main.cpp)");
+        
+        ImGui::Spacing();
+        
+        // Path input (only if working directory is set)
+        if (hasWorkingDir) {
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##path", m_SaveAsPath, sizeof(m_SaveAsPath));
+            ImGui::TextDisabled("Relative path (e.g., src/utils) - leave empty for project root");
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::SetNextItemWidth(-1);
+            ImGui::InputText("##path", m_SaveAsPath, sizeof(m_SaveAsPath));
+            ImGui::TextDisabled("Open a folder to enable relative paths");
+            ImGui::EndDisabled();
+            m_SaveAsPath[0] = '\0';  // Clear path when disabled
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        
+        // Preview the full path
+        std::filesystem::path fullPath;
+        if (hasWorkingDir) {
+            fullPath = ResourceSystem::GetInstance().GetWorkingDirectory();
+            if (strlen(m_SaveAsPath) > 0) {
+                fullPath /= m_SaveAsPath;
+            }
+        } else {
+            fullPath = std::filesystem::current_path();
+        }
+        fullPath /= m_SaveAsFilename;
+        
+        ImGui::TextWrapped("Will save to: %s", fullPath.string().c_str());
+        
+        ImGui::Spacing();
+        
+        // Buttons
+        float buttonWidth = 80.0f;
+        float totalWidth = buttonWidth * 2 + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - totalWidth) * 0.5f);
+        
+        bool validFilename = strlen(m_SaveAsFilename) > 0;
+        
+        ImGui::BeginDisabled(!validFilename);
+        if (ImGui::Button("Save", ImVec2(buttonWidth, 0))) {
+            // Create directory if it doesn't exist
+            std::filesystem::path dir = fullPath.parent_path();
+            if (!dir.empty() && !std::filesystem::exists(dir)) {
+                std::filesystem::create_directories(dir);
+            }
+            
+            // Set the new path and save
+            if (m_SaveAsBuffer) {
+                m_SaveAsBuffer->GetResource()->SetPath(fullPath);
+                ResourceSystem::GetInstance().SaveBuffer(m_SaveAsBuffer->GetId());
+            }
+            
+            m_ShowSaveAsDialog = false;
+            m_SaveAsBuffer = nullptr;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndDisabled();
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) {
+            m_ShowSaveAsDialog = false;
+            m_SaveAsBuffer = nullptr;
+            ImGui::CloseCurrentPopup();
+        }
+        
+        ImGui::EndPopup();
     }
 }
 

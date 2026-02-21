@@ -85,11 +85,11 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader S", "save_file", "Global"},
         {"Leader Shift+S", "save_all_files", "Global"},
         {"Leader O", "open_file_dialog", "Global"},
-        {"Leader W", "write_file", "Global"},
         {"Leader T", "toggle_terminal", "Global"},
         {"Leader N T", "new_terminal", "Global"},
         {"Leader B X", "close_buffer", "Global"},
         {"Leader B N", "new_buffer", "Global"},
+        {"Leader B W", "write_file", "Global"},
     };
 }
 

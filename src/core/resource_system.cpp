@@ -104,6 +104,17 @@ bool TextResource::Save() {
     }
 }
 
+void TextResource::SetPath(const std::filesystem::path& path) {
+    Resource::SetPath(path);
+    m_Buffer.SetFilePath(path);
+    
+    // Update language based on new file extension
+    auto lang = LanguageRegistry::GetInstance().GetLanguageForFile(path);
+    if (lang) {
+        m_Buffer.SetLanguage(lang);
+    }
+}
+
 void TextResource::SetContent(const std::string& content) {
     std::string current = m_Buffer.ToString();
     if (current != content) {

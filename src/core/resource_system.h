@@ -34,6 +34,15 @@ public:
     bool IsModified() const { return m_Modified; }
     void SetModified(bool modified) { m_Modified = modified; }
     
+    // Check if this is an untitled/new buffer (no real file path)
+    bool IsUntitled() const { return !m_Path.is_absolute(); }
+    
+    // Set the path for saving (used when saving untitled buffers)
+    virtual void SetPath(const std::filesystem::path& path) {
+        m_Path = path;
+        m_Name = path.filename().string();
+    }
+    
     virtual bool Load() = 0;
     virtual bool Save() = 0;
     
@@ -54,6 +63,9 @@ public:
     
     bool Load() override;
     bool Save() override;
+    
+    // Override SetPath to also update TextBuffer
+    void SetPath(const std::filesystem::path& path) override;
     
     // TextBuffer access (nvim-like rope + tree-sitter)
     TextBuffer& GetBuffer() { return m_Buffer; }
