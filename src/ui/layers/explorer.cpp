@@ -57,6 +57,12 @@ Explorer::Explorer(const Id& id)
 void Explorer::OnUI() {
     ImGui::Begin("Explorer");
     
+    m_IsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (m_WantsFocus) {
+        ImGui::SetWindowFocus();
+        m_WantsFocus = false;
+    }
+    
     auto& rs = ResourceSystem::GetInstance();
     
     if (!rs.HasWorkingDirectory()) {

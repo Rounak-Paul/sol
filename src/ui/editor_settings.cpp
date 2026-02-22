@@ -90,9 +90,12 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         // Leader commands
         {"Leader q", "exit", "Global"},
         {"Leader o", "open_file_dialog", "Global"},
+        {"Leader O", "open_folder_dialog", "Global"},
+        {"Leader e e", "toggle_explorer", "Global"},
         {"Leader t t", "toggle_terminal", "Global"},
         {"Leader t n", "new_terminal", "Global"},
         {"Leader t x", "close_terminal", "Global"},
+        {"Leader b b", "focus_workspace", "Global"},
         {"Leader b x", "close_buffer", "Global"},
         {"Leader b n", "new_buffer", "Global"},
         {"Leader b w", "write_file", "Global"},

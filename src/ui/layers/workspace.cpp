@@ -39,6 +39,21 @@ void Workspace::OnUI() {
     
     ImGui::Begin("##Workspace", nullptr, flags);
     
+    m_IsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (m_WantsFocus) {
+        ImGui::SetWindowFocus();
+        m_WantsFocus = false;
+        // Also focus the active editor
+        auto& rs = ResourceSystem::GetInstance();
+        auto activeBuffer = rs.GetActiveBuffer();
+        if (activeBuffer && !activeBuffer->IsFloating()) {
+            auto* editor = GetOrCreateEditor(activeBuffer->GetId());
+            if (editor) {
+                editor->Focus();
+            }
+        }
+    }
+    
     RenderTabBar();
     RenderBufferContent();
     
@@ -295,6 +310,10 @@ SyntaxEditor* Workspace::GetOrCreateEditor(size_t bufferId) {
         it = m_Editors.emplace(bufferId, std::make_unique<SyntaxEditor>()).first;
     }
     return it->second.get();
+}
+
+void Workspace::Focus() {
+    m_WantsFocus = true;
 }
 
 } // namespace sol

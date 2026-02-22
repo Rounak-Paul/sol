@@ -22,6 +22,9 @@ public:
     // Updates diagnostic markers (LSP errors/warnings) for a specific file
     // Thread-safe: can be called from any thread
     void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
+    
+    bool IsFocused() const { return m_IsFocused; }
+    void Focus();
 
 private:
     void RenderTabBar();
@@ -42,6 +45,9 @@ private:
     std::vector<std::pair<std::string, std::vector<LSPDiagnostic>>> m_PendingDiagnostics;
 
     SyntaxEditor* GetOrCreateEditor(size_t bufferId);
+    
+    bool m_IsFocused = false;
+    bool m_WantsFocus = false;
 };
 
 } // namespace sol

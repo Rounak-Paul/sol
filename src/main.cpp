@@ -8,7 +8,7 @@ int main() {
     Logger::Info("Sol application starting");
     
     sol::Application app;
-    app.Run("Sol", 800, 600);
+    app.Run("Sol", 600, 400);
     
     Logger::Info("Sol application terminated");
     return 0;

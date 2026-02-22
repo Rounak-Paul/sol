@@ -14,6 +14,9 @@ public:
 
     void OnUI() override;
     void Refresh();
+    
+    bool IsFocused() const { return m_IsFocused; }
+    void Focus() { m_WantsFocus = true; }
 
 private:
     struct FileNode {
@@ -30,6 +33,8 @@ private:
     
     FileNode m_Root;
     bool m_NeedsRefresh = true;
+    bool m_IsFocused = false;
+    bool m_WantsFocus = false;
 };
 
 } // namespace sol

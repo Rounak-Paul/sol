@@ -59,6 +59,9 @@ void TerminalPanel::OnUI() {
         // Terminal content
         RenderTerminalContent();
         
+        // Track focus state
+        m_IsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        
         // Handle focus request
         if (m_WantsFocus) {
             ImGui::SetWindowFocus();

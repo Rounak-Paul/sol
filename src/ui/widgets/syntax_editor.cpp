@@ -134,6 +134,13 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     m_IsFocused = ImGui::IsWindowFocused();
     
+    // Handle focus request
+    if (m_WantsFocus) {
+        ImGui::SetWindowFocus();
+        m_WantsFocus = false;
+        m_IsFocused = true;
+    }
+    
     // Track active state for cursor visibility
     // - Set active when focused
     // - Clear only when focus moves to another window (not just temporarily lost)

@@ -169,6 +169,19 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(writeAllFilesEvent);
     
+    // Focus workspace event
+    auto focusWorkspaceEvent = std::make_shared<Event>("focus_workspace");
+    focusWorkspaceEvent->SetHandler([this](const EventData& data) {
+        auto workspace = std::dynamic_pointer_cast<Workspace>(m_UISystem.GetLayer("workspace"));
+        if (workspace) {
+            workspace->Focus();
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(focusWorkspaceEvent);
+
+    // Close buffer event
     auto closeBufferEvent = std::make_shared<Event>("close_buffer");
     closeBufferEvent->SetHandler([](const EventData& data) {
         auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
@@ -180,11 +193,46 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(closeBufferEvent);
     
+    // Explorer toggle event
+    auto toggleExplorerEvent = std::make_shared<Event>("toggle_explorer");
+    toggleExplorerEvent->SetHandler([this](const EventData& data) {
+        auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
+        if (explorer) {
+            if (!explorer->IsEnabled()) {
+                // Not enabled -> enable and focus
+                explorer->SetEnabled(true);
+                explorer->Focus();
+            } else if (explorer->IsFocused()) {
+                // Enabled and focused -> disable
+                explorer->SetEnabled(false);
+            } else {
+                // Enabled but not focused -> just focus
+                explorer->Focus();
+            }
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(toggleExplorerEvent);
+
     // Terminal toggle event
     auto toggleTerminalEvent = std::make_shared<Event>("toggle_terminal");
     toggleTerminalEvent->SetHandler([this](const EventData& data) {
         if (m_TerminalPanel) {
-            m_TerminalPanel->Toggle();
+            if (!m_TerminalPanel->IsEnabled()) {
+                // Not enabled -> enable and focus
+                m_TerminalPanel->SetEnabled(true);
+                if (m_TerminalPanel->GetTerminalCount() == 0) {
+                    m_TerminalPanel->CreateTerminal();
+                }
+                m_TerminalPanel->Focus();
+            } else if (m_TerminalPanel->IsFocused()) {
+                // Enabled and focused -> disable
+                m_TerminalPanel->SetEnabled(false);
+            } else {
+                // Enabled but not focused -> just focus
+                m_TerminalPanel->Focus();
+            }
             return true;
         }
         return false;

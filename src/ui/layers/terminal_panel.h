@@ -48,6 +48,7 @@ public:
     
     // Focus the terminal (for keyboard input)
     void Focus();
+    bool IsFocused() const { return m_IsFocused; }
     
     // Get the working directory for new terminals
     void SetWorkingDirectory(const std::string& dir) { m_WorkingDirectory = dir; }
@@ -69,6 +70,7 @@ private:
     float m_HeightRatio = 0.3f;  // Default: 30% of window height
     std::string m_WorkingDirectory;
     bool m_WantsFocus = false;
+    bool m_IsFocused = false;
     bool m_ForceSelectTab = false;  // Force tab selection on next frame
 };
 
