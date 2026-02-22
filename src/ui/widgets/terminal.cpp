@@ -1,4 +1,5 @@
 #include "terminal.h"
+#include "ui/input/command.h"
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
@@ -117,14 +118,29 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
     const auto& palette = m_Emulator->GetPalette();
     ImU32 bgColor = palette.GetColor(0);  // Black background
     
-    // Begin child region
+    // Begin child region with NoNav to prevent Tab from navigating UI elements
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bgColor);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(2, 2));
     
-    bool wasOpen = ImGui::BeginChild(id, contentSize, false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGuiWindowFlags childFlags = ImGuiWindowFlags_NoScrollbar | 
+                                   ImGuiWindowFlags_NoScrollWithMouse | 
+                                   ImGuiWindowFlags_NoNavInputs |  // Prevent Tab navigation pollution
+                                   ImGuiWindowFlags_NoNavFocus;    // Don't participate in nav focus
+    
+    bool wasOpen = ImGui::BeginChild(id, contentSize, false, childFlags);
     
     if (wasOpen) {
-        m_IsFocused = ImGui::IsWindowFocused();
+        // Handle focus capture request
+        if (m_WantsFocusCapture) {
+            ImGui::SetWindowFocus();
+            // Also make the parent window focused
+            if (ImGui::GetCurrentWindow()->ParentWindow) {
+                ImGui::FocusWindow(ImGui::GetCurrentWindow()->ParentWindow);
+            }
+            m_WantsFocusCapture = false;
+        }
+        
+        m_IsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         ImVec2 contentAvail = ImGui::GetContentRegionAvail();
@@ -182,6 +198,12 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
 
 void TerminalWidget::HandleInput() {
     ImGuiIO& io = ImGui::GetIO();
+    
+    // Block all input in Command mode - terminal behaves like any other buffer
+    if (InputSystem::GetInstance().GetInputMode() != EditorInputMode::Insert) {
+        io.InputQueueCharacters.resize(0);  // Clear input queue
+        return;
+    }
     
     // Handle text input
     if (io.InputQueueCharacters.Size > 0) {
@@ -395,20 +417,34 @@ void TerminalWidget::RenderContent(const ImVec2& pos, const ImVec2& size) {
         float cursorX = pos.x + cursorCol * m_CharWidth;
         float cursorY = pos.y + cursorRow * m_CharHeight;
         
-        // Block cursor
         ImU32 cursorColor = IM_COL32(255, 255, 255, 180);
-        drawList->AddRectFilled(
-            ImVec2(cursorX, cursorY),
-            ImVec2(cursorX + m_CharWidth, cursorY + m_CharHeight),
-            cursorColor
-        );
+        bool isInsertMode = InputSystem::GetInstance().GetInputMode() == EditorInputMode::Insert;
         
-        // Draw character under cursor in reverse
-        const auto& cursorCell = m_Emulator->GetCell(cursorRow, cursorCol);
-        if (cursorCell.codepoint > 32) {
-            char utf8[5] = {0};
-            utf8[0] = static_cast<char>(cursorCell.codepoint);
-            drawList->AddText(ImVec2(cursorX, cursorY), cursorCell.attr.bg, utf8);
+        if (isInsertMode) {
+            // Thin vertical bar cursor for Insert mode
+            drawList->AddRectFilled(
+                ImVec2(cursorX, cursorY),
+                ImVec2(cursorX + 2, cursorY + m_CharHeight),
+                cursorColor
+            );
+        } else {
+            // Horizontal underscore cursor for Command mode
+            float underscoreHeight = 2.0f;
+            drawList->AddRectFilled(
+                ImVec2(cursorX, cursorY + m_CharHeight - underscoreHeight),
+                ImVec2(cursorX + m_CharWidth, cursorY + m_CharHeight),
+                cursorColor
+            );
+        }
+        
+        // Draw character under cursor in reverse (only for block-style cursors)
+        if (!isInsertMode) {
+            const auto& cursorCell = m_Emulator->GetCell(cursorRow, cursorCol);
+            if (cursorCell.codepoint > 32) {
+                char utf8[5] = {0};
+                utf8[0] = static_cast<char>(cursorCell.codepoint);
+                drawList->AddText(ImVec2(cursorX, cursorY), cursorCell.attr.bg, utf8);
+            }
         }
     }
 }

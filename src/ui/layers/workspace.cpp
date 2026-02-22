@@ -31,7 +31,8 @@ void Workspace::OnUI() {
                              ImGuiWindowFlags_NoCollapse |
                              ImGuiWindowFlags_NoScrollbar |
                              ImGuiWindowFlags_NoScrollWithMouse |
-                             ImGuiWindowFlags_NoBringToFrontOnFocus;
+                             ImGuiWindowFlags_NoBringToFrontOnFocus |
+                             ImGuiWindowFlags_NoNavInputs;  // Prevent Tab navigation pollution
     
     // Always dock to the main dockspace central node
     ImGui::SetNextWindowDockID(m_DockspaceID, ImGuiCond_Always);

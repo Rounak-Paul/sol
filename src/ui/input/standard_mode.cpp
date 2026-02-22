@@ -1,6 +1,8 @@
 #include "standard_mode.h"
+#include "command.h"
 #include "core/text/text_buffer.h"
 #include "core/text/undo_tree.h"
+#include "ui/editor_settings.h"
 #include <algorithm>
 
 namespace sol {
@@ -52,6 +54,21 @@ InputResult StandardMode::HandleKeyboard(EditorState& state) {
         return result;
     }
     
+    // Configurable navigation keys in Command mode (default: WASD)
+    bool isCommandMode = InputSystem::GetInstance().GetInputMode() == EditorInputMode::Command;
+    if (isCommandMode && !ctrl && !alt) {
+        const auto& keybinds = EditorSettings::Get().GetKeybinds();
+        ImGuiKey navKey = ImGuiKey_None;
+        if (ImGui::IsKeyPressed(keybinds.navLeft)) navKey = ImGuiKey_LeftArrow;
+        else if (ImGui::IsKeyPressed(keybinds.navRight)) navKey = ImGuiKey_RightArrow;
+        else if (ImGui::IsKeyPressed(keybinds.navUp)) navKey = ImGuiKey_UpArrow;
+        else if (ImGui::IsKeyPressed(keybinds.navDown)) navKey = ImGuiKey_DownArrow;
+        
+        if (navKey != ImGuiKey_None) {
+            return HandleNavigation(state, navKey, shift, false);
+        }
+    }
+    
     // Navigation keys
     if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
         ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
@@ -75,7 +92,20 @@ InputResult StandardMode::HandleKeyboard(EditorState& state) {
         return HandleNavigation(state, key, shift, ctrl);
     }
     
-    // Editing keys
+    // Editing keys - only in Insert mode
+    if (isCommandMode) {
+        // Block editing keys in Command mode - only navigation is allowed
+        if (ImGui::IsKeyPressed(ImGuiKey_Backspace) ||
+            ImGui::IsKeyPressed(ImGuiKey_Delete) ||
+            ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+            ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            // Consume the key but don't edit
+            InputResult blocked;
+            blocked.handled = true;
+            return blocked;
+        }
+    }
+    
     if (ImGui::IsKeyPressed(ImGuiKey_Backspace) ||
         ImGui::IsKeyPressed(ImGuiKey_Delete) ||
         ImGui::IsKeyPressed(ImGuiKey_Enter) ||

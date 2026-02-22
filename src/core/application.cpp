@@ -204,6 +204,28 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(newTerminalEvent);
     
+    // Next terminal event
+    auto nextTerminalEvent = std::make_shared<Event>("next_terminal");
+    nextTerminalEvent->SetHandler([this](const EventData& data) {
+        if (m_TerminalPanel && m_TerminalPanel->IsEnabled()) {
+            m_TerminalPanel->NextTerminal();
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(nextTerminalEvent);
+    
+    // Previous terminal event
+    auto prevTerminalEvent = std::make_shared<Event>("prev_terminal");
+    prevTerminalEvent->SetHandler([this](const EventData& data) {
+        if (m_TerminalPanel && m_TerminalPanel->IsEnabled()) {
+            m_TerminalPanel->PrevTerminal();
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(prevTerminalEvent);
+    
     // New buffer event
     auto newBufferEvent = std::make_shared<Event>("new_buffer");
     newBufferEvent->SetHandler([](const EventData& data) {

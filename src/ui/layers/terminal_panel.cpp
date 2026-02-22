@@ -42,7 +42,9 @@ void TerminalPanel::OnUI() {
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_FirstUseEver);
     
     bool isOpen = true;
-    if (ImGui::Begin("Terminal", &isOpen)) {
+    // Use NoNavInputs to prevent Tab key from cycling through UI elements
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoNavInputs;
+    if (ImGui::Begin("Terminal", &isOpen, windowFlags)) {
         // Tab bar
         RenderTabBar();
         
@@ -169,6 +171,8 @@ size_t TerminalPanel::CreateTerminal(const TerminalConfig& config) {
         m_ActiveTerminal = m_Terminals.size() - 1;
         m_ForceSelectTab = true;
         m_WantsFocus = true;
+        // Request immediate keyboard focus for the terminal
+        m_Terminals[m_ActiveTerminal].widget->RequestFocusCapture();
         return m_ActiveTerminal;
     }
     
@@ -195,7 +199,20 @@ void TerminalPanel::SetActiveTerminal(size_t index) {
     if (index < m_Terminals.size()) {
         m_ActiveTerminal = index;
         m_ForceSelectTab = true;
+        m_Terminals[m_ActiveTerminal].widget->RequestFocusCapture();
     }
+}
+
+void TerminalPanel::NextTerminal() {
+    if (m_Terminals.empty()) return;
+    size_t next = (m_ActiveTerminal + 1) % m_Terminals.size();
+    SetActiveTerminal(next);
+}
+
+void TerminalPanel::PrevTerminal() {
+    if (m_Terminals.empty()) return;
+    size_t prev = m_ActiveTerminal == 0 ? m_Terminals.size() - 1 : m_ActiveTerminal - 1;
+    SetActiveTerminal(prev);
 }
 
 void TerminalPanel::Toggle() {
@@ -209,6 +226,7 @@ void TerminalPanel::Focus() {
     m_WantsFocus = true;
     if (m_ActiveTerminal < m_Terminals.size()) {
         m_Terminals[m_ActiveTerminal].widget->SetFocused(true);
+        m_Terminals[m_ActiveTerminal].widget->RequestFocusCapture();
     }
 }
 

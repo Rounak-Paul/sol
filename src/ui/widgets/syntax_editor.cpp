@@ -1,6 +1,7 @@
 #include "syntax_editor.h"
 #include "ui/editor_settings.h"
 #include "ui/icons_nerd.h"
+#include "ui/input/command.h"
 #include "core/lsp/lsp_manager.h"
 #include <imgui_internal.h>
 #include <algorithm>
@@ -133,6 +134,20 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     
     m_IsFocused = ImGui::IsWindowFocused();
     
+    // Track active state for cursor visibility
+    // - Set active when focused
+    // - Clear only when focus moves to another window (not just temporarily lost)
+    if (m_IsFocused) {
+        m_IsActive = true;
+    } else if (m_IsActive) {
+        // Check if another window/item has taken focus
+        // This distinguishes between temporary unfocus (Escape) and actual focus movement (terminal open)
+        bool anotherWindowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) && !ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        if (anotherWindowFocused) {
+            m_IsActive = false;
+        }
+    }
+    
     // Ensure buffer is parsed first (needed for fold ranges)
     if (!buffer.IsParsed() && buffer.HasLanguage()) {
         buffer.Parse();
@@ -250,7 +265,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     RenderScope(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
 
     // Render current line highlight
-    if ((m_IsFocused || m_ShowCompletion) && !m_HasSelection) {
+    if ((m_IsFocused || m_IsActive || m_ShowCompletion) && !m_HasSelection) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine && !IsLineHidden(cursorLine)) {
             // Calculate screen row for cursor line
@@ -287,7 +302,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     RenderText(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
     
     // Render matching bracket highlight
-    if (m_IsFocused || m_ShowCompletion) {
+    if (m_IsFocused || m_IsActive || m_ShowCompletion) {
         RenderMatchingBracket(buffer, textPos, lineHeight, firstVisibleLine);
     }
 
@@ -295,7 +310,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     RenderDiagnostics(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
 
     // Render cursor (only if cursor line is visible)
-    if ((m_IsFocused || m_ShowCompletion) && !m_ReadOnly) {
+    // Show cursor when focused, active (clicked but focus temporarily lost), or showing completion
+    if ((m_IsFocused || m_IsActive || m_ShowCompletion) && !m_ReadOnly) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
             RenderCursor(buffer, textPos, lineHeight, firstVisibleLine);
@@ -340,6 +356,7 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     if (ImGui::IsWindowHovered() && ImGui::IsMouseClicked(0) && !foldClickConsumed) {
         m_CursorPos = mouseToBufPos(mousePos);
         m_NeedsScrollToCursor = true;
+        m_IsActive = true;  // User clicked in editor, mark as active
         
         // Close completion on mouse click navigation
         m_ShowCompletion = false;
@@ -356,6 +373,10 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         
         m_IsDragging = true;
         m_CursorBlinkTimer = 0.0f;
+    }
+    // Clear active state if user clicks outside this editor
+    else if (ImGui::IsMouseClicked(0) && !ImGui::IsWindowHovered()) {
+        m_IsActive = false;
     }
     
     // Mouse drag - extend selection
@@ -376,7 +397,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     }
     
     // Handle keyboard input (Navigation and State Control)
-    if (m_IsFocused || m_ShowCompletion) {
+    // Use m_IsActive in addition to m_IsFocused to handle keyboard after mode switches
+    if (m_IsFocused || m_IsActive || m_ShowCompletion) {
         bool inputHandled = HandleInput(buffer);
         
         // Update cursor position for status bar
@@ -427,6 +449,13 @@ void SyntaxEditor::HandleTextInput(TextBuffer& buffer) {
      ImGuiIO& io = ImGui::GetIO();
      if (m_ReadOnly) return;
      if (io.InputQueueCharacters.Size == 0) return;
+     
+     // Block text input in Command mode - only allow in Insert mode
+     if (InputSystem::GetInstance().GetInputMode() != EditorInputMode::Insert) {
+         // Clear the input queue to prevent buffering
+         io.InputQueueCharacters.resize(0);
+         return;
+     }
      
      // Build editor state for input mode
     EditorState state;
@@ -809,12 +838,27 @@ void SyntaxEditor::RenderCursor(TextBuffer& buffer, const ImVec2& textPos, float
     float x = textPos.x + cursorCol * m_CharWidth;
     float y = textPos.y + screenRow * lineHeight;
     
-    // Draw cursor line (thin vertical bar)
-    drawList->AddRectFilled(
-        ImVec2(x, y),
-        ImVec2(x + 2, y + ImGui::GetTextLineHeight()),
-        m_Theme.cursor
-    );
+    // Draw cursor based on input mode
+    // Insert mode: thin vertical bar | Command mode: horizontal underscore
+    bool isInsertMode = InputSystem::GetInstance().GetInputMode() == EditorInputMode::Insert;
+    float textHeight = ImGui::GetTextLineHeight();
+    
+    if (isInsertMode) {
+        // Thin vertical bar cursor for Insert mode
+        drawList->AddRectFilled(
+            ImVec2(x, y),
+            ImVec2(x + 2, y + textHeight),
+            m_Theme.cursor
+        );
+    } else {
+        // Horizontal underscore cursor for Command mode
+        float underscoreHeight = 2.0f;
+        drawList->AddRectFilled(
+            ImVec2(x, y + textHeight - underscoreHeight),
+            ImVec2(x + m_CharWidth, y + textHeight),
+            m_Theme.cursor
+        );
+    }
 }
 
 void SyntaxEditor::RenderSelection(TextBuffer& buffer, const ImVec2& textPos, float lineHeight,

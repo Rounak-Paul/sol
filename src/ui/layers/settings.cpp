@@ -318,6 +318,46 @@ void SettingsWindow::RenderKeybindingsTab() {
     ImGui::SameLine();
     ImGui::TextDisabled("(Enter insert mode from command)");
     
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Command Mode Navigation");
+    ImGui::Separator();
+    ImGui::Spacing();
+    
+    // Navigation keys for command mode
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Nav Up: %s", ImGuiKeyToString(keybinds.navUp).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##NavUp")) {
+        m_CapturingKeyType = 4;
+        m_IsCapturingKey = true;
+    }
+    
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Nav Down: %s", ImGuiKeyToString(keybinds.navDown).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##NavDown")) {
+        m_CapturingKeyType = 5;
+        m_IsCapturingKey = true;
+    }
+    
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Nav Left: %s", ImGuiKeyToString(keybinds.navLeft).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##NavLeft")) {
+        m_CapturingKeyType = 6;
+        m_IsCapturingKey = true;
+    }
+    
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Nav Right: %s", ImGuiKeyToString(keybinds.navRight).c_str());
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Set##NavRight")) {
+        m_CapturingKeyType = 7;
+        m_IsCapturingKey = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(Arrow keys also work)");
+    
     // Current mode indicator
     ImGui::Spacing();
     const char* modeStr = inputSystem.GetInputMode() == EditorInputMode::Command ? "COMMAND" : "INSERT";
@@ -350,6 +390,10 @@ void SettingsWindow::RenderKeybindingsTab() {
             case 1: captureTitle = "Leader Key"; break;
             case 2: captureTitle = "Command Mode Key"; break;
             case 3: captureTitle = "Insert Mode Key"; break;
+            case 4: captureTitle = "Nav Up"; break;
+            case 5: captureTitle = "Nav Down"; break;
+            case 6: captureTitle = "Nav Left"; break;
+            case 7: captureTitle = "Nav Right"; break;
         }
         
         if (m_CapturingKeyType == 0) {
@@ -445,7 +489,7 @@ void SettingsWindow::RenderKeybindingsTab() {
                         }
                     }
                 } else {
-                    // Single key capture (leader, mode, insert keys)
+                    // Single key capture (leader, mode, insert, nav keys)
                     switch (m_CapturingKeyType) {
                         case 1: // Leader key
                             keybinds.leaderKey = key;
@@ -458,6 +502,22 @@ void SettingsWindow::RenderKeybindingsTab() {
                             break;
                         case 3: // Insert key
                             keybinds.insertKey = key;
+                            settingsChanged = true;
+                            break;
+                        case 4: // Nav up
+                            keybinds.navUp = key;
+                            settingsChanged = true;
+                            break;
+                        case 5: // Nav down
+                            keybinds.navDown = key;
+                            settingsChanged = true;
+                            break;
+                        case 6: // Nav left
+                            keybinds.navLeft = key;
+                            settingsChanged = true;
+                            break;
+                        case 7: // Nav right
+                            keybinds.navRight = key;
                             settingsChanged = true;
                             break;
                     }
@@ -546,6 +606,10 @@ void SettingsWindow::RenderKeybindingsTab() {
         keybinds.leaderKey = ImGuiKey_Space;
         keybinds.modeKey = ImGuiKey_Escape;
         keybinds.insertKey = ImGuiKey_I;
+        keybinds.navUp = ImGuiKey_W;
+        keybinds.navDown = ImGuiKey_S;
+        keybinds.navLeft = ImGuiKey_A;
+        keybinds.navRight = ImGuiKey_D;
         keybinds.defaultMode = EditorInputMode::Insert;
         keybinds.bindings = GetDefaultKeybindings();
         settingsChanged = true;

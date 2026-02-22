@@ -85,6 +85,8 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader o", "open_file_dialog", "Global"},
         {"Leader t t", "toggle_terminal", "Global"},
         {"Leader t n", "new_terminal", "Global"},
+        {"Leader t ]", "next_terminal", "Global"},
+        {"Leader t [", "prev_terminal", "Global"},
         {"Leader b x", "close_buffer", "Global"},
         {"Leader b n", "new_buffer", "Global"},
         {"Leader b w", "write_file", "Global"},
@@ -629,6 +631,10 @@ bool EditorSettings::SaveKeybinds() const {
     keybindsObj["leaderKey"] = JsonValue(ImGuiKeyToString(m_Keybinds.leaderKey));
     keybindsObj["modeKey"] = JsonValue(ImGuiKeyToString(m_Keybinds.modeKey));
     keybindsObj["insertKey"] = JsonValue(ImGuiKeyToString(m_Keybinds.insertKey));
+    keybindsObj["navUp"] = JsonValue(ImGuiKeyToString(m_Keybinds.navUp));
+    keybindsObj["navDown"] = JsonValue(ImGuiKeyToString(m_Keybinds.navDown));
+    keybindsObj["navLeft"] = JsonValue(ImGuiKeyToString(m_Keybinds.navLeft));
+    keybindsObj["navRight"] = JsonValue(ImGuiKeyToString(m_Keybinds.navRight));
     keybindsObj["defaultMode"] = JsonValue(std::string(EditorInputModeToString(m_Keybinds.defaultMode)));
     
     JsonArray bindingsArr;
@@ -839,6 +845,34 @@ bool EditorSettings::LoadKeybinds() {
         ImGuiKey key = ImGuiKeyFromString(root["insertKey"].ToString());
         if (key != ImGuiKey_None) {
             m_Keybinds.insertKey = key;
+        }
+    }
+    
+    if (root.Has("navUp")) {
+        ImGuiKey key = ImGuiKeyFromString(root["navUp"].ToString());
+        if (key != ImGuiKey_None) {
+            m_Keybinds.navUp = key;
+        }
+    }
+    
+    if (root.Has("navDown")) {
+        ImGuiKey key = ImGuiKeyFromString(root["navDown"].ToString());
+        if (key != ImGuiKey_None) {
+            m_Keybinds.navDown = key;
+        }
+    }
+    
+    if (root.Has("navLeft")) {
+        ImGuiKey key = ImGuiKeyFromString(root["navLeft"].ToString());
+        if (key != ImGuiKey_None) {
+            m_Keybinds.navLeft = key;
+        }
+    }
+    
+    if (root.Has("navRight")) {
+        ImGuiKey key = ImGuiKeyFromString(root["navRight"].ToString());
+        if (key != ImGuiKey_None) {
+            m_Keybinds.navRight = key;
         }
     }
     

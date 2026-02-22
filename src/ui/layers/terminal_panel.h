@@ -35,6 +35,10 @@ public:
     // Set active terminal
     void SetActiveTerminal(size_t index);
     
+    // Navigate between terminals
+    void NextTerminal();
+    void PrevTerminal();
+    
     // Toggle panel visibility (like :ToggleTerm in nvchad)
     void Toggle();
     

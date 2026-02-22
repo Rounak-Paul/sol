@@ -146,6 +146,7 @@ private:
     
     // Cached for current frame
     bool m_IsFocused = false;
+    bool m_IsActive = false;  // Tracks if editor was activated by user click (persists across mode switches)
     float m_CharWidth = 0.0f;
     
     // Completion state

@@ -46,6 +46,9 @@ public:
     bool IsFocused() const { return m_IsFocused; }
     void SetFocused(bool focused) { m_IsFocused = focused; }
     
+    // Request keyboard focus capture for next frame
+    void RequestFocusCapture() { m_WantsFocusCapture = true; }
+    
     // Get terminal title
     const std::string& GetTitle() const;
     
@@ -77,6 +80,8 @@ private:
     bool m_ScrollbarDragging = false;
     float m_ScrollbarDragStartY = 0.0f;
     int m_ScrollbarDragStartOffset = 0;
+    
+    bool m_WantsFocusCapture = false;  // Request immediate keyboard focus
     
     // Focus state
     bool m_IsFocused = false;

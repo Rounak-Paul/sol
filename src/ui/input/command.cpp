@@ -2,6 +2,7 @@
 #include "core/logger.h"
 #include "core/event_system.h"
 #include "ui/editor_settings.h"
+#include <imgui.h>
 #include <algorithm>
 
 namespace sol {
@@ -227,6 +228,9 @@ bool InputSystem::ProcessKey(const KeyChord& chord, InputContext context) {
         if (m_InputMode == EditorInputMode::Command && chord.key == keybinds.insertKey) {
             // I (or insert key) switches to Insert mode from Command
             SwitchToInsertMode();
+            // Clear any pending character input to prevent the mode-switch key
+            // from being typed into the terminal or buffer
+            ImGui::GetIO().InputQueueCharacters.resize(0);
             return true;
         }
     }
