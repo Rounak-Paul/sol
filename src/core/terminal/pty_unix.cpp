@@ -9,7 +9,11 @@
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <termios.h>
+#ifdef __APPLE__
 #include <util.h>   // openpty on macOS
+#else
+#include <pty.h>    // openpty on Linux
+#endif
 #include <pwd.h>
 #include <cstdlib>
 
