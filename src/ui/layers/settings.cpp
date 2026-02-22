@@ -351,9 +351,23 @@ void SettingsWindow::RenderKeybindingsTab() {
             case 2: captureTitle = "Command Mode Key"; break;
             case 3: captureTitle = "Insert Mode Key"; break;
         }
-        ImGui::Text("Press key for: %s", captureTitle);
-        ImGui::Spacing();
-        ImGui::TextDisabled("Press Escape to cancel");
+        
+        if (m_CapturingKeyType == 0) {
+            // Sequence capture mode
+            ImGui::Text("Recording keybind for: %s", m_RebindingCommandId.c_str());
+            ImGui::Spacing();
+            if (!m_CapturedSequence.empty()) {
+                ImGui::Text("Current: %s", m_CapturedSequence.c_str());
+            } else {
+                ImGui::TextDisabled("Press keys...");
+            }
+            ImGui::Spacing();
+            ImGui::TextDisabled("Press Enter to confirm, Escape to cancel");
+        } else {
+            ImGui::Text("Press key for: %s", captureTitle);
+            ImGui::Spacing();
+            ImGui::TextDisabled("Press Escape to cancel");
+        }
         
         // Capture key input
         for (ImGuiKey key = ImGuiKey_NamedKey_BEGIN; key < ImGuiKey_NamedKey_END; key = (ImGuiKey)(key + 1)) {
@@ -366,13 +380,72 @@ void SettingsWindow::RenderKeybindingsTab() {
             }
             
             if (ImGui::IsKeyPressed(key, false)) {
-                if (key == ImGuiKey_Escape && m_CapturingKeyType == 0) {
-                    // Only cancel for keybind capture, not for mode key capture
+                if (key == ImGuiKey_Escape) {
+                    // Cancel capture
                     m_IsCapturingKey = false;
                     m_RebindingCommandId.clear();
                     m_CapturingKeyType = 0;
+                    m_CapturedSequence.clear();
+                    m_CapturingSequence = false;
                     ImGui::CloseCurrentPopup();
+                    break;
+                }
+                
+                if (m_CapturingKeyType == 0) {
+                    // Keybind sequence capture
+                    if (key == ImGuiKey_Enter && !m_CapturedSequence.empty()) {
+                        // Confirm the sequence
+                        for (auto& entry : bindingsFromSettings) {
+                            if (entry.eventId == m_RebindingCommandId) {
+                                entry.keys = m_CapturedSequence;
+                                break;
+                            }
+                        }
+                        settingsChanged = true;
+                        rebindNeeded = true;
+                        m_IsCapturingKey = false;
+                        m_RebindingCommandId.clear();
+                        m_CapturedSequence.clear();
+                        m_CapturingSequence = false;
+                        ImGui::CloseCurrentPopup();
+                    } else if (key != ImGuiKey_Enter) {
+                        // Add key to sequence
+                        if (!m_CapturedSequence.empty()) {
+                            m_CapturedSequence += " ";
+                        }
+                        
+                        // Check if it's the leader key
+                        if (key == keybinds.leaderKey) {
+                            m_CapturedSequence += "Leader";
+                        } else {
+                            // Get modifiers
+                            Modifier mods = KeyChord::GetCurrentModifiers();
+                            
+                            // For letters, check shift for uppercase
+                            bool isLetter = (key >= ImGuiKey_A && key <= ImGuiKey_Z);
+                            bool hasShift = HasModifier(mods, Modifier::Shift);
+                            
+                            if (isLetter && hasShift && !HasModifier(mods, Modifier::Ctrl) && !HasModifier(mods, Modifier::Alt) && !HasModifier(mods, Modifier::Super)) {
+                                // Uppercase letter
+                                m_CapturedSequence += static_cast<char>('A' + (key - ImGuiKey_A));
+                            } else {
+                                // Build with modifiers
+                                if (HasModifier(mods, Modifier::Ctrl)) m_CapturedSequence += "Ctrl+";
+                                if (HasModifier(mods, Modifier::Shift)) m_CapturedSequence += "Shift+";
+                                if (HasModifier(mods, Modifier::Alt)) m_CapturedSequence += "Alt+";
+                                if (HasModifier(mods, Modifier::Super)) m_CapturedSequence += "Cmd+";
+                                
+                                // Add key name (lowercase for letters)
+                                if (isLetter) {
+                                    m_CapturedSequence += static_cast<char>('a' + (key - ImGuiKey_A));
+                                } else {
+                                    m_CapturedSequence += ImGuiKeyToString(key);
+                                }
+                            }
+                        }
+                    }
                 } else {
+                    // Single key capture (leader, mode, insert keys)
                     switch (m_CapturingKeyType) {
                         case 1: // Leader key
                             keybinds.leaderKey = key;
@@ -387,37 +460,6 @@ void SettingsWindow::RenderKeybindingsTab() {
                             keybinds.insertKey = key;
                             settingsChanged = true;
                             break;
-                        case 0: // Keybind capture
-                        default: {
-                            // Build the new key string with optional modifiers
-                            Modifier mods = KeyChord::GetCurrentModifiers();
-                            std::string keyStr;
-                            
-                            // Check if using leader key
-                            if (key == keybinds.leaderKey && mods == Modifier::None) {
-                                // This is just the leader key pressed, start "Leader X" sequence
-                                // For now, require full sequence typing
-                            }
-                            
-                            // Build modifier string
-                            if (HasModifier(mods, Modifier::Ctrl)) keyStr += "Ctrl+";
-                            if (HasModifier(mods, Modifier::Shift)) keyStr += "Shift+";
-                            if (HasModifier(mods, Modifier::Alt)) keyStr += "Alt+";
-                            if (HasModifier(mods, Modifier::Super)) keyStr += "Cmd+";
-                            
-                            keyStr += ImGuiKeyToString(key);
-                            
-                            // Update the binding in settings
-                            for (auto& entry : bindingsFromSettings) {
-                                if (entry.eventId == m_RebindingCommandId) {
-                                    entry.keys = keyStr;
-                                    break;
-                                }
-                            }
-                            settingsChanged = true;
-                            rebindNeeded = true;
-                            break;
-                        }
                     }
                     
                     m_IsCapturingKey = false;
@@ -484,6 +526,8 @@ void SettingsWindow::RenderKeybindingsTab() {
                 m_RebindingCommandId = entry.eventId;
                 m_CapturingKeyType = 0;
                 m_IsCapturingKey = true;
+                m_CapturedSequence.clear();
+                m_CapturingSequence = false;
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear")) {

@@ -26,6 +26,8 @@ private:
     std::string m_RebindingCommandId;
     bool m_IsCapturingKey = false;
     int m_CapturingKeyType = 0;  // 0=keybind, 1=leader, 2=mode, 3=insert
+    std::string m_CapturedSequence;  // For multi-key sequence capture
+    bool m_CapturingSequence = false;  // True when building a sequence
 };
 
 } // namespace sol
