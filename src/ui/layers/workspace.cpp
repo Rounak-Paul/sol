@@ -2,8 +2,10 @@
 #include "core/resource_system.h"
 #include "core/text/text_buffer.h"
 #include "ui/widgets/syntax_editor.h"
+#include "ui/input/input_mode.h"
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <algorithm>
 
 namespace sol {
 
@@ -314,6 +316,58 @@ SyntaxEditor* Workspace::GetOrCreateEditor(size_t bufferId) {
 
 void Workspace::Focus() {
     m_WantsFocus = true;
+}
+
+bool Workspace::Undo() {
+    auto& rs = ResourceSystem::GetInstance();
+    auto activeBuffer = rs.GetActiveBuffer();
+    if (!activeBuffer || activeBuffer->IsFloating()) return false;
+    
+    auto resource = activeBuffer->GetResource();
+    if (resource->GetType() != ResourceType::Text) return false;
+    
+    auto textResource = std::dynamic_pointer_cast<TextResource>(resource);
+    if (!textResource) return false;
+    
+    auto* editor = GetOrCreateEditor(activeBuffer->GetId());
+    if (!editor) return false;
+    
+    TextBuffer& buffer = textResource->GetBuffer();
+    auto newPos = TextOps::Undo(buffer, editor->GetUndoTree());
+    if (newPos) {
+        // Clamp cursor position to valid range
+        size_t pos = std::min(*newPos, buffer.Length());
+        editor->SetCursorPos(pos);
+        textResource->SetModified(true);
+        return true;
+    }
+    return false;
+}
+
+bool Workspace::Redo() {
+    auto& rs = ResourceSystem::GetInstance();
+    auto activeBuffer = rs.GetActiveBuffer();
+    if (!activeBuffer || activeBuffer->IsFloating()) return false;
+    
+    auto resource = activeBuffer->GetResource();
+    if (resource->GetType() != ResourceType::Text) return false;
+    
+    auto textResource = std::dynamic_pointer_cast<TextResource>(resource);
+    if (!textResource) return false;
+    
+    auto* editor = GetOrCreateEditor(activeBuffer->GetId());
+    if (!editor) return false;
+    
+    TextBuffer& buffer = textResource->GetBuffer();
+    auto newPos = TextOps::Redo(buffer, editor->GetUndoTree());
+    if (newPos) {
+        // Clamp cursor position to valid range
+        size_t pos = std::min(*newPos, buffer.Length());
+        editor->SetCursorPos(pos);
+        textResource->SetModified(true);
+        return true;
+    }
+    return false;
 }
 
 } // namespace sol

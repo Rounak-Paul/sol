@@ -87,6 +87,9 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"s", "nav_down", "Global"},
         {"a", "nav_left", "Global"},
         {"d", "nav_right", "Global"},
+        // Undo/Redo (Command mode, single keys)
+        {"u", "undo", "Global"},
+        {"r", "redo", "Global"},
         // Leader commands
         {"Leader q", "exit", "Global"},
         {"Leader o", "open_file_dialog", "Global"},

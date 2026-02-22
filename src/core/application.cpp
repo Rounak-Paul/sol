@@ -172,9 +172,8 @@ void Application::SetupEvents() {
     // Focus workspace event
     auto focusWorkspaceEvent = std::make_shared<Event>("focus_workspace");
     focusWorkspaceEvent->SetHandler([this](const EventData& data) {
-        auto workspace = std::dynamic_pointer_cast<Workspace>(m_UISystem.GetLayer("workspace"));
-        if (workspace) {
-            workspace->Focus();
+        if (m_Workspace) {
+            m_Workspace->Focus();
             return true;
         }
         return false;
@@ -352,6 +351,25 @@ void Application::SetupEvents() {
         return true;
     });
     EventSystem::Register(navRightEvent);
+    
+    // Undo/Redo events
+    auto undoEvent = std::make_shared<Event>("undo");
+    undoEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) {
+            return m_Workspace->Undo();
+        }
+        return false;
+    });
+    EventSystem::Register(undoEvent);
+    
+    auto redoEvent = std::make_shared<Event>("redo");
+    redoEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) {
+            return m_Workspace->Redo();
+        }
+        return false;
+    });
+    EventSystem::Register(redoEvent);
 }
 
 void Application::SetupUILayers() {
@@ -364,12 +382,12 @@ void Application::SetupUILayers() {
     auto explorer = std::make_shared<Explorer>();
     m_UISystem.RegisterLayer(explorer);
     
-    auto workspace = std::make_shared<Workspace>();
-    m_UISystem.RegisterLayer(workspace);
+    m_Workspace = std::make_shared<Workspace>();
+    m_UISystem.RegisterLayer(m_Workspace);
     
     // Connect LSP diagnostics to workspace
-    LSPManager::GetInstance().SetDiagnosticsCallback([workspace](const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
-        workspace->UpdateDiagnostics(path, diagnostics);
+    LSPManager::GetInstance().SetDiagnosticsCallback([this](const std::string& path, const std::vector<LSPDiagnostic>& diagnostics) {
+        m_Workspace->UpdateDiagnostics(path, diagnostics);
     });
     
     auto statusBar = std::make_shared<StatusBar>();

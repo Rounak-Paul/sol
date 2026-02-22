@@ -16,45 +16,6 @@ InputResult StandardMode::HandleKeyboard(EditorState& state) {
     bool shift = io.KeyShift;
     bool alt = io.KeyAlt;
     
-    // Undo/Redo
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        if (shift) {
-            // Ctrl+Shift+Z = Redo
-            if (state.undoTree) {
-                auto newPos = TextOps::Redo(*state.buffer, *state.undoTree);
-                if (newPos) {
-                    result.handled = true;
-                    result.textChanged = true;
-                    result.newCursorPos = *newPos;
-                }
-            }
-        } else {
-            // Ctrl+Z = Undo
-            if (state.undoTree) {
-                auto newPos = TextOps::Undo(*state.buffer, *state.undoTree);
-                if (newPos) {
-                    result.handled = true;
-                    result.textChanged = true;
-                    result.newCursorPos = *newPos;
-                }
-            }
-        }
-        return result;
-    }
-    
-    // Ctrl+Y = Redo (alternative)
-    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y)) {
-        if (state.undoTree) {
-            auto newPos = TextOps::Redo(*state.buffer, *state.undoTree);
-            if (newPos) {
-                result.handled = true;
-                result.textChanged = true;
-                result.newCursorPos = *newPos;
-            }
-        }
-        return result;
-    }
-    
     // Configurable navigation keys in Command mode (via keybindings like w/a/s/d)
     bool isCommandMode = InputSystem::GetInstance().GetInputMode() == EditorInputMode::Command;
     if (isCommandMode && !ctrl && !alt) {

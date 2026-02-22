@@ -63,8 +63,17 @@ std::optional<EditOperation> UndoTree::Redo() {
         return std::nullopt;
     }
     
+    // Ensure branch index is valid for current node
+    if (m_CurrentRedoBranch >= m_Current->children.size()) {
+        m_CurrentRedoBranch = 0;
+    }
+    
     // Navigate to the current redo branch
     m_Current = m_Current->children[m_CurrentRedoBranch];
+    
+    // Reset branch for next level (default to most recent)
+    m_CurrentRedoBranch = m_Current->children.empty() ? 0 : m_Current->children.size() - 1;
+    
     return m_Current->operation;
 }
 

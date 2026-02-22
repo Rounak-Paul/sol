@@ -9,6 +9,7 @@ namespace sol {
 
 class TerminalPanel;
 class Buffer;
+class Workspace;
 
 class Application : public tvk::App {
 public:
@@ -25,6 +26,7 @@ protected:
 private:
     UISystem m_UISystem;
     std::shared_ptr<TerminalPanel> m_TerminalPanel;
+    std::shared_ptr<Workspace> m_Workspace;
     
     // SaveAs dialog state
     bool m_ShowSaveAsDialog = false;

@@ -25,6 +25,10 @@ public:
     
     bool IsFocused() const { return m_IsFocused; }
     void Focus();
+    
+    // Undo/Redo on active buffer
+    bool Undo();
+    bool Redo();
 
 private:
     void RenderTabBar();

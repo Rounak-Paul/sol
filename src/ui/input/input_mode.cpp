@@ -2,6 +2,7 @@
 #include "core/text/text_buffer.h"
 #include "core/text/undo_tree.h"
 #include <cctype>
+#include <algorithm>
 
 namespace sol {
 namespace TextOps {
@@ -212,40 +213,65 @@ std::optional<size_t> Undo(TextBuffer& buffer, UndoTree& undo) {
     auto op = undo.Undo();
     if (!op) return std::nullopt;
     
+    // Validate positions before applying
+    size_t bufLen = buffer.Length();
+    
     // Reverse the operation
     switch (op->type) {
         case EditOperation::Type::Insert:
-            buffer.Delete(op->position, op->newText.length());
+            // Undo insert = delete the inserted text
+            if (op->position <= bufLen && op->position + op->newText.length() <= bufLen) {
+                buffer.Delete(op->position, op->newText.length());
+            }
             break;
         case EditOperation::Type::Delete:
-            buffer.Insert(op->position, op->oldText);
+            // Undo delete = re-insert the deleted text
+            if (op->position <= buffer.Length()) {
+                buffer.Insert(op->position, op->oldText);
+            }
             break;
         case EditOperation::Type::Replace:
-            buffer.Replace(op->position, op->newText.length(), op->oldText);
+            // Undo replace = replace newText with oldText
+            if (op->position <= bufLen && op->position + op->newText.length() <= bufLen) {
+                buffer.Replace(op->position, op->newText.length(), op->oldText);
+            }
             break;
     }
     
-    return op->cursorBefore;
+    // Return cursor position, clamped to valid range
+    size_t newLen = buffer.Length();
+    return std::min(op->cursorBefore, newLen);
 }
 
 std::optional<size_t> Redo(TextBuffer& buffer, UndoTree& undo) {
     auto op = undo.Redo();
     if (!op) return std::nullopt;
     
+    // Validate positions before applying
+    size_t bufLen = buffer.Length();
+    
     // Reapply the operation
     switch (op->type) {
         case EditOperation::Type::Insert:
-            buffer.Insert(op->position, op->newText);
+            if (op->position <= bufLen) {
+                buffer.Insert(op->position, op->newText);
+            }
             break;
         case EditOperation::Type::Delete:
-            buffer.Delete(op->position, op->oldText.length());
+            if (op->position <= bufLen && op->position + op->oldText.length() <= bufLen) {
+                buffer.Delete(op->position, op->oldText.length());
+            }
             break;
         case EditOperation::Type::Replace:
-            buffer.Replace(op->position, op->oldText.length(), op->newText);
+            if (op->position <= bufLen && op->position + op->oldText.length() <= bufLen) {
+                buffer.Replace(op->position, op->oldText.length(), op->newText);
+            }
             break;
     }
     
-    return op->cursorAfter;
+    // Return cursor position, clamped to valid range
+    size_t newLen = buffer.Length();
+    return std::min(op->cursorAfter, newLen);
 }
 
 } // namespace TextOps
