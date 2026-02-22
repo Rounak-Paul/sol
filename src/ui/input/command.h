@@ -179,6 +179,14 @@ public:
     // Initialize with default bindings
     void SetupDefaultBindings();
     
+    // Pending navigation (for command mode nav keys)
+    void SetPendingNavigation(ImGuiKey direction) { m_PendingNav = direction; }
+    ImGuiKey ConsumePendingNavigation() { 
+        ImGuiKey nav = m_PendingNav; 
+        m_PendingNav = ImGuiKey_None; 
+        return nav; 
+    }
+    
 private:
     InputSystem();
     
@@ -189,6 +197,7 @@ private:
     InputContext m_CurrentContext = InputContext::Global;
     KeySequenceMatcher m_Matcher;
     EditorInputMode m_InputMode = EditorInputMode::Insert;  // Modal editing state
+    ImGuiKey m_PendingNav = ImGuiKey_None;  // Pending navigation direction
 };
 
 // Convenience macros for registering commands

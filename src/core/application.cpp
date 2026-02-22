@@ -275,6 +275,35 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(writeFileEvent);
+    
+    // Navigation events (for command mode WASD)
+    auto navUpEvent = std::make_shared<Event>("nav_up");
+    navUpEvent->SetHandler([](const EventData& data) {
+        InputSystem::GetInstance().SetPendingNavigation(ImGuiKey_UpArrow);
+        return true;
+    });
+    EventSystem::Register(navUpEvent);
+    
+    auto navDownEvent = std::make_shared<Event>("nav_down");
+    navDownEvent->SetHandler([](const EventData& data) {
+        InputSystem::GetInstance().SetPendingNavigation(ImGuiKey_DownArrow);
+        return true;
+    });
+    EventSystem::Register(navDownEvent);
+    
+    auto navLeftEvent = std::make_shared<Event>("nav_left");
+    navLeftEvent->SetHandler([](const EventData& data) {
+        InputSystem::GetInstance().SetPendingNavigation(ImGuiKey_LeftArrow);
+        return true;
+    });
+    EventSystem::Register(navLeftEvent);
+    
+    auto navRightEvent = std::make_shared<Event>("nav_right");
+    navRightEvent->SetHandler([](const EventData& data) {
+        InputSystem::GetInstance().SetPendingNavigation(ImGuiKey_RightArrow);
+        return true;
+    });
+    EventSystem::Register(navRightEvent);
 }
 
 void Application::SetupUILayers() {
@@ -365,7 +394,12 @@ void Application::ProcessInput() {
     };
     
     for (ImGuiKey key : s_CheckKeys) {
-        if (ImGui::IsKeyPressed(key, false)) {
+        // Use repeat only when no pending sequence (for nav keys, etc.)
+        // For multi-key sequences, only trigger on initial press
+        bool hasPending = input.HasPendingSequence();
+        bool pressed = hasPending ? ImGui::IsKeyPressed(key, false) : ImGui::IsKeyPressed(key, true);
+        
+        if (pressed) {
             KeyChord chord(key, mods);
             if (input.ProcessKey(chord, input.GetContext())) {
                 // Key was handled by a binding

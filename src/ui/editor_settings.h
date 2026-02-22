@@ -28,11 +28,6 @@ struct KeybindSettings {
     ImGuiKey leaderKey = ImGuiKey_Space;     // Prefix key for keybinds (default: Space)
     ImGuiKey modeKey = ImGuiKey_Escape;      // Key to enter Command mode from Insert
     ImGuiKey insertKey = ImGuiKey_I;         // Key to enter Insert mode from Command
-    // Navigation keys for Command mode (WASD style)
-    ImGuiKey navUp = ImGuiKey_W;
-    ImGuiKey navDown = ImGuiKey_S;
-    ImGuiKey navLeft = ImGuiKey_A;
-    ImGuiKey navRight = ImGuiKey_D;
     EditorInputMode defaultMode = EditorInputMode::Insert; // Editor starts in Insert mode
     std::vector<KeybindEntry> bindings;
 };

@@ -55,16 +55,10 @@ InputResult StandardMode::HandleKeyboard(EditorState& state) {
         return result;
     }
     
-    // Configurable navigation keys in Command mode (default: WASD)
+    // Configurable navigation keys in Command mode (via keybindings like w/a/s/d)
     bool isCommandMode = InputSystem::GetInstance().GetInputMode() == EditorInputMode::Command;
     if (isCommandMode && !ctrl && !alt) {
-        const auto& keybinds = EditorSettings::Get().GetKeybinds();
-        ImGuiKey navKey = ImGuiKey_None;
-        if (ImGui::IsKeyPressed(keybinds.navLeft)) navKey = ImGuiKey_LeftArrow;
-        else if (ImGui::IsKeyPressed(keybinds.navRight)) navKey = ImGuiKey_RightArrow;
-        else if (ImGui::IsKeyPressed(keybinds.navUp)) navKey = ImGuiKey_UpArrow;
-        else if (ImGui::IsKeyPressed(keybinds.navDown)) navKey = ImGuiKey_DownArrow;
-        
+        ImGuiKey navKey = InputSystem::GetInstance().ConsumePendingNavigation();
         if (navKey != ImGuiKey_None) {
             return HandleNavigation(state, navKey, shift, false);
         }
