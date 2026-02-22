@@ -157,12 +157,6 @@ public:
     // Set the bindings to match against (called when keymaps change)
     void SetBindings(const std::vector<KeySequence>& bindings);
     
-    // Get timeout for sequence (milliseconds)
-    static constexpr int SequenceTimeoutMs = 1000;
-    
-    // Check if sequence has timed out
-    bool HasTimedOut() const;
-    
     // Get time since last chord (for UI display)
     float GetTimeSinceLastChord() const;
     

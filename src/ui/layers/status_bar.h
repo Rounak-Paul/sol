@@ -2,6 +2,8 @@
 
 #include "ui/ui_system.h"
 
+struct ImGuiViewport;
+
 namespace sol {
 
 class StatusBar : public UILayer {
@@ -10,6 +12,9 @@ public:
     ~StatusBar() override = default;
 
     void OnUI() override;
+    
+private:
+    void RenderKeyHints(ImGuiViewport* viewport, float statusBarHeight);
 };
 
 } // namespace sol

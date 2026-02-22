@@ -284,10 +284,8 @@ void KeySequenceMatcher::Reset() {
 }
 
 KeySequenceMatcher::MatchResult KeySequenceMatcher::ProcessChord(const KeyChord& chord) {
-    // Check timeout
-    if (HasTimedOut()) {
-        Reset();
-    }
+    // No timeout - sequences wait forever until Escape resets
+    // This allows users to type key sequences at their own pace
     
     // Add chord to current sequence
     m_CurrentSequence.Add(chord);
@@ -322,12 +320,6 @@ KeySequenceMatcher::MatchResult KeySequenceMatcher::ProcessChord(const KeyChord&
 
 void KeySequenceMatcher::SetBindings(const std::vector<KeySequence>& bindings) {
     m_Bindings = bindings;
-}
-
-bool KeySequenceMatcher::HasTimedOut() const {
-    if (m_CurrentSequence.Empty()) return false;
-    double elapsed = (ImGui::GetTime() - m_LastChordTime) * 1000.0;
-    return elapsed > SequenceTimeoutMs;
 }
 
 float KeySequenceMatcher::GetTimeSinceLastChord() const {

@@ -225,6 +225,14 @@ bool InputSystem::ProcessKey(const KeyChord& chord, InputContext context) {
             return true;
         }
         
+        if (m_InputMode == EditorInputMode::Command && chord.key == keybinds.modeKey) {
+            // Escape in Command mode resets pending sequence
+            if (HasPendingSequence()) {
+                ResetPendingSequence();
+                return true;
+            }
+        }
+        
         if (m_InputMode == EditorInputMode::Command && chord.key == keybinds.insertKey) {
             // I (or insert key) switches to Insert mode from Command
             SwitchToInsertMode();
@@ -283,6 +291,38 @@ bool InputSystem::HasPendingSequence() const {
 
 void InputSystem::ResetPendingSequence() {
     m_Matcher.Reset();
+}
+
+std::vector<std::pair<std::string, std::string>> InputSystem::GetMatchingBindings() const {
+    std::vector<std::pair<std::string, std::string>> result;
+    
+    if (!m_ActiveKeymap || !HasPendingSequence()) {
+        return result;
+    }
+    
+    const auto& pending = GetPendingSequence();
+    const auto& bindings = m_ActiveKeymap->GetAllBindings();
+    
+    for (const auto& binding : bindings) {
+        // Check if binding context matches current context
+        if (binding.context != InputContext::Global && binding.context != m_CurrentContext) {
+            continue;
+        }
+        
+        // Check if pending sequence is a prefix of this binding
+        if (pending.IsPrefixOf(binding.keys)) {
+            // Get remaining keys after prefix
+            std::string remaining;
+            const auto& chords = binding.keys.GetChords();
+            for (size_t i = pending.Size(); i < chords.size(); ++i) {
+                if (i > pending.Size()) remaining += " ";
+                remaining += chords[i].ToString();
+            }
+            result.emplace_back(remaining, binding.commandId);
+        }
+    }
+    
+    return result;
 }
 
 void InputSystem::SetActiveKeymap(const std::string& name) {

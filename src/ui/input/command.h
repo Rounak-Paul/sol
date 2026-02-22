@@ -152,6 +152,10 @@ public:
     // Reset pending sequence
     void ResetPendingSequence();
     
+    // Get bindings that match the current pending sequence prefix
+    // Returns pairs of (remaining keys after prefix, command id)
+    std::vector<std::pair<std::string, std::string>> GetMatchingBindings() const;
+    
     // Modal editing state
     EditorInputMode GetInputMode() const { return m_InputMode; }
     void SetInputMode(EditorInputMode mode) { m_InputMode = mode; }
