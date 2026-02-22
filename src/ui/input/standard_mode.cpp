@@ -2,6 +2,7 @@
 #include "command.h"
 #include "core/text/text_buffer.h"
 #include "core/text/undo_tree.h"
+#include "core/event_system.h"
 #include "ui/editor_settings.h"
 #include <algorithm>
 
@@ -94,11 +95,32 @@ InputResult StandardMode::HandleKeyboard(EditorState& state) {
     
     // Editing keys - only in Insert mode
     if (isCommandMode) {
-        // Block editing keys in Command mode - only navigation is allowed
+        // Tab cycles through buffers/terminals in Command mode based on context
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            InputContext ctx = InputSystem::GetInstance().GetContext();
+            if (ctx == InputContext::Terminal) {
+                if (shift) {
+                    EventSystem::GetInstance().Execute("prev_terminal");
+                } else {
+                    EventSystem::GetInstance().Execute("next_terminal");
+                }
+            } else {
+                // Default to buffer cycling (Editor context or Global)
+                if (shift) {
+                    EventSystem::GetInstance().Execute("prev_buffer");
+                } else {
+                    EventSystem::GetInstance().Execute("next_buffer");
+                }
+            }
+            InputResult tabResult;
+            tabResult.handled = true;
+            return tabResult;
+        }
+        
+        // Block other editing keys in Command mode - only navigation is allowed
         if (ImGui::IsKeyPressed(ImGuiKey_Backspace) ||
             ImGui::IsKeyPressed(ImGuiKey_Delete) ||
-            ImGui::IsKeyPressed(ImGuiKey_Enter) ||
-            ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            ImGui::IsKeyPressed(ImGuiKey_Enter)) {
             // Consume the key but don't edit
             InputResult blocked;
             blocked.handled = true;

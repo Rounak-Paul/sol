@@ -314,6 +314,44 @@ void ResourceSystem::SetActiveBuffer(Buffer::Id id) {
     }
 }
 
+void ResourceSystem::NextBuffer() {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
+    if (m_Buffers.size() <= 1) return;
+    
+    // Find current buffer index
+    size_t currentIdx = 0;
+    for (size_t i = 0; i < m_Buffers.size(); ++i) {
+        if (m_Buffers[i]->GetId() == m_ActiveBufferId) {
+            currentIdx = i;
+            break;
+        }
+    }
+    
+    // Cycle to next
+    size_t nextIdx = (currentIdx + 1) % m_Buffers.size();
+    SetActiveBuffer(m_Buffers[nextIdx]->GetId());
+}
+
+void ResourceSystem::PrevBuffer() {
+    std::lock_guard<std::recursive_mutex> lock(m_Mutex);
+    
+    if (m_Buffers.size() <= 1) return;
+    
+    // Find current buffer index
+    size_t currentIdx = 0;
+    for (size_t i = 0; i < m_Buffers.size(); ++i) {
+        if (m_Buffers[i]->GetId() == m_ActiveBufferId) {
+            currentIdx = i;
+            break;
+        }
+    }
+    
+    // Cycle to previous
+    size_t prevIdx = currentIdx == 0 ? m_Buffers.size() - 1 : currentIdx - 1;
+    SetActiveBuffer(m_Buffers[prevIdx]->GetId());
+}
+
 std::shared_ptr<Resource> ResourceSystem::CreateResource(const std::filesystem::path& path) {
     // Check cache
     auto it = m_ResourceCache.find(path);

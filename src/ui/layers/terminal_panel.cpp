@@ -41,10 +41,18 @@ void TerminalPanel::OnUI() {
     // Set initial size only on first appearance
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_FirstUseEver);
     
-    bool isOpen = true;
-    // Use NoNavInputs to prevent Tab key from cycling through UI elements
-    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoNavInputs;
-    if (ImGui::Begin("Terminal", &isOpen, windowFlags)) {
+    // Set window class to hide dock tab bar (like workspace)
+    ImGuiWindowClass windowClass;
+    windowClass.DockNodeFlagsOverrideSet = ImGuiDockNodeFlags_NoTabBar;
+    ImGui::SetNextWindowClass(&windowClass);
+    
+    // Window flags - no decorations like workspace
+    ImGuiWindowFlags windowFlags = ImGuiWindowFlags_NoTitleBar | 
+                                   ImGuiWindowFlags_NoCollapse |
+                                   ImGuiWindowFlags_NoScrollbar |
+                                   ImGuiWindowFlags_NoScrollWithMouse |
+                                   ImGuiWindowFlags_NoNavInputs;
+    if (ImGui::Begin("##Terminal", nullptr, windowFlags)) {
         // Tab bar
         RenderTabBar();
         
@@ -61,11 +69,6 @@ void TerminalPanel::OnUI() {
     
     ImGui::PopStyleColor();
     ImGui::PopStyleVar();
-    
-    // If user closed the window via X button
-    if (!isOpen) {
-        SetEnabled(false);
-    }
 }
 
 void TerminalPanel::RenderTabBar() {
@@ -96,7 +99,11 @@ void TerminalPanel::RenderTabBar() {
             
             bool open = true;
             if (ImGui::BeginTabItem((label + "##" + std::to_string(i)).c_str(), &open, flags)) {
-                m_ActiveTerminal = i;
+                // Only update active terminal from tab clicks when not force-selecting
+                // Force-select takes priority over ImGui's internal tab selection
+                if (!m_ForceSelectTab) {
+                    m_ActiveTerminal = i;
+                }
                 ImGui::EndTabItem();
             }
             

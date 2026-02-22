@@ -139,6 +139,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // - Clear only when focus moves to another window (not just temporarily lost)
     if (m_IsFocused) {
         m_IsActive = true;
+        // Set input context when editor gets focus
+        InputSystem::GetInstance().SetContext(InputContext::Editor);
     } else if (m_IsActive) {
         // Check if another window/item has taken focus
         // This distinguishes between temporary unfocus (Escape) and actual focus movement (terminal open)

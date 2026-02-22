@@ -134,6 +134,10 @@ public:
     void SetActiveBuffer(Buffer::Id id);
     const std::vector<std::shared_ptr<Buffer>>& GetBuffers() const { return m_Buffers; }
     
+    // Buffer tab cycling
+    void NextBuffer();
+    void PrevBuffer();
+    
     // Callbacks
     using BufferCallback = std::function<void(std::shared_ptr<Buffer>)>;
     void SetOnBufferOpened(BufferCallback callback) { m_OnBufferOpened = callback; }

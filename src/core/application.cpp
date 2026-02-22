@@ -226,6 +226,22 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(prevTerminalEvent);
     
+    // Next buffer event (cycle through buffer tabs)
+    auto nextBufferEvent = std::make_shared<Event>("next_buffer");
+    nextBufferEvent->SetHandler([](const EventData& data) {
+        ResourceSystem::GetInstance().NextBuffer();
+        return true;
+    });
+    EventSystem::Register(nextBufferEvent);
+    
+    // Previous buffer event (cycle through buffer tabs)
+    auto prevBufferEvent = std::make_shared<Event>("prev_buffer");
+    prevBufferEvent->SetHandler([](const EventData& data) {
+        ResourceSystem::GetInstance().PrevBuffer();
+        return true;
+    });
+    EventSystem::Register(prevBufferEvent);
+    
     // New buffer event
     auto newBufferEvent = std::make_shared<Event>("new_buffer");
     newBufferEvent->SetHandler([](const EventData& data) {

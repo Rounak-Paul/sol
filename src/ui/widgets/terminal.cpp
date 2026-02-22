@@ -1,5 +1,6 @@
 #include "terminal.h"
 #include "ui/input/command.h"
+#include "core/event_system.h"
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
@@ -142,6 +143,11 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
         
         m_IsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         
+        // Set input context when terminal gets focus
+        if (m_IsFocused) {
+            InputSystem::GetInstance().SetContext(InputContext::Terminal);
+        }
+        
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         ImVec2 contentAvail = ImGui::GetContentRegionAvail();
         
@@ -199,9 +205,18 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
 void TerminalWidget::HandleInput() {
     ImGuiIO& io = ImGui::GetIO();
     
-    // Block all input in Command mode - terminal behaves like any other buffer
+    // Handle Command mode - terminal behaves like any other buffer
     if (InputSystem::GetInstance().GetInputMode() != EditorInputMode::Insert) {
         io.InputQueueCharacters.resize(0);  // Clear input queue
+        
+        // Tab cycles through terminals in Command mode
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            if (io.KeyShift) {
+                EventSystem::GetInstance().Execute("prev_terminal");
+            } else {
+                EventSystem::GetInstance().Execute("next_terminal");
+            }
+        }
         return;
     }
     
