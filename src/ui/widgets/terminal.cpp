@@ -220,6 +220,71 @@ void TerminalWidget::HandleInput() {
         return;
     }
     
+    // Handle Ctrl key combinations FIRST (terminal signals)
+    // These need priority over text input
+    if (io.KeyCtrl) {
+        bool handled = false;
+        
+        // Ctrl+C for SIGINT
+        if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+            m_Emulator->Write("\x03");  // ETX
+            handled = true;
+        }
+        // Ctrl+Z for SIGTSTP
+        else if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+            m_Emulator->Write("\x1a");  // SUB
+            handled = true;
+        }
+        // Ctrl+D for EOF
+        else if (ImGui::IsKeyPressed(ImGuiKey_D, false)) {
+            m_Emulator->Write("\x04");  // EOT
+            handled = true;
+        }
+        // Ctrl+L for clear screen
+        else if (ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+            m_Emulator->Write("\x0c");  // FF
+            handled = true;
+        }
+        // Ctrl+A for beginning of line
+        else if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+            m_Emulator->Write("\x01");  // SOH
+            handled = true;
+        }
+        // Ctrl+E for end of line
+        else if (ImGui::IsKeyPressed(ImGuiKey_E, false)) {
+            m_Emulator->Write("\x05");  // ENQ
+            handled = true;
+        }
+        // Ctrl+U for kill line
+        else if (ImGui::IsKeyPressed(ImGuiKey_U, false)) {
+            m_Emulator->Write("\x15");  // NAK
+            handled = true;
+        }
+        // Ctrl+K for kill to end of line
+        else if (ImGui::IsKeyPressed(ImGuiKey_K, false)) {
+            m_Emulator->Write("\x0b");  // VT
+            handled = true;
+        }
+        // Ctrl+W for kill word
+        else if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+            m_Emulator->Write("\x17");  // ETB
+            handled = true;
+        }
+        // Ctrl+R for reverse search
+        else if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+            m_Emulator->Write("\x12");  // DC2
+            handled = true;
+        }
+        
+        if (handled) {
+            io.InputQueueCharacters.resize(0);  // Clear any queued characters
+            m_CursorBlinkTime = 0.0f;
+            m_CursorVisible = true;
+            m_ScrollOffset = 0;
+            return;
+        }
+    }
+    
     // Handle text input
     if (io.InputQueueCharacters.Size > 0) {
         for (int i = 0; i < io.InputQueueCharacters.Size; i++) {
@@ -277,26 +342,6 @@ void TerminalWidget::HandleInput() {
     // Function keys
     for (int i = 0; i < 12; i++) {
         checkKey(ImGuiKey_F1 + i, 290 + i);
-    }
-    
-    // Ctrl+C for SIGINT
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C)) {
-        m_Emulator->Write("\x03");  // ETX
-    }
-    
-    // Ctrl+Z for SIGTSTP
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z)) {
-        m_Emulator->Write("\x1a");  // SUB
-    }
-    
-    // Ctrl+D for EOF
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D)) {
-        m_Emulator->Write("\x04");  // EOT
-    }
-    
-    // Ctrl+L for clear screen
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_L)) {
-        m_Emulator->Write("\x0c");  // FF
     }
 }
 
