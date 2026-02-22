@@ -18,9 +18,9 @@ const char* EditorInputModeToString(EditorInputMode mode);
 
 // Serializable keybinding entry
 struct KeybindEntry {
-    std::string keys;      // e.g., "Leader Q" or "Ctrl+S"
-    std::string eventId;   // e.g., "exit"
-    std::string context;   // e.g., "Global", "Editor"
+    std::string keys;         // e.g., "Leader Q" or "Ctrl+S"
+    std::string eventId;      // e.g., "exit"
+    std::string context;      // e.g., "Global", "Editor"
 };
 
 // Keybinding settings

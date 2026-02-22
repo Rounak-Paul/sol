@@ -4,6 +4,7 @@
 #include "ui/editor_settings.h"
 #include <imgui.h>
 #include <algorithm>
+#include <map>
 
 namespace sol {
 
@@ -303,6 +304,15 @@ std::vector<std::pair<std::string, std::string>> InputSystem::GetMatchingBinding
     const auto& pending = GetPendingSequence();
     const auto& bindings = m_ActiveKeymap->GetAllBindings();
     
+    // Group bindings by their immediate next key after the pending sequence
+    // Key: next chord string, Value: {description, count of sub-bindings}
+    struct NextKeyInfo {
+        std::string description;  // Description if direct command, or group indicator
+        int subBindingCount = 0;  // How many bindings share this next key
+        bool isLeaf = false;      // True if this key directly executes a command
+    };
+    std::map<std::string, NextKeyInfo> nextKeys;
+    
     for (const auto& binding : bindings) {
         // Check if binding context matches current context
         if (binding.context != InputContext::Global && binding.context != m_CurrentContext) {
@@ -310,16 +320,44 @@ std::vector<std::pair<std::string, std::string>> InputSystem::GetMatchingBinding
         }
         
         // Check if pending sequence is a prefix of this binding
-        if (pending.IsPrefixOf(binding.keys)) {
-            // Get remaining keys after prefix
-            std::string remaining;
-            const auto& chords = binding.keys.GetChords();
-            for (size_t i = pending.Size(); i < chords.size(); ++i) {
-                if (i > pending.Size()) remaining += " ";
-                remaining += chords[i].ToString();
-            }
-            result.emplace_back(remaining, binding.commandId);
+        if (!pending.IsPrefixOf(binding.keys)) {
+            continue;
         }
+        
+        const auto& chords = binding.keys.GetChords();
+        size_t nextIndex = pending.Size();
+        
+        if (nextIndex >= chords.size()) {
+            continue;  // Pending sequence matches exactly, no more keys
+        }
+        
+        // Get the immediate next key
+        std::string nextKey = chords[nextIndex].ToString();
+        
+        auto& info = nextKeys[nextKey];
+        info.subBindingCount++;
+        
+        // Check if this binding is a "leaf" (executes right after this key)
+        if (nextIndex + 1 == chords.size()) {
+            info.isLeaf = true;
+            info.description = binding.commandId;
+        }
+    }
+    
+    // Build result: for each next key, show either its description or a group indicator
+    for (const auto& [key, info] : nextKeys) {
+        std::string desc;
+        if (info.subBindingCount == 1 && info.isLeaf) {
+            // Single binding that executes directly
+            desc = info.description;
+        } else if (info.isLeaf && info.subBindingCount > 1) {
+            // This key can execute AND has sub-bindings
+            desc = info.description + " (+" + std::to_string(info.subBindingCount - 1) + ")";
+        } else {
+            // Group of sub-bindings only
+            desc = "+" + std::to_string(info.subBindingCount);
+        }
+        result.emplace_back(key, desc);
     }
     
     return result;
