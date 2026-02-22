@@ -204,6 +204,17 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(newTerminalEvent);
     
+    // Close terminal event
+    auto closeTerminalEvent = std::make_shared<Event>("close_terminal");
+    closeTerminalEvent->SetHandler([this](const EventData& data) {
+        if (m_TerminalPanel && m_TerminalPanel->IsEnabled()) {
+            m_TerminalPanel->CloseTerminal(m_TerminalPanel->GetActiveTerminal());
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(closeTerminalEvent);
+    
     // Next terminal event
     auto nextTerminalEvent = std::make_shared<Event>("next_terminal");
     nextTerminalEvent->SetHandler([this](const EventData& data) {
