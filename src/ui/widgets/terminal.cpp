@@ -1,5 +1,6 @@
 #include "terminal.h"
 #include "ui/input/command.h"
+#include "ui/editor_settings.h"
 #include "core/event_system.h"
 #include <imgui_internal.h>
 #include <algorithm>
@@ -115,9 +116,34 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
     // Calculate character dimensions
     CalculateDimensions(contentSize);
     
-    // Terminal background color from emulator's default attributes
-    const auto& palette = m_Emulator->GetPalette();
-    ImU32 bgColor = palette.GetColor(0);  // Black background
+    // Sync terminal palette colors with theme
+    const auto& themeColors = EditorSettings::Get().GetTheme().colors;
+    auto& palette = m_Emulator->GetPalette();
+    
+    // Convert theme background (childBg) to ImU32 (ABGR format)
+    ImU32 themeBg = IM_COL32(
+        static_cast<uint8_t>(themeColors.childBg.x * 255.f),
+        static_cast<uint8_t>(themeColors.childBg.y * 255.f),
+        static_cast<uint8_t>(themeColors.childBg.z * 255.f),
+        static_cast<uint8_t>(themeColors.childBg.w * 255.f)
+    );
+    
+    // Convert theme text to ImU32 for default foreground
+    ImU32 themeFg = IM_COL32(
+        static_cast<uint8_t>(themeColors.text.x * 255.f),
+        static_cast<uint8_t>(themeColors.text.y * 255.f),
+        static_cast<uint8_t>(themeColors.text.z * 255.f),
+        static_cast<uint8_t>(themeColors.text.w * 255.f)
+    );
+    
+    // Update palette colors 0 (default bg) and 7 (default fg) from theme
+    palette.SetColor(0, themeBg);   // Default background
+    palette.SetColor(7, themeFg);   // Default foreground (white)
+    
+    // Also update emulator's default attributes to match
+    m_Emulator->UpdateDefaultColors(themeFg, themeBg);
+    
+    ImU32 bgColor = themeBg;
     
     // Begin child region with NoNav to prevent Tab from navigating UI elements
     ImGui::PushStyleColor(ImGuiCol_ChildBg, bgColor);

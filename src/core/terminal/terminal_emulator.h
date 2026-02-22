@@ -141,6 +141,9 @@ public:
     // Color palette
     TerminalPalette& GetPalette() { return m_Palette; }
     const TerminalPalette& GetPalette() const { return m_Palette; }
+    
+    // Update default colors from theme
+    void UpdateDefaultColors(uint32_t fg, uint32_t bg);
 
 private:
     // Escape sequence parsing

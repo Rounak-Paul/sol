@@ -89,6 +89,11 @@ TerminalEmulator::TerminalEmulator(int rows, int cols)
 
 TerminalEmulator::~TerminalEmulator() = default;
 
+void TerminalEmulator::UpdateDefaultColors(uint32_t fg, uint32_t bg) {
+    m_DefaultAttr.fg = fg;
+    m_DefaultAttr.bg = bg;
+}
+
 void TerminalEmulator::AttachPty(std::shared_ptr<Pty> pty) {
     m_Pty = pty;
     if (m_Pty) {
