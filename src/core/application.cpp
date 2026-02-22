@@ -153,6 +153,22 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(saveAllEvent);
     
+    // Write all files - only saves existing files, skips untitled buffers
+    auto writeAllFilesEvent = std::make_shared<Event>("write_all_files");
+    writeAllFilesEvent->SetHandler([](const EventData& data) {
+        auto& rs = ResourceSystem::GetInstance();
+        bool allSaved = true;
+        for (const auto& buffer : rs.GetBuffers()) {
+            if (!buffer->GetResource()->IsUntitled()) {
+                if (!rs.SaveBuffer(buffer->GetId())) {
+                    allSaved = false;
+                }
+            }
+        }
+        return allSaved;
+    });
+    EventSystem::Register(writeAllFilesEvent);
+    
     auto closeBufferEvent = std::make_shared<Event>("close_buffer");
     closeBufferEvent->SetHandler([](const EventData& data) {
         auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();

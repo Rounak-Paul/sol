@@ -82,14 +82,13 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
     // Multi-key sequences: "Leader n t" means leader, then n, then t
     return {
         {"Leader q", "exit", "Global"},
-        {"Leader s", "save_file", "Global"},
-        {"Leader S", "save_all_files", "Global"},
         {"Leader o", "open_file_dialog", "Global"},
         {"Leader t", "toggle_terminal", "Global"},
         {"Leader n t", "new_terminal", "Global"},
         {"Leader b x", "close_buffer", "Global"},
         {"Leader b n", "new_buffer", "Global"},
         {"Leader b w", "write_file", "Global"},
+        {"Leader b W", "write_all_files", "Global"},
     };
 }
 
