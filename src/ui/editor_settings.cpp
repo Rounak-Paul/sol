@@ -77,19 +77,19 @@ ImGuiKey ImGuiKeyFromString(const std::string& str) {
 }
 
 std::vector<KeybindEntry> GetDefaultKeybindings() {
-    // Format: "Leader X" means press leader key, then X
-    // Format: "Ctrl+S" means traditional modifier+key
-    // Multi-key sequences: "Leader N T" means leader, then N, then T
+    // Format: "Leader x" means press leader key, then x (lowercase)
+    // Format: "Leader X" means press leader key, then Shift+X (uppercase = Shift)
+    // Multi-key sequences: "Leader n t" means leader, then n, then t
     return {
-        {"Leader Q", "exit", "Global"},
-        {"Leader S", "save_file", "Global"},
-        {"Leader Shift+S", "save_all_files", "Global"},
-        {"Leader O", "open_file_dialog", "Global"},
-        {"Leader T", "toggle_terminal", "Global"},
-        {"Leader N T", "new_terminal", "Global"},
-        {"Leader B X", "close_buffer", "Global"},
-        {"Leader B N", "new_buffer", "Global"},
-        {"Leader B W", "write_file", "Global"},
+        {"Leader q", "exit", "Global"},
+        {"Leader s", "save_file", "Global"},
+        {"Leader S", "save_all_files", "Global"},
+        {"Leader o", "open_file_dialog", "Global"},
+        {"Leader t", "toggle_terminal", "Global"},
+        {"Leader n t", "new_terminal", "Global"},
+        {"Leader b x", "close_buffer", "Global"},
+        {"Leader b n", "new_buffer", "Global"},
+        {"Leader b w", "write_file", "Global"},
     };
 }
 
@@ -312,6 +312,22 @@ void EditorSettings::SetPreset(const std::string& name) {
     // Preserve font settings when switching color presets
     m_Theme.font = oldTheme.font;
     ApplyTheme();
+}
+
+std::string EditorSettings::GetShortcutForEvent(const std::string& eventId) const {
+    for (const auto& binding : m_Keybinds.bindings) {
+        if (binding.eventId == eventId) {
+            std::string result = binding.keys;
+            // Replace "Leader" with "<L>" for compact display
+            size_t pos = 0;
+            while ((pos = result.find("Leader", pos)) != std::string::npos) {
+                result.replace(pos, 6, "<L>");
+                pos += 3;
+            }
+            return result;
+        }
+    }
+    return "";
 }
 
 void EditorSettings::ApplyTheme() {

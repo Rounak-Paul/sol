@@ -168,6 +168,10 @@ public:
     // Keybinding settings
     KeybindSettings& GetKeybinds() { return m_Keybinds; }
     const KeybindSettings& GetKeybinds() const { return m_Keybinds; }
+    
+    // Get the shortcut string for an event (returns "" if not found)
+    // Formats "Leader X" as "<L> X" for compact display
+    std::string GetShortcutForEvent(const std::string& eventId) const;
 
     // Apply current theme to ImGui
     void ApplyTheme();

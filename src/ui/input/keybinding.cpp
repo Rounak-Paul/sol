@@ -81,6 +81,10 @@ static const std::unordered_map<std::string, ImGuiKey> s_KeyNameMap = {
 static std::string KeyToString(ImGuiKey key) {
     for (const auto& [name, k] : s_KeyNameMap) {
         if (k == key) {
+            // For single letters, keep lowercase (shift handling done in ToString)
+            if (name.length() == 1 && name[0] >= 'a' && name[0] <= 'z') {
+                return name;
+            }
             // Prefer shorter, common names
             if (name.length() == 1 || name == "up" || name == "down" || 
                 name == "left" || name == "right" || name == "enter" ||
@@ -113,6 +117,19 @@ bool KeyChord::IsPressed() const {
 std::string KeyChord::ToString() const {
     std::string result;
     
+    // For Shift+Letter with no other modifiers, just output uppercase letter
+    bool isLetter = (key >= ImGuiKey_A && key <= ImGuiKey_Z);
+    bool onlyShift = HasModifier(mods, Modifier::Shift) && 
+                     !HasModifier(mods, Modifier::Ctrl) && 
+                     !HasModifier(mods, Modifier::Alt) && 
+                     !HasModifier(mods, Modifier::Super);
+    
+    if (isLetter && onlyShift) {
+        // Output as uppercase letter directly
+        result += static_cast<char>('A' + (key - ImGuiKey_A));
+        return result;
+    }
+    
     if (HasModifier(mods, Modifier::Ctrl)) result += "Ctrl+";
     if (HasModifier(mods, Modifier::Shift)) result += "Shift+";
     if (HasModifier(mods, Modifier::Alt)) result += "Alt+";
@@ -132,16 +149,25 @@ std::optional<KeyChord> KeyChord::Parse(const std::string& str) {
     KeyChord chord;
     std::string remaining = str;
     
-    // Convert to lowercase for matching
-    std::string lower;
-    lower.reserve(str.size());
-    for (char c : str) {
-        lower += static_cast<char>(std::tolower(c));
+    // Trim whitespace from original
+    while (!remaining.empty() && std::isspace(remaining.front())) remaining.erase(0, 1);
+    while (!remaining.empty() && std::isspace(remaining.back())) remaining.pop_back();
+    
+    if (remaining.empty()) return std::nullopt;
+    
+    // Check for single uppercase letter (A-Z) - treat as Shift+letter
+    if (remaining.size() == 1 && remaining[0] >= 'A' && remaining[0] <= 'Z') {
+        chord.mods = Modifier::Shift;
+        chord.key = static_cast<ImGuiKey>(ImGuiKey_A + (remaining[0] - 'A'));
+        return chord;
     }
     
-    // Trim whitespace
-    while (!lower.empty() && std::isspace(lower.front())) lower.erase(0, 1);
-    while (!lower.empty() && std::isspace(lower.back())) lower.pop_back();
+    // Convert to lowercase for matching
+    std::string lower;
+    lower.reserve(remaining.size());
+    for (char c : remaining) {
+        lower += static_cast<char>(std::tolower(c));
+    }
     
     if (lower.empty()) return std::nullopt;
     

@@ -446,9 +446,8 @@ void SettingsWindow::RenderKeybindingsTab() {
         std::string searchStr = searchBuf;
         std::transform(searchStr.begin(), searchStr.end(), searchStr.begin(), ::tolower);
         
-        int indexToRemove = -1;
         for (size_t i = 0; i < bindingsFromSettings.size(); ++i) {
-            const auto& entry = bindingsFromSettings[i];
+            auto& entry = bindingsFromSettings[i];
             
             // Filter by search
             if (!searchStr.empty()) {
@@ -468,9 +467,15 @@ void SettingsWindow::RenderKeybindingsTab() {
             ImGui::TableNextColumn();
             ImGui::TextUnformatted(entry.eventId.c_str());
             
-            // Keybinding - show the original string with "Leader"
+            // Keybinding - show with "<L>" instead of "Leader" for compact display
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted(entry.keys.c_str());
+            std::string displayKeys = entry.keys;
+            size_t pos = 0;
+            while ((pos = displayKeys.find("Leader", pos)) != std::string::npos) {
+                displayKeys.replace(pos, 6, "<L>");
+                pos += 3;
+            }
+            ImGui::TextUnformatted(displayKeys.c_str());
             
             // Actions
             ImGui::TableNextColumn();
@@ -481,19 +486,15 @@ void SettingsWindow::RenderKeybindingsTab() {
                 m_IsCapturingKey = true;
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("Remove")) {
-                indexToRemove = static_cast<int>(i);
+            if (ImGui::SmallButton("Clear")) {
+                entry.keys = "";
+                settingsChanged = true;
+                rebindNeeded = true;
             }
             ImGui::PopID();
         }
         
         ImGui::EndTable();
-        
-        if (indexToRemove >= 0) {
-            bindingsFromSettings.erase(bindingsFromSettings.begin() + indexToRemove);
-            settingsChanged = true;
-            rebindNeeded = true;
-        }
     }
     
     // Buttons row
