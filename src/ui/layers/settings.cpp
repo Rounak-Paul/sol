@@ -52,6 +52,10 @@ void SettingsWindow::OnUI() {
                 RenderKeybindingsTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Behavior")) {
+                RenderBehaviorTab();
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
     }
@@ -562,6 +566,36 @@ void SettingsWindow::RenderKeybindingsTab() {
     }
     if (rebindNeeded) {
         inputSystem.SetupDefaultBindings();
+    }
+}
+
+void SettingsWindow::RenderBehaviorTab() {
+    auto& settings = EditorSettings::Get();
+    auto& behavior = settings.GetBehavior();
+    bool changed = false;
+
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Scrolling");
+    ImGui::Spacing();
+
+    float scrollOffPct = behavior.scrollOffPercent * 100.0f;
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::SliderFloat("Scroll-off margin (%)", &scrollOffPct, 0.0f, 50.0f, "%.0f%%")) {
+        behavior.scrollOffPercent = std::clamp(scrollOffPct / 100.0f, 0.0f, 0.5f);
+        changed = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Percentage of the visible editor height kept as a\n"
+                          "buffer zone around the cursor when scrolling.\n"
+                          "0%% = only scroll when cursor leaves view.\n"
+                          "10%% = scroll starts when cursor is within the\n"
+                          "bottom/top 10%% of the viewport (VSCode default).");
+    }
+
+    if (changed) {
+        settings.SaveBehavior();
     }
 }
 

@@ -36,6 +36,7 @@ void Application::OnStart() {
     // Load user settings from config
     EditorSettings::Get().Load();
     EditorSettings::Get().LoadKeybinds();
+    EditorSettings::Get().LoadBehavior();
     Logger::Info("User settings loaded");
     
     // Initialize language registry for syntax highlighting

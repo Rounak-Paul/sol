@@ -18,6 +18,7 @@ private:
     void RenderColorSection();
     void RenderStyleSection();
     void RenderKeybindingsTab();
+    void RenderBehaviorTab();
 
     int m_SelectedPreset = 0;
     int m_SelectedFont = 0;

@@ -36,6 +36,13 @@ struct KeybindSettings {
 std::string ImGuiKeyToString(ImGuiKey key);
 ImGuiKey ImGuiKeyFromString(const std::string& str);
 
+// Editor behavior settings
+struct BehaviorSettings {
+    // Percent (0.0-0.5) of viewport height kept as scroll margin around cursor.
+    // Scroll begins when cursor enters this zone at the top or bottom.
+    float scrollOffPercent = 0.10f;
+};
+
 // Editor/buffer area colors (syntax highlighting, gutter, cursor, etc.)
 struct EditorColors {
     ImVec4 background   = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
@@ -152,10 +159,13 @@ public:
     static std::filesystem::path GetConfigDir();
     static std::filesystem::path GetConfigPath();
     static std::filesystem::path GetKeybindsPath();
+    static std::filesystem::path GetBehaviorPath();
     bool Load();
     bool Save() const;
     bool LoadKeybinds();
     bool SaveKeybinds() const;
+    bool LoadBehavior();
+    bool SaveBehavior() const;
     
     // Cursor position for status bar
     size_t GetCursorLine() const { return m_CursorLine; }
@@ -168,6 +178,10 @@ public:
     // Keybinding settings
     KeybindSettings& GetKeybinds() { return m_Keybinds; }
     const KeybindSettings& GetKeybinds() const { return m_Keybinds; }
+
+    // Behavior settings
+    BehaviorSettings& GetBehavior() { return m_Behavior; }
+    const BehaviorSettings& GetBehavior() const { return m_Behavior; }
     
     // Get the shortcut string for an event (returns "" if not found)
     // Formats "Leader X" as "<L> X" for compact display
@@ -194,6 +208,7 @@ private:
     size_t m_CursorCol = 1;
     Theme m_Theme;
     KeybindSettings m_Keybinds;
+    BehaviorSettings m_Behavior;
     bool m_FontDirty = false;
     bool m_KeybindsDirty = false;
 };

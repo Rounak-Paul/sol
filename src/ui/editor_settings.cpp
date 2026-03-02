@@ -4,6 +4,7 @@
 #include <imgui.h>
 #include <fstream>
 #include <cstdlib>
+#include <algorithm>
 #include <unordered_map>
 
 namespace sol {
@@ -452,6 +453,10 @@ std::filesystem::path EditorSettings::GetKeybindsPath() {
     return GetConfigDir() / "keybinds.json";
 }
 
+std::filesystem::path EditorSettings::GetBehaviorPath() {
+    return GetConfigDir() / "behavior.json";
+}
+
 // Helper to serialize ImVec4 to JSON array
 static JsonValue Vec4ToJson(const ImVec4& v) {
     JsonArray arr;
@@ -887,6 +892,67 @@ bool EditorSettings::LoadKeybinds() {
     }
     
     Logger::Info("Keybinds loaded from " + keybindsPath.string());
+    return true;
+}
+
+bool EditorSettings::SaveBehavior() const {
+    auto configDir = GetConfigDir();
+    auto behaviorPath = GetBehaviorPath();
+
+    std::error_code ec;
+    std::filesystem::create_directories(configDir, ec);
+    if (ec) {
+        Logger::Error("Failed to create config directory: " + ec.message());
+        return false;
+    }
+
+    JsonObject root;
+    root["scrollOffPercent"] = JsonValue(static_cast<double>(m_Behavior.scrollOffPercent));
+
+    std::string jsonStr = Json::Serialize(JsonValue(root));
+
+    std::ofstream file(behaviorPath);
+    if (!file) {
+        Logger::Error("Failed to open behavior file for writing: " + behaviorPath.string());
+        return false;
+    }
+
+    file << jsonStr;
+    file.close();
+
+    Logger::Info("Behavior settings saved to " + behaviorPath.string());
+    return true;
+}
+
+bool EditorSettings::LoadBehavior() {
+    auto behaviorPath = GetBehaviorPath();
+
+    if (!std::filesystem::exists(behaviorPath)) {
+        Logger::Info("No behavior file found at " + behaviorPath.string() + ", using defaults");
+        return false;
+    }
+
+    std::ifstream file(behaviorPath);
+    if (!file) {
+        Logger::Error("Failed to open behavior file: " + behaviorPath.string());
+        return false;
+    }
+
+    std::stringstream buf;
+    buf << file.rdbuf();
+    std::string jsonStr = buf.str();
+    file.close();
+
+    JsonValue root = Json::Parse(jsonStr);
+    if (root.type != JsonType::Object) {
+        Logger::Error("Invalid behavior file format");
+        return false;
+    }
+
+    if (root.Has("scrollOffPercent"))
+        m_Behavior.scrollOffPercent = std::clamp(JsonToFloat(root["scrollOffPercent"], m_Behavior.scrollOffPercent), 0.0f, 0.5f);
+
+    Logger::Info("Behavior settings loaded from " + behaviorPath.string());
     return true;
 }
 

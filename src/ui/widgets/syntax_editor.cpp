@@ -171,7 +171,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     const size_t visibleTotalLines = lineCount > hiddenLineCount ? lineCount - hiddenLineCount : lineCount;
 
     // Auto-scroll to cursor only when cursor moved (not every frame)
-    if (m_NeedsScrollToCursor && m_IsFocused) {
+    // Use m_IsActive in addition to m_IsFocused to handle scroll after mode switches
+    if (m_NeedsScrollToCursor && (m_IsFocused || m_IsActive)) {
         m_NeedsScrollToCursor = false;
         
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
@@ -195,11 +196,15 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
         float cursorY = screenLine * lineHeight;
         float currentScrollY = ImGui::GetScrollY();
         float displayHeight = region.y;
-        
-        if (cursorY < currentScrollY) {
-            ImGui::SetScrollY(cursorY);
-        } else if (cursorY + lineHeight > currentScrollY + displayHeight) {
-            ImGui::SetScrollY(cursorY + lineHeight - displayHeight);
+
+        // Scrolloff: keep cursor away from top/bottom edge (configurable, like VSCode/Neovim)
+        float scrollOffPct = EditorSettings::Get().GetBehavior().scrollOffPercent;
+        float scrollOffY = std::floor(displayHeight * scrollOffPct / lineHeight) * lineHeight;
+
+        if (cursorY < currentScrollY + scrollOffY) {
+            ImGui::SetScrollY(cursorY - scrollOffY);
+        } else if (cursorY + lineHeight > currentScrollY + displayHeight - scrollOffY) {
+            ImGui::SetScrollY(cursorY + lineHeight - displayHeight + scrollOffY);
         }
         
         // Horizontal scrolling
