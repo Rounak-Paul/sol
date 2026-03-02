@@ -15,6 +15,8 @@
 #include "ui/input/command.h"
 #include <imgui.h>
 #include <cstring>
+#include <unistd.h>
+#include <sys/wait.h>
 
 using sol::Logger;
 using sol::EventSystem;
@@ -22,6 +24,13 @@ using sol::EventSystem;
 namespace sol {
 
 Application::Application() {
+}
+
+void Application::SetArgs(int argc, char* argv[]) {
+    if (argc >= 1 && argv[0])
+        m_ExecutablePath = argv[0];
+    if (argc >= 2 && argv[1])
+        m_InitialPath = argv[1];
 }
 
 Application::~Application() {
@@ -50,6 +59,27 @@ void Application::OnStart() {
     SetupEvents();
     SetupUILayers();
     SetupInputSystem();
+
+    // Open path passed on command line (file or folder)
+    if (!m_InitialPath.empty()) {
+        std::filesystem::path p = m_InitialPath;
+        if (std::filesystem::is_directory(p)) {
+            ResourceSystem::GetInstance().SetWorkingDirectory(p);
+            LSPManager::GetInstance().Initialize(p.string());
+            auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
+            if (explorer) explorer->Refresh();
+            Logger::Info("Opened initial folder: " + p.string());
+        } else {
+            // Also set working directory to the file's parent for LSP context
+            ResourceSystem::GetInstance().SetWorkingDirectory(p.parent_path());
+            LSPManager::GetInstance().Initialize(p.parent_path().string());
+            auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
+            if (explorer) explorer->Refresh();
+            ResourceSystem::GetInstance().OpenFile(p);
+            Logger::Info("Opened initial file: " + p.string());
+        }
+    }
+
     Logger::Info("Application initialized successfully");
 }
 
@@ -371,6 +401,39 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(redoEvent);
+
+    // Open current buffer in a new sol instance
+    auto openInNewInstanceEvent = std::make_shared<Event>("open_in_new_instance");
+    openInNewInstanceEvent->SetHandler([this](const EventData& data) {
+        if (m_ExecutablePath.empty()) {
+            Logger::Error("open_in_new_instance: executable path unknown");
+            return false;
+        }
+        auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
+        if (!activeBuffer || activeBuffer->GetResource()->IsUntitled()) {
+            Logger::Error("open_in_new_instance: no saved file in active buffer");
+            return false;
+        }
+        std::string filePath = activeBuffer->GetResource()->GetPath().string();
+        // Double-fork so the grandchild is adopted by init and we never get a zombie.
+        pid_t pid = fork();
+        if (pid == 0) {
+            pid_t pid2 = fork();
+            if (pid2 == 0) {
+                setsid();
+                execl(m_ExecutablePath.c_str(), m_ExecutablePath.c_str(), filePath.c_str(), nullptr);
+                _exit(1);
+            }
+            _exit(0);
+        }
+        if (pid > 0) {
+            int status;
+            waitpid(pid, &status, 0);
+        }
+        Logger::Info("Opened new instance for: " + filePath);
+        return true;
+    });
+    EventSystem::Register(openInNewInstanceEvent);
 }
 
 void Application::SetupUILayers() {

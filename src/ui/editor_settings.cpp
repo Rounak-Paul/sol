@@ -102,6 +102,7 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader b b", "focus_workspace", "Global"},
         {"Leader b x", "close_buffer", "Global"},
         {"Leader b n", "new_buffer", "Global"},
+        {"Leader b N", "open_in_new_instance", "Global"},
         {"Leader b w", "write_file", "Global"},
         {"Leader b W", "write_all_files", "Global"},
     };

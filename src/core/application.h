@@ -16,6 +16,9 @@ public:
     Application();
     virtual ~Application();
 
+    // Must be called before Run() if you want argv support
+    void SetArgs(int argc, char* argv[]);
+
 protected:
     void OnStart() override;
     void OnUpdate() override;
@@ -27,6 +30,9 @@ private:
     UISystem m_UISystem;
     std::shared_ptr<TerminalPanel> m_TerminalPanel;
     std::shared_ptr<Workspace> m_Workspace;
+
+    std::string m_ExecutablePath;
+    std::string m_InitialPath;
     
     // SaveAs dialog state
     bool m_ShowSaveAsDialog = false;
