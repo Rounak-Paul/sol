@@ -96,9 +96,10 @@ void Workspace::OnUI() {
         }
     }
 
-    // Floating terminal overlay (rendered after everything else)
+    // Dim overlay behind floating terminal (drawn into workspace drawlist, below floating window z-order)
     if (m_TerminalOpen && m_TerminalPosition == TerminalPosition::Floating) {
-        RenderFloatingTerminal();
+        ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+        ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(0, 0), displaySize, IM_COL32(0, 0, 0, 120));
     }
 
     // Determine focus state for tree
@@ -109,6 +110,11 @@ void Workspace::OnUI() {
     SyncActiveBuffer();
 
     ImGui::End();
+
+    // Floating terminal overlay (separate window, renders above workspace + dim)
+    if (m_TerminalOpen && m_TerminalPosition == TerminalPosition::Floating) {
+        RenderFloatingTerminal();
+    }
 }
 
 void Workspace::SyncActiveBuffer() {
@@ -428,10 +434,6 @@ void Workspace::RenderFloatingTerminal() {
     float h = displaySize.y * 0.7f;
     float x = (displaySize.x - w) * 0.5f;
     float y = (displaySize.y - h) * 0.5f;
-
-    // Dim background
-    ImGui::GetForegroundDrawList()->AddRectFilled(
-        ImVec2(0, 0), displaySize, IM_COL32(0, 0, 0, 120));
 
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
