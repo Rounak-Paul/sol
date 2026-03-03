@@ -13,6 +13,7 @@ const char* EditorInputModeToString(EditorInputMode mode) {
     switch (mode) {
         case EditorInputMode::Insert:  return "Insert";
         case EditorInputMode::Command: return "Command";
+        case EditorInputMode::Search:  return "Search";
         default:                       return "Insert";
     }
 }
@@ -115,6 +116,9 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader w n", "open_in_new_instance", "Global"},
         // Telescope
         {"Leader f f", "telescope_find_files", "Global"},
+        // Tab cycling (context-aware: buffers or terminal tabs)
+        {"Tab", "cycle_next", "Global"},
+        {"Shift+Tab", "cycle_prev", "Global"},
     };
 }
 

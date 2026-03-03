@@ -176,6 +176,15 @@ private:
     // Blink timer for cursor
     float m_CursorBlinkTimer = 0.0f;
     static constexpr float CURSOR_BLINK_RATE = 0.5f;
+
+    // In-buffer search state
+    bool m_SearchActive = false;
+    char m_SearchBuf[256] = {};
+    std::vector<size_t> m_SearchMatches;
+    int m_SearchCurrentMatch = -1;
+
+    void UpdateSearchMatches(TextBuffer& buffer);
+    void RenderSearchHighlights(TextBuffer& buffer, ImDrawList* drawList, ImVec2 textPos, float lineHeight, size_t firstLine, size_t lastLine);
 };
 
 } // namespace sol

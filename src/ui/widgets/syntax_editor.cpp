@@ -322,6 +322,11 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
 
     // Render diagnostics (squiggles)
     RenderDiagnostics(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
+    
+    // Render search highlights
+    if (m_SearchActive && !m_SearchMatches.empty()) {
+        RenderSearchHighlights(buffer, drawList, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
+    }
 
     // Render cursor only in the active window
     if (m_IsWindowActive && (m_IsFocused || m_IsActive || m_ShowCompletion) && !m_ReadOnly) {
@@ -1191,6 +1196,113 @@ bool SyntaxEditor::RenderFoldIndicators(TextBuffer& buffer, const ImVec2& pos, f
 
 bool SyntaxEditor::HandleInput(TextBuffer& buffer) {
     ImGuiIO& io = ImGui::GetIO();
+    auto& inputSystem = InputSystem::GetInstance();
+    bool isCommandMode = inputSystem.GetInputMode() == EditorInputMode::Command;
+    bool isSearchMode  = inputSystem.GetInputMode() == EditorInputMode::Search;
+
+    // Sync search state with status bar every frame
+    if (m_SearchActive) {
+        EditorSettings::Get().SetSearch(m_SearchBuf,
+            m_SearchCurrentMatch >= 0 ? m_SearchCurrentMatch + 1 : 0,
+            (int)m_SearchMatches.size());
+    } else {
+        EditorSettings::Get().ClearSearch();
+    }
+
+    // Search mode input handling
+    if (isSearchMode) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_SearchActive = false;
+            m_SearchMatches.clear();
+            m_SearchCurrentMatch = -1;
+            inputSystem.SwitchToCommandMode();
+            io.InputQueueCharacters.resize(0);
+            return true;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            // Confirm — keep match position, return to Command mode
+            m_SearchActive = false;
+            inputSystem.SwitchToCommandMode();
+            io.InputQueueCharacters.resize(0);
+            return true;
+        }
+        // Navigate matches: Down/Tab = next, Up/Shift+Tab = prev
+        bool wantNext = ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
+                        (ImGui::IsKeyPressed(ImGuiKey_Tab) && !io.KeyShift);
+        bool wantPrev = ImGui::IsKeyPressed(ImGuiKey_UpArrow) ||
+                        (ImGui::IsKeyPressed(ImGuiKey_Tab) && io.KeyShift);
+        if (wantNext && !m_SearchMatches.empty()) {
+            m_SearchCurrentMatch = (m_SearchCurrentMatch + 1) % (int)m_SearchMatches.size();
+            m_CursorPos = m_SearchMatches[m_SearchCurrentMatch];
+            m_NeedsScrollToCursor = true;
+            io.InputQueueCharacters.resize(0);
+            return true;
+        }
+        if (wantPrev && !m_SearchMatches.empty()) {
+            int sz = (int)m_SearchMatches.size();
+            m_SearchCurrentMatch = (m_SearchCurrentMatch - 1 + sz) % sz;
+            m_CursorPos = m_SearchMatches[m_SearchCurrentMatch];
+            m_NeedsScrollToCursor = true;
+            io.InputQueueCharacters.resize(0);
+            return true;
+        }
+        // Backspace: delete last char from query
+        if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
+            size_t len = strlen(m_SearchBuf);
+            if (len > 0) {
+                m_SearchBuf[len - 1] = '\0';
+                UpdateSearchMatches(buffer);
+            }
+            io.InputQueueCharacters.resize(0);
+            return true;
+        }
+        // Accumulate typed characters into search query
+        for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
+            ImWchar c = io.InputQueueCharacters[i];
+            if (c >= 32 && c < 127) {
+                size_t len = strlen(m_SearchBuf);
+                if (len + 1 < sizeof(m_SearchBuf) - 1) {
+                    m_SearchBuf[len] = (char)c;
+                    m_SearchBuf[len + 1] = '\0';
+                    UpdateSearchMatches(buffer);
+                }
+            }
+        }
+        io.InputQueueCharacters.resize(0);
+        return true;
+    }
+
+    // Activate search with '/' in command mode
+    if (isCommandMode) {
+        for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
+            if (io.InputQueueCharacters[i] == '/') {
+                m_SearchActive = true;
+                memset(m_SearchBuf, 0, sizeof(m_SearchBuf));
+                m_SearchMatches.clear();
+                m_SearchCurrentMatch = -1;
+                inputSystem.SwitchToSearchMode();
+                io.InputQueueCharacters.resize(0);
+                return true;
+            }
+        }
+    }
+
+    // After closing search, navigate with n/N in command mode
+    if (isCommandMode && !m_SearchMatches.empty()) {
+        if (ImGui::IsKeyPressed(ImGuiKey_N) && !io.KeyShift) {
+            m_SearchCurrentMatch = (m_SearchCurrentMatch + 1) % (int)m_SearchMatches.size();
+            m_CursorPos = m_SearchMatches[m_SearchCurrentMatch];
+            m_NeedsScrollToCursor = true;
+            return true;
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_N) && io.KeyShift) {
+            int sz = (int)m_SearchMatches.size();
+            m_SearchCurrentMatch = (m_SearchCurrentMatch - 1 + sz) % sz;
+            m_CursorPos = m_SearchMatches[m_SearchCurrentMatch];
+            m_NeedsScrollToCursor = true;
+            return true;
+        }
+    }
 
     // Completion navigation
     if (m_ShowCompletion) {
@@ -1577,6 +1689,75 @@ void SyntaxEditor::RenderCompletion(TextBuffer& buffer, const ImVec2& cursorScre
     ImGui::End();
     
     ImGui::PopStyleColor(3);
+}
+
+void SyntaxEditor::UpdateSearchMatches(TextBuffer& buffer) {
+    m_SearchMatches.clear();
+    m_SearchCurrentMatch = -1;
+
+    const size_t queryLen = strlen(m_SearchBuf);
+    if (queryLen == 0) return;
+
+    std::string content = buffer.Substring(0, buffer.Length());
+    std::string lowerContent = content;
+    std::string lowerQuery(m_SearchBuf, queryLen);
+    std::transform(lowerContent.begin(), lowerContent.end(), lowerContent.begin(), ::tolower);
+    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+
+    size_t pos = 0;
+    while ((pos = lowerContent.find(lowerQuery, pos)) != std::string::npos) {
+        m_SearchMatches.push_back(pos);
+        pos += queryLen;
+    }
+
+    if (!m_SearchMatches.empty()) {
+        // Jump to first match at or after cursor
+        m_SearchCurrentMatch = 0;
+        for (int i = 0; i < (int)m_SearchMatches.size(); ++i) {
+            if (m_SearchMatches[i] >= m_CursorPos) {
+                m_SearchCurrentMatch = i;
+                break;
+            }
+        }
+        m_CursorPos = m_SearchMatches[m_SearchCurrentMatch];
+        m_NeedsScrollToCursor = true;
+    }
+}
+
+void SyntaxEditor::RenderSearchHighlights(TextBuffer& buffer, ImDrawList* drawList,
+    ImVec2 textPos, float lineHeight, size_t firstLine, size_t lastLine) {
+    const size_t queryLen = strlen(m_SearchBuf);
+    if (queryLen == 0) return;
+
+    const ImU32 hlColor      = IM_COL32(255, 200, 0, 60);   // all matches
+    const ImU32 hlColorCur   = IM_COL32(255, 180, 0, 140);  // current match
+
+    for (int i = 0; i < (int)m_SearchMatches.size(); ++i) {
+        size_t matchPos = m_SearchMatches[i];
+        auto [matchLine, matchCol] = buffer.PosToLineCol(matchPos);
+        if (matchLine < firstLine || matchLine >= lastLine) continue;
+        if (IsLineHidden(matchLine)) continue;
+
+        // Calculate screen row (accounting for folds)
+        size_t screenRow = 0;
+        for (size_t l = firstLine; l < matchLine; ++l) {
+            if (!IsLineHidden(l)) screenRow++;
+        }
+
+        float x = textPos.x + matchCol * m_CharWidth;
+        float y = textPos.y + screenRow * lineHeight;
+        float w = queryLen * m_CharWidth;
+        float h = ImGui::GetTextLineHeight();
+
+        ImU32 color = (i == m_SearchCurrentMatch) ? hlColorCur : hlColor;
+        drawList->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), color);
+
+        // Current match: draw an outline
+        if (i == m_SearchCurrentMatch) {
+            drawList->AddRect(ImVec2(x, y), ImVec2(x + w, y + h),
+                              IM_COL32(255, 200, 60, 220), 0.f, 0, 1.5f);
+        }
+    }
 }
 
 } // namespace sol

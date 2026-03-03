@@ -160,7 +160,8 @@ public:
     EditorInputMode GetInputMode() const { return m_InputMode; }
     void SetInputMode(EditorInputMode mode) { m_InputMode = mode; }
     void SwitchToCommandMode() { m_InputMode = EditorInputMode::Command; ResetPendingSequence(); }
-    void SwitchToInsertMode() { m_InputMode = EditorInputMode::Insert; ResetPendingSequence(); }
+    void SwitchToInsertMode()  { m_InputMode = EditorInputMode::Insert;  ResetPendingSequence(); }
+    void SwitchToSearchMode()  { m_InputMode = EditorInputMode::Search;  ResetPendingSequence(); }
     
     // Keymap management
     void SetActiveKeymap(const std::string& name);

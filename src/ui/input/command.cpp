@@ -218,6 +218,11 @@ bool InputSystem::ProcessKey(const KeyChord& chord, InputContext context) {
     auto& settings = EditorSettings::Get();
     const auto& keybinds = settings.GetKeybinds();
     
+    // In Search mode the editor owns all input — suppress keybinding machinery entirely
+    if (m_InputMode == EditorInputMode::Search) {
+        return false;
+    }
+
     // Check for mode switching keys first (always active)
     if (chord.mods == Modifier::None) {
         if (m_InputMode == EditorInputMode::Insert && chord.key == keybinds.modeKey) {

@@ -12,6 +12,7 @@ namespace sol {
 enum class EditorInputMode {
     Insert,   // Normal text input - keybinds mostly disabled
     Command,  // Keybinds active, navigation/commands
+    Search,   // In-buffer / search - all printable input goes to search query
 };
 
 const char* EditorInputModeToString(EditorInputMode mode);
@@ -172,6 +173,19 @@ public:
     size_t GetCursorCol() const { return m_CursorCol; }
     void SetCursorPos(size_t line, size_t col) { m_CursorLine = line; m_CursorCol = col; }
 
+    // In-buffer search state (set by the focused editor, read by status bar)
+    void SetSearch(const char* query, int current, int total) {
+        m_SearchQuery = query;
+        m_SearchCurrent = current;
+        m_SearchTotal = total;
+        m_SearchActive = true;
+    }
+    void ClearSearch() { m_SearchActive = false; m_SearchQuery.clear(); }
+    bool HasActiveSearch() const { return m_SearchActive; }
+    const std::string& GetSearchQuery() const { return m_SearchQuery; }
+    int GetSearchCurrent() const { return m_SearchCurrent; }
+    int GetSearchTotal() const { return m_SearchTotal; }
+
     Theme& GetTheme() { return m_Theme; }
     const Theme& GetTheme() const { return m_Theme; }
 
@@ -206,6 +220,10 @@ private:
     
     size_t m_CursorLine = 1;
     size_t m_CursorCol = 1;
+    bool m_SearchActive = false;
+    std::string m_SearchQuery;
+    int m_SearchCurrent = 0;
+    int m_SearchTotal = 0;
     Theme m_Theme;
     KeybindSettings m_Keybinds;
     BehaviorSettings m_Behavior;

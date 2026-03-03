@@ -50,32 +50,12 @@ InputResult StandardMode::HandleKeyboard(EditorState& state) {
     
     // Editing keys - only in Insert mode
     if (isCommandMode) {
-        // Tab cycles through buffers/terminals in Command mode based on context
-        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
-            InputContext ctx = InputSystem::GetInstance().GetContext();
-            if (ctx == InputContext::Terminal) {
-                if (shift) {
-                    EventSystem::GetInstance().Execute("prev_terminal");
-                } else {
-                    EventSystem::GetInstance().Execute("next_terminal");
-                }
-            } else {
-                // Default to buffer cycling (Editor context or Global)
-                if (shift) {
-                    EventSystem::GetInstance().Execute("prev_buffer");
-                } else {
-                    EventSystem::GetInstance().Execute("next_buffer");
-                }
-            }
-            InputResult tabResult;
-            tabResult.handled = true;
-            return tabResult;
-        }
-        
-        // Block other editing keys in Command mode - only navigation is allowed
+        // Block editing keys in Command mode - only navigation is allowed
+        // (Tab cycling is handled by cycle_next/cycle_prev keybindings)
         if (ImGui::IsKeyPressed(ImGuiKey_Backspace) ||
             ImGui::IsKeyPressed(ImGuiKey_Delete) ||
-            ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+            ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+            ImGui::IsKeyPressed(ImGuiKey_Tab)) {
             // Consume the key but don't edit
             InputResult blocked;
             blocked.handled = true;

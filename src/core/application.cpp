@@ -304,7 +304,7 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(closeTerminalEvent);
 
-    // Next/prev terminal tab (fired by terminal widget on Tab in command mode)
+    // Next/prev terminal tab
     auto nextTermEvent = std::make_shared<Event>("next_terminal");
     nextTermEvent->SetHandler([this](const EventData& data) {
         if (m_Workspace) { m_Workspace->GetTerminalPanel().NextTab(); return true; }
@@ -318,12 +318,11 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(prevTermEvent);
-    
+
     // Next buffer event (cycle through buffer tabs)
     auto nextBufferEvent = std::make_shared<Event>("next_buffer");
     nextBufferEvent->SetHandler([this](const EventData& data) {
         ResourceSystem::GetInstance().NextBuffer();
-        // Show the new active buffer in the active window
         if (m_Workspace) {
             auto active = ResourceSystem::GetInstance().GetActiveBuffer();
             auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
@@ -347,6 +346,37 @@ void Application::SetupEvents() {
         return true;
     });
     EventSystem::Register(prevBufferEvent);
+
+    // cycle_next / cycle_prev — context-aware tab cycling (Tab / Shift+Tab)
+    auto cycleNextEvent = std::make_shared<Event>("cycle_next");
+    cycleNextEvent->SetHandler([this](const EventData& data) {
+        if (!m_Workspace) return false;
+        if (InputSystem::GetInstance().GetContext() == InputContext::Terminal) {
+            m_Workspace->GetTerminalPanel().NextTab();
+        } else {
+            ResourceSystem::GetInstance().NextBuffer();
+            auto active = ResourceSystem::GetInstance().GetActiveBuffer();
+            auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+            if (active && win) win->ShowBuffer(active->GetId());
+        }
+        return true;
+    });
+    EventSystem::Register(cycleNextEvent);
+
+    auto cyclePrevEvent = std::make_shared<Event>("cycle_prev");
+    cyclePrevEvent->SetHandler([this](const EventData& data) {
+        if (!m_Workspace) return false;
+        if (InputSystem::GetInstance().GetContext() == InputContext::Terminal) {
+            m_Workspace->GetTerminalPanel().PrevTab();
+        } else {
+            ResourceSystem::GetInstance().PrevBuffer();
+            auto active = ResourceSystem::GetInstance().GetActiveBuffer();
+            auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+            if (active && win) win->ShowBuffer(active->GetId());
+        }
+        return true;
+    });
+    EventSystem::Register(cyclePrevEvent);
 
     // New buffer event
     auto newBufferEvent = std::make_shared<Event>("new_buffer");

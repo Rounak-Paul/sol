@@ -63,14 +63,17 @@ void StatusBar::OnUI() {
         
         // Left side: Input mode indicator with solid background
         bool isCommandMode = inputSystem.GetInputMode() == EditorInputMode::Command;
-        const char* modeText = isCommandMode ? "COMMAND" : "INSERT";
+        bool isSearchMode  = inputSystem.GetInputMode() == EditorInputMode::Search;
+        const char* modeText = isCommandMode ? "COMMAND" : (isSearchMode ? "SEARCH" : "INSERT");
         
-        // Use fixed width for consistency (COMMAND is longer)
+        // Use fixed width for consistency (COMMAND is longest)
         float badgePadding = 8.0f * scale;
         float badgeWidth = ImGui::CalcTextSize("COMMAND").x + badgePadding * 2.0f;
         
-        // Colors: blue for command, green for insert (these stay distinct for visibility)
-        ImVec4 bgColor = isCommandMode ? ImVec4(0.2f, 0.4f, 0.7f, 1.0f) : ImVec4(0.2f, 0.5f, 0.3f, 1.0f);
+        // Blue for command, green for insert, orange for search
+        ImVec4 bgColor = isCommandMode ? ImVec4(0.2f, 0.4f, 0.7f, 1.0f)
+                       : isSearchMode  ? ImVec4(0.7f, 0.45f, 0.1f, 1.0f)
+                       :                 ImVec4(0.2f, 0.5f, 0.3f, 1.0f);
         ImVec4 textColor = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
         
         // Draw mode badge background - flush left, full height, no rounding
@@ -92,19 +95,45 @@ void StatusBar::OnUI() {
             modeText
         );
         
-        // After mode badge: Show pending key sequence if any (left-aligned)
-        if (inputSystem.HasPendingSequence()) {
+        // After mode badge: Show search query or pending key sequence (left-aligned)
+        float afterBadgeX = badgeWidth + badgePadding;
+
+        if (settings.HasActiveSearch()) {
+            // Show "/ query  N/M" (or "/ query  no matches")
+            const std::string& query = settings.GetSearchQuery();
+            int cur = settings.GetSearchCurrent();
+            int total = settings.GetSearchTotal();
+
+            char searchStr[320];
+            if (total > 0) {
+                snprintf(searchStr, sizeof(searchStr), "/ %s", query.c_str());
+            } else if (!query.empty()) {
+                snprintf(searchStr, sizeof(searchStr), "/ %s", query.c_str());
+            } else {
+                snprintf(searchStr, sizeof(searchStr), "/");
+            }
+
+            float textY = (windowHeight - ImGui::GetTextLineHeight()) * 0.5f;
+            drawList->AddText(ImVec2(barPos.x + afterBadgeX, barPos.y + textY),
+                              IM_COL32(255, 200, 100, 255), searchStr);
+
+            if (total > 0) {
+                char countStr[32];
+                snprintf(countStr, sizeof(countStr), "  %d/%d", cur, total);
+                float qw = ImGui::CalcTextSize(searchStr).x;
+                drawList->AddText(ImVec2(barPos.x + afterBadgeX + qw, barPos.y + textY),
+                                  IM_COL32(130, 180, 255, 255), countStr);
+            } else if (!query.empty()) {
+                float qw = ImGui::CalcTextSize(searchStr).x;
+                drawList->AddText(ImVec2(barPos.x + afterBadgeX + qw, barPos.y + textY),
+                                  IM_COL32(200, 80, 80, 220), "  no matches");
+            }
+        } else if (inputSystem.HasPendingSequence()) {
             std::string pendingStr = inputSystem.GetPendingSequence().ToString();
             ImVec2 pendingSize = ImGui::CalcTextSize(pendingStr.c_str());
-            float pendingX = badgeWidth + badgePadding;  // Left-aligned after badge
             float pendingY = (windowHeight - pendingSize.y) * 0.5f;
-            
-            // Draw with a highlight color (yellow/gold)
-            drawList->AddText(
-                ImVec2(barPos.x + pendingX, barPos.y + pendingY),
-                IM_COL32(255, 200, 100, 255),
-                pendingStr.c_str()
-            );
+            drawList->AddText(ImVec2(barPos.x + afterBadgeX, barPos.y + pendingY),
+                              IM_COL32(255, 200, 100, 255), pendingStr.c_str());
         }
         
         // Right side: Cursor position - vertically centered, use theme text color

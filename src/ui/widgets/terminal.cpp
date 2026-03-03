@@ -231,18 +231,10 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
 void TerminalWidget::HandleInput() {
     ImGuiIO& io = ImGui::GetIO();
     
-    // Handle Command mode - terminal behaves like any other buffer
+    // Handle Command/Search mode - terminal does not process text input
     if (InputSystem::GetInstance().GetInputMode() != EditorInputMode::Insert) {
         io.InputQueueCharacters.resize(0);  // Clear input queue
-        
-        // Tab cycles through terminal tabs in Command mode
-        if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-            if (io.KeyShift) {
-                EventSystem::GetInstance().Execute("prev_terminal");
-            } else {
-                EventSystem::GetInstance().Execute("next_terminal");
-            }
-        }
+        // Tab cycling is handled globally by cycle_next/cycle_prev keybindings
         return;
     }
     

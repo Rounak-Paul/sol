@@ -424,8 +424,10 @@ void TelescopeWidget::Render() {
     }
 
     // Navigate with keys while search bar is focused
-    bool moveUp   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true);
-    bool moveDown = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true);
+    bool moveUp   = ImGui::IsKeyPressed(ImGuiKey_UpArrow,   true) ||
+                    (ImGui::IsKeyPressed(ImGuiKey_Tab, true) && ImGui::GetIO().KeyShift);
+    bool moveDown = ImGui::IsKeyPressed(ImGuiKey_DownArrow, true) ||
+                    (ImGui::IsKeyPressed(ImGuiKey_Tab, true) && !ImGui::GetIO().KeyShift);
     bool doOpen   = ImGui::IsKeyPressed(ImGuiKey_Enter,     false);
 
     if (moveDown && !m_Results.empty())
