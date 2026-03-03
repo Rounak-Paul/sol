@@ -476,6 +476,13 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(splitHorizontalEvent);
 
+    auto closeActiveSplitEvent = std::make_shared<Event>("close_split");
+    closeActiveSplitEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->CloseActiveSplit(); return true; }
+        return false;
+    });
+    EventSystem::Register(closeActiveSplitEvent);
+
     auto focusNextWindowEvent = std::make_shared<Event>("focus_next_window");
     focusNextWindowEvent->SetHandler([this](const EventData& data) {
         if (m_Workspace) { m_Workspace->FocusNextWindow(); return true; }

@@ -255,6 +255,10 @@ Window* Workspace::SplitHorizontal() {
     return m_WindowTree.SplitActive(SplitDir::Horizontal);
 }
 
+bool Workspace::CloseActiveSplit() {
+    return m_WindowTree.CloseActive();
+}
+
 void Workspace::FocusNextWindow() {
     m_WindowTree.FocusNext();
 }
