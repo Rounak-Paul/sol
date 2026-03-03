@@ -410,18 +410,22 @@ void Application::SetupEvents() {
             return false;
         }
         auto activeBuffer = ResourceSystem::GetInstance().GetActiveBuffer();
-        if (!activeBuffer || activeBuffer->GetResource()->IsUntitled()) {
-            Logger::Error("open_in_new_instance: no saved file in active buffer");
-            return false;
+        const char* fileArg = nullptr;
+        std::string filePath;
+        if (activeBuffer && !activeBuffer->GetResource()->IsUntitled()) {
+            filePath = activeBuffer->GetResource()->GetPath().string();
+            fileArg = filePath.c_str();
         }
-        std::string filePath = activeBuffer->GetResource()->GetPath().string();
         // Double-fork so the grandchild is adopted by init and we never get a zombie.
         pid_t pid = fork();
         if (pid == 0) {
             pid_t pid2 = fork();
             if (pid2 == 0) {
                 setsid();
-                execl(m_ExecutablePath.c_str(), m_ExecutablePath.c_str(), filePath.c_str(), nullptr);
+                if (fileArg)
+                    execl(m_ExecutablePath.c_str(), m_ExecutablePath.c_str(), fileArg, nullptr);
+                else
+                    execl(m_ExecutablePath.c_str(), m_ExecutablePath.c_str(), nullptr);
                 _exit(1);
             }
             _exit(0);
@@ -430,7 +434,8 @@ void Application::SetupEvents() {
             int status;
             waitpid(pid, &status, 0);
         }
-        Logger::Info("Opened new instance for: " + filePath);
+        Logger::Info(fileArg ? std::string("Opened new instance for: ") + filePath
+                              : "Opened new empty instance");
         return true;
     });
     EventSystem::Register(openInNewInstanceEvent);
