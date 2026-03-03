@@ -89,3 +89,5 @@ target_link_libraries(sol PRIVATE
 if(APPLE)
     target_link_libraries(sol PRIVATE "-framework UniformTypeIdentifiers")
 endif()
+
+install(TARGETS sol RUNTIME DESTINATION bin)
