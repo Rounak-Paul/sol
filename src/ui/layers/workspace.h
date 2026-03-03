@@ -4,6 +4,7 @@
 #include "ui/window_tree.h"
 #include "ui/widgets/explorer.h"
 #include "ui/widgets/terminal_panel.h"
+#include "ui/widgets/telescope.h"
 #include <cstdint>
 #include <vector>
 #include <mutex>
@@ -49,10 +50,16 @@ public:
     bool IsExplorerOpen() const { return m_ExplorerOpen; }
     ExplorerWidget& GetExplorer() { return m_Explorer; }
 
+    // Telescope file finder
+    void OpenTelescope();
+    void CloseTelescope();
+    bool IsTelescopeOpen() const { return m_Telescope.IsOpen(); }
+
 private:
     void RenderTabBar();
     void RenderMainArea(const ImVec2& pos, const ImVec2& size);
     void RenderFloatingTerminal();
+    void RenderTelescope();
     void ProcessPendingCloses();
     void ProcessPendingDiagnostics();
     void SyncActiveBuffer();
@@ -87,6 +94,9 @@ private:
 
     bool m_IsFocused = false;
     bool m_WantsFocus = false;
+
+    // Telescope
+    TelescopeWidget m_Telescope;
 };
 
 } // namespace sol

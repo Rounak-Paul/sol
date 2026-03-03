@@ -505,6 +505,17 @@ void Application::SetupEvents() {
                 win->ShowBuffer(buffer->GetId());
         }
     });
+
+    // Telescope file finder
+    auto telescopeFindEvent = std::make_shared<Event>("telescope_find_files");
+    telescopeFindEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) {
+            m_Workspace->OpenTelescope();
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(telescopeFindEvent);
 }
 
 void Application::SetupUILayers() {

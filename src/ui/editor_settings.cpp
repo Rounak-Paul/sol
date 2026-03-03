@@ -113,6 +113,8 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader w W", "focus_prev_window", "Global"},
         {"Leader w x", "close_split", "Global"},
         {"Leader w n", "open_in_new_instance", "Global"},
+        // Telescope
+        {"Leader f f", "telescope_find_files", "Global"},
     };
 }
 

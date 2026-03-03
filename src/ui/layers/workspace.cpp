@@ -5,11 +5,20 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <filesystem>
 
 namespace sol {
 
 Workspace::Workspace(const Id& id)
     : UILayer(id) {
+    m_Telescope.SetOpenCallback([this](const std::filesystem::path& path) {
+        auto buffer = ResourceSystem::GetInstance().OpenFile(path);
+        if (buffer) {
+            auto* win = m_WindowTree.GetActiveWindow();
+            if (win) win->ShowBuffer(buffer->GetId());
+            Focus();
+        }
+    });
 }
 
 void Workspace::OnUI() {
@@ -115,6 +124,9 @@ void Workspace::OnUI() {
     if (m_TerminalOpen && m_TerminalPosition == TerminalPosition::Floating) {
         RenderFloatingTerminal();
     }
+
+    // Telescope overlay (renders above everything)
+    m_Telescope.Render();
 }
 
 void Workspace::SyncActiveBuffer() {
@@ -467,6 +479,30 @@ void Workspace::RenderFloatingTerminal() {
 
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor(2);
+}
+
+// --- Telescope ---
+
+void Workspace::OpenTelescope() {
+    std::filesystem::path rootDir = ResourceSystem::GetInstance().GetWorkingDirectory();
+    if (rootDir.empty() || !std::filesystem::is_directory(rootDir)) {
+        // Fall back to the directory of the currently open file
+        auto* win = m_WindowTree.GetActiveWindow();
+        if (win && win->GetContentType() == WindowContent::Buffer) {
+            auto buf = ResourceSystem::GetInstance().GetBuffer(win->GetBufferId());
+            if (buf && !buf->GetResource()->IsUntitled()) {
+                rootDir = buf->GetResource()->GetPath().parent_path();
+            }
+        }
+    }
+    if (rootDir.empty()) {
+        rootDir = std::filesystem::current_path();
+    }
+    m_Telescope.Open(rootDir);
+}
+
+void Workspace::CloseTelescope() {
+    m_Telescope.Close();
 }
 
 // --- Undo/Redo ---
