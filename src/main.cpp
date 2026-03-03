@@ -14,6 +14,7 @@ int main(int argc, char* argv[]) {
     config.width = 1280;
     config.height = 720;
     config.vsync = true;
+    config.enableKeyboardNav = false;   // Sol handles all keyboard input itself
     config.enableIdleThrottling = true;
     config.idleFrameRate = 30.0f;
     app.Run(config);
