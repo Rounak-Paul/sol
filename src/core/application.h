@@ -16,7 +16,6 @@ public:
     Application();
     virtual ~Application();
 
-    // Must be called before Run() if you want argv support
     void SetArgs(int argc, char* argv[]);
 
 protected:
