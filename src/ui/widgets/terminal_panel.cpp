@@ -45,9 +45,13 @@ void TerminalPanel::Render(const ImVec2& size) {
 
             bool open = true;
             ImGuiTabItemFlags itemFlags = 0;
+            if (m_TabChanged && i == m_ActiveTab)
+                itemFlags |= ImGuiTabItemFlags_SetSelected;
 
             if (ImGui::BeginTabItem(label.c_str(), &open, itemFlags)) {
-                m_ActiveTab = i;
+                // Only let ImGui drive tab selection when no programmatic change pending
+                if (!m_TabChanged)
+                    m_ActiveTab = i;
                 ImGui::EndTabItem();
             }
 
@@ -61,6 +65,7 @@ void TerminalPanel::Render(const ImVec2& size) {
         }
         ImGui::EndTabBar();
     }
+    m_TabChanged = false;
 
     // Render active terminal
     if (m_ActiveTab >= 0 && m_ActiveTab < (int)m_Tabs.size()) {
@@ -103,11 +108,13 @@ void TerminalPanel::CloseActiveTab() {
 void TerminalPanel::NextTab() {
     if (m_Tabs.size() <= 1) return;
     m_ActiveTab = (m_ActiveTab + 1) % (int)m_Tabs.size();
+    m_TabChanged = true;
 }
 
 void TerminalPanel::PrevTab() {
     if (m_Tabs.size() <= 1) return;
     m_ActiveTab = (m_ActiveTab == 0) ? (int)m_Tabs.size() - 1 : m_ActiveTab - 1;
+    m_TabChanged = true;
 }
 
 void TerminalPanel::ProcessAllInputs() {

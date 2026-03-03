@@ -48,6 +48,7 @@ private:
     bool m_IsFocused = false;
     bool m_IsWindowActive = false;
     bool m_WantsFocus = false;
+    bool m_TabChanged = false;  // Signal ImGui to select new active tab
 };
 
 } // namespace sol

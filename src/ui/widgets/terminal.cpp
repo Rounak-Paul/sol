@@ -235,8 +235,8 @@ void TerminalWidget::HandleInput() {
     if (InputSystem::GetInstance().GetInputMode() != EditorInputMode::Insert) {
         io.InputQueueCharacters.resize(0);  // Clear input queue
         
-        // Tab cycles through terminals in Command mode
-        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+        // Tab cycles through terminal tabs in Command mode
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
             if (io.KeyShift) {
                 EventSystem::GetInstance().Execute("prev_terminal");
             } else {
@@ -244,6 +244,19 @@ void TerminalWidget::HandleInput() {
             }
         }
         return;
+    }
+    
+    // Insert mode: intercept Tab early so ImGui nav doesn't steal it
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, true)) {
+        m_Emulator->Write("\t");
+        m_CursorBlinkTime = 0.0f;
+        m_CursorVisible = true;
+        m_ScrollOffset = 0;
+        // Clear Tab from ImGui's key state to prevent nav focus changes
+        ImGuiKeyData* keyData = ImGui::GetKeyData(ImGuiKey_Tab);
+        keyData->Down = false;
+        keyData->DownDuration = -1.0f;
+        keyData->DownDurationPrev = -1.0f;
     }
     
     // Handle Ctrl key combinations FIRST (terminal signals)
@@ -362,7 +375,7 @@ void TerminalWidget::HandleInput() {
     // Control keys
     checkKey(ImGuiKey_Backspace, 259);
     checkKey(ImGuiKey_Enter, 257);
-    checkKey(ImGuiKey_Tab, 258);
+    // Tab is handled early in insert mode, skip here
     checkKey(ImGuiKey_Escape, 256);
     
     // Function keys
