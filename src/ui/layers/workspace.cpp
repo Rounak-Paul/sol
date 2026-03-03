@@ -246,6 +246,14 @@ Window* Workspace::SplitHorizontal() {
     return m_WindowTree.SplitActive(SplitDir::Horizontal);
 }
 
+void Workspace::FocusNextWindow() {
+    m_WindowTree.FocusNext();
+}
+
+void Workspace::FocusPrevWindow() {
+    m_WindowTree.FocusPrev();
+}
+
 // --- Explorer sidebar ---
 
 void Workspace::ToggleExplorer() {

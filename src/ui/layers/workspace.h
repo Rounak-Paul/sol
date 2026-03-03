@@ -30,6 +30,8 @@ public:
     WindowTree& GetWindowTree() { return m_WindowTree; }
     Window* SplitVertical();
     Window* SplitHorizontal();
+    void FocusNextWindow();
+    void FocusPrevWindow();
 
     bool IsExplorerFocused() const { return m_ExplorerOpen && m_Explorer.IsFocused(); }
 

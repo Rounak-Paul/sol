@@ -441,7 +441,19 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(splitHorizontalEvent);
 
+    auto focusNextWindowEvent = std::make_shared<Event>("focus_next_window");
+    focusNextWindowEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->FocusNextWindow(); return true; }
+        return false;
+    });
+    EventSystem::Register(focusNextWindowEvent);
 
+    auto focusPrevWindowEvent = std::make_shared<Event>("focus_prev_window");
+    focusPrevWindowEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->FocusPrevWindow(); return true; }
+        return false;
+    });
+    EventSystem::Register(focusPrevWindowEvent);
 
     // Show buffer in active window when a file is opened
     ResourceSystem::GetInstance().SetOnBufferOpened([this](std::shared_ptr<Buffer> buffer) {

@@ -107,6 +107,8 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader b W", "write_all_files", "Global"},
         {"Leader w v", "split_vertical", "Global"},
         {"Leader w s", "split_horizontal", "Global"},
+        {"Leader w w", "focus_next_window", "Global"},
+        {"Leader w W", "focus_prev_window", "Global"},
         {"Leader w n", "open_in_new_instance", "Global"},
     };
 }
