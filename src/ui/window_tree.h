@@ -1,7 +1,6 @@
 #pragma once
 
 #include "widgets/syntax_editor.h"
-#include "widgets/terminal.h"
 #include <imgui.h>
 #include <memory>
 #include <vector>
@@ -10,34 +9,26 @@ namespace sol {
 
 enum class WindowContent {
     Buffer,
-    Terminal,
     Empty
 };
 
-// A window is a viewport that displays a buffer or terminal
+// A window is a viewport that displays a buffer
 class Window {
 public:
     explicit Window(uint32_t id = 0);
 
     void ShowBuffer(size_t bufferId);
-    void ShowTerminal(const TerminalConfig& config = {});
     void Clear();
 
     uint32_t GetId() const { return m_Id; }
     WindowContent GetContentType() const { return m_ContentType; }
     size_t GetBufferId() const { return m_BufferId; }
-    bool IsTerminal() const { return m_ContentType == WindowContent::Terminal; }
-    bool IsTerminalAlive() const;
 
     // Render content into current ImGui context. Returns true if buffer was modified.
     bool Render(const char* label, const ImVec2& size, bool isActiveWindow);
 
-    // Must be called every frame for terminals (even when not visible)
-    void ProcessTerminalInput();
-
     void Focus();
     SyntaxEditor* GetEditor() { return m_Editor.get(); }
-    TerminalWidget* GetTerminal() { return m_Terminal.get(); }
 
 private:
     static uint32_t GenerateId();
@@ -47,7 +38,6 @@ private:
     size_t m_BufferId = 0;
 
     std::unique_ptr<SyntaxEditor> m_Editor;
-    std::unique_ptr<TerminalWidget> m_Terminal;
 
     bool m_WantsFocus = false;
 };
@@ -96,10 +86,6 @@ public:
     bool IsSingleWindow() const;
 
     Window* FindWindowWithBuffer(size_t bufferId);
-    Window* FindTerminalWindow();
-
-    // Call every frame to read PTY data for all terminals
-    void ProcessAllTerminalInputs();
 
     // Set whether the tree itself (vs explorer/sidebar) has focus
     void SetTreeFocused(bool focused) { m_TreeFocused = focused; }

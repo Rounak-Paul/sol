@@ -16,6 +16,9 @@ void Workspace::OnUI() {
     ProcessPendingCloses();
     ProcessPendingDiagnostics();
 
+    // Process terminal PTY reads every frame regardless of visibility
+    m_TerminalPanel.ProcessAllInputs();
+
     m_DockspaceID = ImGui::GetID(UISystem::MainDockSpaceId);
 
     ImGuiWindowClass windowClass;
@@ -42,14 +45,15 @@ void Workspace::OnUI() {
 
     RenderTabBar();
 
-    // Layout: [Explorer | WindowTree]
+    // Layout: [Explorer | MainArea]
+    // MainArea = [WindowTree + optional Terminal (Bottom/Right)]
     ImVec2 cursorPos = ImGui::GetCursorScreenPos();
     ImVec2 avail = ImGui::GetContentRegionAvail();
 
     if (avail.x > 0 && avail.y > 0) {
         if (m_ExplorerOpen) {
             float explorerW = std::min(m_ExplorerWidth, avail.x - DIVIDER_SIZE - 100.0f);
-            float treeW = avail.x - explorerW - DIVIDER_SIZE;
+            float mainW = avail.x - explorerW - DIVIDER_SIZE;
 
             // Explorer panel
             ImGui::SetCursorScreenPos(cursorPos);
@@ -57,7 +61,6 @@ void Workspace::OnUI() {
             ImGui::BeginChild("##explorer_panel", ImVec2(explorerW, avail.y), false,
                               ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-            // Apply pending focus to the explorer panel child window
             if (m_ExplorerWantsFocus) {
                 ImGui::SetWindowFocus();
                 m_ExplorerWantsFocus = false;
@@ -85,18 +88,24 @@ void Workspace::OnUI() {
                 divPos, ImVec2(divPos.x + DIVIDER_SIZE, divPos.y + avail.y),
                 IM_COL32(35, 35, 38, 255));
 
-            // Window tree (right side) — not focused when explorer has focus
-            bool explorerHasFocus = m_Explorer.IsFocused();
-            m_WindowTree.SetTreeFocused(!explorerHasFocus);
-            ImVec2 treePos(cursorPos.x + explorerW + DIVIDER_SIZE, cursorPos.y);
-            m_WindowTree.Render(treePos, ImVec2(treeW, avail.y));
+            // Main area (right of explorer)
+            ImVec2 mainPos(cursorPos.x + explorerW + DIVIDER_SIZE, cursorPos.y);
+            RenderMainArea(mainPos, ImVec2(mainW, avail.y));
         } else {
-            m_WindowTree.SetTreeFocused(true);
-            m_WindowTree.Render(cursorPos, avail);
+            RenderMainArea(cursorPos, avail);
         }
     }
 
-    // Keep ResourceSystem active buffer in sync with visible active window
+    // Floating terminal overlay (rendered after everything else)
+    if (m_TerminalOpen && m_TerminalPosition == TerminalPosition::Floating) {
+        RenderFloatingTerminal();
+    }
+
+    // Determine focus state for tree
+    bool sidebarHasFocus = (m_ExplorerOpen && m_Explorer.IsFocused()) ||
+                           (m_TerminalOpen && m_TerminalPanel.IsFocused());
+    m_WindowTree.SetTreeFocused(!sidebarHasFocus);
+
     SyncActiveBuffer();
 
     ImGui::End();
@@ -273,59 +282,185 @@ void Workspace::ToggleExplorer() {
     }
 }
 
-// --- Terminal management ---
+// --- Terminal panel management ---
 
-void Workspace::ToggleTerminal() {
-    auto* termWin = m_WindowTree.FindTerminalWindow();
-    if (termWin) {
-        if (m_WindowTree.GetActiveWindow() == termWin) {
-            // Focused on terminal → close it
-            if (!m_WindowTree.IsSingleWindow()) {
-                m_WindowTree.SetActiveWindow(termWin);
-                m_WindowTree.CloseActive();
-                auto* win = m_WindowTree.GetActiveWindow();
-                if (win && win->GetContentType() == WindowContent::Empty) {
-                    auto active = ResourceSystem::GetInstance().GetActiveBuffer();
-                    if (active) win->ShowBuffer(active->GetId());
-                }
-            }
+void Workspace::ToggleTerminal(TerminalPosition pos) {
+    if (m_TerminalOpen) {
+        if (m_TerminalPosition == pos && m_TerminalPanel.IsFocused()) {
+            // Same position and focused → close
+            m_TerminalOpen = false;
+            auto* win = m_WindowTree.GetActiveWindow();
+            if (win) win->Focus();
+        } else if (m_TerminalPosition == pos) {
+            // Same position but not focused → focus it
+            m_TerminalWantsFocus = true;
         } else {
-            // Terminal exists but not focused → focus it
-            m_WindowTree.SetActiveWindow(termWin);
+            // Different position → switch position and focus
+            m_TerminalPosition = pos;
+            m_TerminalWantsFocus = true;
         }
     } else {
-        // No terminal → create one via horizontal split at bottom
-        auto* newWin = m_WindowTree.SplitActive(SplitDir::Horizontal, 0.7f);
-        if (newWin) {
-            TerminalConfig cfg;
-            auto& rs = ResourceSystem::GetInstance();
-            if (rs.HasWorkingDirectory())
-                cfg.workingDir = rs.GetWorkingDirectory().string();
-            newWin->ShowTerminal(cfg);
-        }
+        m_TerminalOpen = true;
+        m_TerminalPosition = pos;
+        m_TerminalWantsFocus = true;
     }
 }
 
 void Workspace::NewTerminal() {
-    auto* newWin = m_WindowTree.SplitActive(SplitDir::Horizontal, 0.7f);
-    if (newWin) {
-        TerminalConfig cfg;
-        auto& rs = ResourceSystem::GetInstance();
-        if (rs.HasWorkingDirectory())
-            cfg.workingDir = rs.GetWorkingDirectory().string();
-        newWin->ShowTerminal(cfg);
+    if (!m_TerminalOpen) {
+        m_TerminalOpen = true;
+        m_TerminalPosition = TerminalPosition::Bottom;
     }
+    m_TerminalPanel.NewTab();
+    m_TerminalWantsFocus = true;
 }
 
 void Workspace::CloseTerminal() {
-    auto* activeWin = m_WindowTree.GetActiveWindow();
-    if (activeWin && activeWin->IsTerminal()) {
-        if (!m_WindowTree.IsSingleWindow()) {
-            m_WindowTree.CloseActive();
-        } else {
-            activeWin->Clear();
-        }
+    if (!m_TerminalOpen) return;
+    m_TerminalPanel.CloseActiveTab();
+    if (!m_TerminalPanel.HasTabs()) {
+        m_TerminalOpen = false;
+        auto* win = m_WindowTree.GetActiveWindow();
+        if (win) win->Focus();
     }
+}
+
+void Workspace::RenderMainArea(const ImVec2& pos, const ImVec2& size) {
+    bool termBottom = m_TerminalOpen && m_TerminalPosition == TerminalPosition::Bottom;
+    bool termRight = m_TerminalOpen && m_TerminalPosition == TerminalPosition::Right;
+    // Floating is rendered as overlay in OnUI, not here
+
+    if (termBottom) {
+        float maxH = size.y * TERMINAL_MAX_RATIO;
+        float termH = std::clamp(m_TerminalHeight, TERMINAL_MIN_SIZE, maxH);
+        float treeH = size.y - termH - DIVIDER_SIZE;
+
+        // Window tree (top)
+        m_WindowTree.Render(pos, ImVec2(size.x, treeH));
+
+        // Divider (horizontal)
+        ImVec2 divPos(pos.x, pos.y + treeH);
+        ImGui::SetCursorScreenPos(divPos);
+        ImGui::InvisibleButton("##term_div_h", ImVec2(size.x, DIVIDER_SIZE));
+        if (ImGui::IsItemActive()) {
+            m_TerminalHeight = std::clamp(termH - ImGui::GetIO().MouseDelta.y,
+                                          TERMINAL_MIN_SIZE, maxH);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        } else if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            divPos, ImVec2(divPos.x + size.x, divPos.y + DIVIDER_SIZE),
+            IM_COL32(35, 35, 38, 255));
+
+        // Terminal panel (bottom)
+        ImVec2 termPos(pos.x, pos.y + treeH + DIVIDER_SIZE);
+        ImGui::SetCursorScreenPos(termPos);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::BeginChild("##terminal_panel", ImVec2(size.x, termH), false,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+        if (m_TerminalWantsFocus) {
+            ImGui::SetWindowFocus();
+            m_TerminalWantsFocus = false;
+        }
+
+        m_TerminalPanel.SetWindowActive(ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows));
+        m_TerminalPanel.Render(ImVec2(size.x, termH));
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+    } else if (termRight) {
+        float maxW = size.x * TERMINAL_MAX_RATIO;
+        float termW = std::clamp(m_TerminalWidth, TERMINAL_MIN_SIZE, maxW);
+        float treeW = size.x - termW - DIVIDER_SIZE;
+
+        // Window tree (left)
+        m_WindowTree.Render(pos, ImVec2(treeW, size.y));
+
+        // Divider (vertical)
+        ImVec2 divPos(pos.x + treeW, pos.y);
+        ImGui::SetCursorScreenPos(divPos);
+        ImGui::InvisibleButton("##term_div_v", ImVec2(DIVIDER_SIZE, size.y));
+        if (ImGui::IsItemActive()) {
+            m_TerminalWidth = std::clamp(termW - ImGui::GetIO().MouseDelta.x,
+                                         TERMINAL_MIN_SIZE, maxW);
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        } else if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        ImGui::GetWindowDrawList()->AddRectFilled(
+            divPos, ImVec2(divPos.x + DIVIDER_SIZE, divPos.y + size.y),
+            IM_COL32(35, 35, 38, 255));
+
+        // Terminal panel (right)
+        ImVec2 termPos(pos.x + treeW + DIVIDER_SIZE, pos.y);
+        ImGui::SetCursorScreenPos(termPos);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImGui::BeginChild("##terminal_panel", ImVec2(termW, size.y), false,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+        if (m_TerminalWantsFocus) {
+            ImGui::SetWindowFocus();
+            m_TerminalWantsFocus = false;
+        }
+
+        m_TerminalPanel.SetWindowActive(ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows));
+        m_TerminalPanel.Render(ImVec2(termW, size.y));
+
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+    } else {
+        // No docked terminal, just render the tree
+        m_WindowTree.Render(pos, size);
+    }
+}
+
+void Workspace::RenderFloatingTerminal() {
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    float w = displaySize.x * 0.7f;
+    float h = displaySize.y * 0.7f;
+    float x = (displaySize.x - w) * 0.5f;
+    float y = (displaySize.y - h) * 0.5f;
+
+    // Dim background
+    ImGui::GetForegroundDrawList()->AddRectFilled(
+        ImVec2(0, 0), displaySize, IM_COL32(0, 0, 0, 120));
+
+    ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
+
+    ImGuiWindowFlags floatFlags = ImGuiWindowFlags_NoTitleBar |
+                                  ImGuiWindowFlags_NoResize |
+                                  ImGuiWindowFlags_NoMove |
+                                  ImGuiWindowFlags_NoCollapse |
+                                  ImGuiWindowFlags_NoDocking |
+                                  ImGuiWindowFlags_NoScrollbar |
+                                  ImGuiWindowFlags_NoScrollWithMouse |
+                                  ImGuiWindowFlags_NoNavInputs;
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.35f, 0.55f, 0.9f, 0.7f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+
+    ImGui::Begin("##floating_terminal", nullptr, floatFlags);
+
+    if (m_TerminalWantsFocus) {
+        ImGui::SetWindowFocus();
+        m_TerminalWantsFocus = false;
+    }
+
+    m_TerminalPanel.SetWindowActive(ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows));
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    m_TerminalPanel.Render(avail);
+
+    ImGui::End();
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 }
 
 // --- Undo/Redo ---

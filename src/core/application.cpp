@@ -197,7 +197,7 @@ void Application::SetupEvents() {
     auto nextBufOrFocusEvent = std::make_shared<Event>("next_buffer_or_focus");
     nextBufOrFocusEvent->SetHandler([this](const EventData& data) {
         if (!m_Workspace) return false;
-        if (m_Workspace->IsExplorerFocused()) {
+        if (m_Workspace->IsExplorerFocused() || m_Workspace->IsTerminalFocused()) {
             m_Workspace->Focus();
             return true;
         }
@@ -205,7 +205,7 @@ void Application::SetupEvents() {
         ResourceSystem::GetInstance().NextBuffer();
         auto active = ResourceSystem::GetInstance().GetActiveBuffer();
         auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
-        if (active && win && win->GetContentType() != WindowContent::Terminal)
+        if (active && win)
             win->ShowBuffer(active->GetId());
         return true;
     });
@@ -215,14 +215,14 @@ void Application::SetupEvents() {
     auto prevBufOrFocusEvent = std::make_shared<Event>("prev_buffer_or_focus");
     prevBufOrFocusEvent->SetHandler([this](const EventData& data) {
         if (!m_Workspace) return false;
-        if (m_Workspace->IsExplorerFocused()) {
+        if (m_Workspace->IsExplorerFocused() || m_Workspace->IsTerminalFocused()) {
             m_Workspace->Focus();
             return true;
         }
         ResourceSystem::GetInstance().PrevBuffer();
         auto active = ResourceSystem::GetInstance().GetActiveBuffer();
         auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
-        if (active && win && win->GetContentType() != WindowContent::Terminal)
+        if (active && win)
             win->ShowBuffer(active->GetId());
         return true;
     });
@@ -251,18 +251,38 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(toggleExplorerEvent);
 
-    // Terminal toggle event - opens terminal as a split in the workspace
+    // Terminal toggle events
     auto toggleTerminalEvent = std::make_shared<Event>("toggle_terminal");
     toggleTerminalEvent->SetHandler([this](const EventData& data) {
         if (m_Workspace) {
-            m_Workspace->ToggleTerminal();
+            m_Workspace->ToggleTerminal(TerminalPosition::Bottom);
             return true;
         }
         return false;
     });
     EventSystem::Register(toggleTerminalEvent);
 
-    // New terminal event
+    auto toggleTerminalRightEvent = std::make_shared<Event>("toggle_terminal_right");
+    toggleTerminalRightEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) {
+            m_Workspace->ToggleTerminal(TerminalPosition::Right);
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(toggleTerminalRightEvent);
+
+    auto toggleTerminalFloatEvent = std::make_shared<Event>("toggle_terminal_float");
+    toggleTerminalFloatEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) {
+            m_Workspace->ToggleTerminal(TerminalPosition::Floating);
+            return true;
+        }
+        return false;
+    });
+    EventSystem::Register(toggleTerminalFloatEvent);
+
+    // New terminal tab
     auto newTerminalEvent = std::make_shared<Event>("new_terminal");
     newTerminalEvent->SetHandler([this](const EventData& data) {
         if (m_Workspace) {
@@ -273,7 +293,7 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(newTerminalEvent);
 
-    // Close terminal event
+    // Close active terminal tab
     auto closeTerminalEvent = std::make_shared<Event>("close_terminal");
     closeTerminalEvent->SetHandler([this](const EventData& data) {
         if (m_Workspace) {
@@ -283,6 +303,21 @@ void Application::SetupEvents() {
         return false;
     });
     EventSystem::Register(closeTerminalEvent);
+
+    // Next/prev terminal tab (fired by terminal widget on Tab in command mode)
+    auto nextTermEvent = std::make_shared<Event>("next_terminal");
+    nextTermEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->GetTerminalPanel().NextTab(); return true; }
+        return false;
+    });
+    EventSystem::Register(nextTermEvent);
+
+    auto prevTermEvent = std::make_shared<Event>("prev_terminal");
+    prevTermEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->GetTerminalPanel().PrevTab(); return true; }
+        return false;
+    });
+    EventSystem::Register(prevTermEvent);
     
     // Next buffer event (cycle through buffer tabs)
     auto nextBufferEvent = std::make_shared<Event>("next_buffer");
@@ -292,7 +327,7 @@ void Application::SetupEvents() {
         if (m_Workspace) {
             auto active = ResourceSystem::GetInstance().GetActiveBuffer();
             auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
-            if (active && win && win->GetContentType() != WindowContent::Terminal)
+            if (active && win)
                 win->ShowBuffer(active->GetId());
         }
         return true;
@@ -306,7 +341,7 @@ void Application::SetupEvents() {
         if (m_Workspace) {
             auto active = ResourceSystem::GetInstance().GetActiveBuffer();
             auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
-            if (active && win && win->GetContentType() != WindowContent::Terminal)
+            if (active && win)
                 win->ShowBuffer(active->GetId());
         }
         return true;
@@ -459,7 +494,7 @@ void Application::SetupEvents() {
     ResourceSystem::GetInstance().SetOnBufferOpened([this](std::shared_ptr<Buffer> buffer) {
         if (m_Workspace && buffer) {
             auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
-            if (win && win->GetContentType() != WindowContent::Terminal)
+            if (win)
                 win->ShowBuffer(buffer->GetId());
         }
     });

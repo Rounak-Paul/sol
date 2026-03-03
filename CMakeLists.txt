@@ -45,6 +45,7 @@ set(SRCS
     src/ui/window_tree.cpp
     src/ui/widgets/syntax_editor.cpp
     src/ui/widgets/terminal.cpp
+    src/ui/widgets/terminal_panel.cpp
     src/ui/widgets/explorer.cpp
     src/ui/editor_settings.cpp
     src/core/lsp/lsp_client.cpp

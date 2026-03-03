@@ -20,7 +20,6 @@ void Window::ShowBuffer(size_t bufferId) {
     if (m_ContentType == WindowContent::Buffer && m_BufferId == bufferId)
         return;
 
-    m_Terminal.reset();
     m_ContentType = WindowContent::Buffer;
     m_BufferId = bufferId;
 
@@ -28,30 +27,12 @@ void Window::ShowBuffer(size_t bufferId) {
         m_Editor = std::make_unique<SyntaxEditor>();
 }
 
-void Window::ShowTerminal(const TerminalConfig& config) {
-    m_Editor.reset();
-    m_ContentType = WindowContent::Terminal;
-    m_BufferId = 0;
-
-    m_Terminal = std::make_unique<TerminalWidget>();
-    m_Terminal->Spawn(config);
-}
-
 void Window::Clear() {
     m_Editor.reset();
-    m_Terminal.reset();
     m_ContentType = WindowContent::Empty;
     m_BufferId = 0;
 }
 
-bool Window::IsTerminalAlive() const {
-    return m_Terminal && m_Terminal->IsAlive();
-}
-
-void Window::ProcessTerminalInput() {
-    if (m_Terminal)
-        m_Terminal->ProcessInput();
-}
 
 bool Window::Render(const char* label, const ImVec2& size, bool isActiveWindow) {
     bool modified = false;
@@ -84,18 +65,6 @@ bool Window::Render(const char* label, const ImVec2& size, bool isActiveWindow) 
             }
             break;
         }
-        case WindowContent::Terminal: {
-            if (m_Terminal) {
-                m_Terminal->SetWindowActive(isActiveWindow);
-                if (m_WantsFocus) {
-                    m_Terminal->SetFocused(true);
-                    m_Terminal->RequestFocusCapture();
-                    m_WantsFocus = false;
-                }
-                m_Terminal->Render(label, size);
-            }
-            break;
-        }
         case WindowContent::Empty: {
             ImVec2 region = ImGui::GetContentRegionAvail();
             ImGui::SetCursorPos(ImVec2(region.x * 0.5f - 40, region.y * 0.5f));
@@ -122,7 +91,6 @@ WindowTree::WindowTree() {
 }
 
 void WindowTree::Render(const ImVec2& pos, const ImVec2& size) {
-    ProcessAllTerminalInputs();
     RenderNode(m_Root.get(), pos, size);
 }
 
@@ -340,18 +308,6 @@ Window* WindowTree::FindWindowWithBuffer(size_t bufferId) {
             return w;
     }
     return nullptr;
-}
-
-Window* WindowTree::FindTerminalWindow() {
-    for (auto* w : GetAllWindows()) {
-        if (w->IsTerminal()) return w;
-    }
-    return nullptr;
-}
-
-void WindowTree::ProcessAllTerminalInputs() {
-    for (auto* w : GetAllWindows())
-        w->ProcessTerminalInput();
 }
 
 void WindowTree::CollectWindows(SplitNode* node, std::vector<Window*>& out) {

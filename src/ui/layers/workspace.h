@@ -3,6 +3,7 @@
 #include "ui/ui_system.h"
 #include "ui/window_tree.h"
 #include "ui/widgets/explorer.h"
+#include "ui/widgets/terminal_panel.h"
 #include <cstdint>
 #include <vector>
 #include <mutex>
@@ -34,11 +35,13 @@ public:
     void FocusPrevWindow();
 
     bool IsExplorerFocused() const { return m_ExplorerOpen && m_Explorer.IsFocused(); }
+    bool IsTerminalFocused() const { return m_TerminalOpen && m_TerminalPanel.IsFocused(); }
 
-    // Terminal management (integrated into window tree)
-    void ToggleTerminal();
+    // Terminal panel management
+    void ToggleTerminal(TerminalPosition pos);
     void NewTerminal();
     void CloseTerminal();
+    TerminalPanel& GetTerminalPanel() { return m_TerminalPanel; }
 
     // Explorer sidebar (left-side toggle like NvimTree)
     void ToggleExplorer();
@@ -47,6 +50,8 @@ public:
 
 private:
     void RenderTabBar();
+    void RenderMainArea(const ImVec2& pos, const ImVec2& size);
+    void RenderFloatingTerminal();
     void ProcessPendingCloses();
     void ProcessPendingDiagnostics();
     void SyncActiveBuffer();
@@ -64,6 +69,16 @@ private:
     static constexpr float EXPLORER_MIN_WIDTH = 120.0f;
     static constexpr float EXPLORER_MAX_WIDTH = 500.0f;
     static constexpr float DIVIDER_SIZE = 3.0f;
+
+    // Terminal panel
+    TerminalPanel m_TerminalPanel;
+    bool m_TerminalOpen = false;
+    bool m_TerminalWantsFocus = false;
+    TerminalPosition m_TerminalPosition = TerminalPosition::Bottom;
+    float m_TerminalHeight = 250.0f;  // for bottom
+    float m_TerminalWidth = 400.0f;   // for right
+    static constexpr float TERMINAL_MIN_SIZE = 80.0f;
+    static constexpr float TERMINAL_MAX_RATIO = 0.8f;
 
     // Thread-safe pending diagnostics from LSP
     std::mutex m_DiagnosticsMutex;
