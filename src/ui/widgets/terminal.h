@@ -48,6 +48,9 @@ public:
     
     // Request keyboard focus capture for next frame
     void RequestFocusCapture() { m_WantsFocusCapture = true; }
+
+    // Set by WindowTree to indicate this is the active split window
+    void SetWindowActive(bool active) { m_IsWindowActive = active; }
     
     // Get terminal title
     const std::string& GetTitle() const;
@@ -85,6 +88,7 @@ private:
     
     // Focus state
     bool m_IsFocused = false;
+    bool m_IsWindowActive = false;
     
     // Cursor blink
     float m_CursorBlinkTime = 0.0f;

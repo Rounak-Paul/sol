@@ -169,16 +169,16 @@ bool TerminalWidget::Render(const char* label, const ImVec2& size) {
         
         m_IsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
         
-        // Set input context when terminal gets focus
-        if (m_IsFocused) {
+        // Set input context when terminal gets focus (only in active window)
+        if (m_IsFocused && m_IsWindowActive) {
             InputSystem::GetInstance().SetContext(InputContext::Terminal);
         }
         
         ImVec2 contentPos = ImGui::GetCursorScreenPos();
         ImVec2 contentAvail = ImGui::GetContentRegionAvail();
         
-        // Handle keyboard input when focused
-        if (m_IsFocused) {
+        // Handle keyboard input only in the active window
+        if (m_IsFocused && m_IsWindowActive) {
             HandleInput();
         }
         
@@ -496,7 +496,7 @@ void TerminalWidget::RenderContent(const ImVec2& pos, const ImVec2& size) {
     }
     
     // Draw cursor only when at bottom (not scrolled)
-    if (m_ScrollOffset == 0 && m_IsFocused && m_Emulator->IsCursorVisible() && m_CursorVisible) {
+    if (m_ScrollOffset == 0 && m_IsWindowActive && m_IsFocused && m_Emulator->IsCursorVisible() && m_CursorVisible) {
         int cursorRow = m_Emulator->GetCursorRow();
         int cursorCol = m_Emulator->GetCursorCol();
         

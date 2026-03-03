@@ -22,9 +22,6 @@ void BufferPanel::OnUI() {
             if (buffer->GetResource()->IsModified()) {
                 label += " *";
             }
-            if (buffer->IsFloating()) {
-                label += " (floating)";
-            }
             
             bool isActive = buffer->IsActive();
             if (isActive) {

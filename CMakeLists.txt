@@ -39,13 +39,13 @@ set(SRCS
     src/ui/input/keybinding.cpp
     src/ui/input/command.cpp
     src/ui/layers/menu_bar.cpp
-    src/ui/layers/explorer.cpp
     src/ui/layers/status_bar.cpp
     src/ui/layers/workspace.cpp
     src/ui/layers/settings.cpp
-    src/ui/layers/terminal_panel.cpp
+    src/ui/window_tree.cpp
     src/ui/widgets/syntax_editor.cpp
     src/ui/widgets/terminal.cpp
+    src/ui/widgets/explorer.cpp
     src/ui/editor_settings.cpp
     src/core/lsp/lsp_client.cpp
     src/core/lsp/lsp_manager.cpp

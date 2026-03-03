@@ -96,14 +96,11 @@ public:
     const std::string& GetName() const { return m_Resource->GetName(); }
     bool IsActive() const { return m_Active; }
     void SetActive(bool active) { m_Active = active; }
-    bool IsFloating() const { return m_Floating; }
-    void SetFloating(bool floating) { m_Floating = floating; }
     
 private:
     Id m_Id;
     std::shared_ptr<Resource> m_Resource;
     bool m_Active = false;
-    bool m_Floating = false;
     
     static Id GenerateId();
 };

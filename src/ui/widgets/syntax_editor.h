@@ -90,6 +90,7 @@ public:
     void SetCursorPos(size_t pos) { m_CursorPos = pos; }
     
     void Focus() { m_WantsFocus = true; }
+    void SetWindowActive(bool active) { m_IsWindowActive = active; }
 
     void UpdateDiagnostics(const std::string& path, const std::vector<LSPDiagnostic>& diagnostics);
     
@@ -149,6 +150,7 @@ private:
     // Cached for current frame
     bool m_IsFocused = false;
     bool m_IsActive = false;  // Tracks if editor was activated by user click (persists across mode switches)
+    bool m_IsWindowActive = false;  // Set by WindowTree - only active window shows cursor
     bool m_WantsFocus = false;
     float m_CharWidth = 0.0f;
     

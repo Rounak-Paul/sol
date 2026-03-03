@@ -7,10 +7,8 @@
 #include "core/lsp/lsp_manager.h"
 #include "ui/layers/menu_bar.h"
 #include "ui/layers/workspace.h"
-#include "ui/layers/explorer.h"
 #include "ui/layers/status_bar.h"
 #include "ui/layers/settings.h"
-#include "ui/layers/terminal_panel.h"
 #include "ui/editor_settings.h"
 #include "ui/input/command.h"
 #include <imgui.h>
@@ -66,15 +64,13 @@ void Application::OnStart() {
         if (std::filesystem::is_directory(p)) {
             ResourceSystem::GetInstance().SetWorkingDirectory(p);
             LSPManager::GetInstance().Initialize(p.string());
-            auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
-            if (explorer) explorer->Refresh();
+            if (m_Workspace) m_Workspace->GetExplorer().Refresh();
             Logger::Info("Opened initial folder: " + p.string());
         } else {
             // Also set working directory to the file's parent for LSP context
             ResourceSystem::GetInstance().SetWorkingDirectory(p.parent_path());
             LSPManager::GetInstance().Initialize(p.parent_path().string());
-            auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
-            if (explorer) explorer->Refresh();
+            if (m_Workspace) m_Workspace->GetExplorer().Refresh();
             ResourceSystem::GetInstance().OpenFile(p);
             Logger::Info("Opened initial file: " + p.string());
         }
@@ -155,10 +151,7 @@ void Application::SetupEvents() {
             Logger::Info("Opened folder: " + path->string());
             
             // Refresh explorer
-            auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
-            if (explorer) {
-                explorer->Refresh();
-            }
+            if (m_Workspace) m_Workspace->GetExplorer().Refresh();
         }
         return true; // Dialog opened successfully, user cancel is not a failure
     });
@@ -200,16 +193,40 @@ void Application::SetupEvents() {
     });
     EventSystem::Register(writeAllFilesEvent);
     
-    // Focus workspace event
-    auto focusWorkspaceEvent = std::make_shared<Event>("focus_workspace");
-    focusWorkspaceEvent->SetHandler([this](const EventData& data) {
-        if (m_Workspace) {
+    // Next buffer or focus buffer (if not buffer-focused, focus buffer; otherwise cycle next)
+    auto nextBufOrFocusEvent = std::make_shared<Event>("next_buffer_or_focus");
+    nextBufOrFocusEvent->SetHandler([this](const EventData& data) {
+        if (!m_Workspace) return false;
+        if (m_Workspace->IsExplorerFocused()) {
             m_Workspace->Focus();
             return true;
         }
-        return false;
+        // Already buffer-focused → cycle to next buffer
+        ResourceSystem::GetInstance().NextBuffer();
+        auto active = ResourceSystem::GetInstance().GetActiveBuffer();
+        auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+        if (active && win && win->GetContentType() != WindowContent::Terminal)
+            win->ShowBuffer(active->GetId());
+        return true;
     });
-    EventSystem::Register(focusWorkspaceEvent);
+    EventSystem::Register(nextBufOrFocusEvent);
+
+    // Previous buffer or focus buffer
+    auto prevBufOrFocusEvent = std::make_shared<Event>("prev_buffer_or_focus");
+    prevBufOrFocusEvent->SetHandler([this](const EventData& data) {
+        if (!m_Workspace) return false;
+        if (m_Workspace->IsExplorerFocused()) {
+            m_Workspace->Focus();
+            return true;
+        }
+        ResourceSystem::GetInstance().PrevBuffer();
+        auto active = ResourceSystem::GetInstance().GetActiveBuffer();
+        auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+        if (active && win && win->GetContentType() != WindowContent::Terminal)
+            win->ShowBuffer(active->GetId());
+        return true;
+    });
+    EventSystem::Register(prevBufOrFocusEvent);
 
     // Close buffer event
     auto closeBufferEvent = std::make_shared<Event>("close_buffer");
@@ -226,115 +243,84 @@ void Application::SetupEvents() {
     // Explorer toggle event
     auto toggleExplorerEvent = std::make_shared<Event>("toggle_explorer");
     toggleExplorerEvent->SetHandler([this](const EventData& data) {
-        auto explorer = std::dynamic_pointer_cast<Explorer>(m_UISystem.GetLayer("Explorer"));
-        if (explorer) {
-            if (!explorer->IsEnabled()) {
-                // Not enabled -> enable and focus
-                explorer->SetEnabled(true);
-                explorer->Focus();
-            } else if (explorer->IsFocused()) {
-                // Enabled and focused -> disable
-                explorer->SetEnabled(false);
-            } else {
-                // Enabled but not focused -> just focus
-                explorer->Focus();
-            }
+        if (m_Workspace) {
+            m_Workspace->ToggleExplorer();
             return true;
         }
         return false;
     });
     EventSystem::Register(toggleExplorerEvent);
 
-    // Terminal toggle event
+    // Terminal toggle event - opens terminal as a split in the workspace
     auto toggleTerminalEvent = std::make_shared<Event>("toggle_terminal");
     toggleTerminalEvent->SetHandler([this](const EventData& data) {
-        if (m_TerminalPanel) {
-            if (!m_TerminalPanel->IsEnabled()) {
-                // Not enabled -> enable and focus
-                m_TerminalPanel->SetEnabled(true);
-                if (m_TerminalPanel->GetTerminalCount() == 0) {
-                    m_TerminalPanel->CreateTerminal();
-                }
-                m_TerminalPanel->Focus();
-            } else if (m_TerminalPanel->IsFocused()) {
-                // Enabled and focused -> disable
-                m_TerminalPanel->SetEnabled(false);
-            } else {
-                // Enabled but not focused -> just focus
-                m_TerminalPanel->Focus();
-            }
+        if (m_Workspace) {
+            m_Workspace->ToggleTerminal();
             return true;
         }
         return false;
     });
     EventSystem::Register(toggleTerminalEvent);
-    
+
     // New terminal event
     auto newTerminalEvent = std::make_shared<Event>("new_terminal");
     newTerminalEvent->SetHandler([this](const EventData& data) {
-        if (m_TerminalPanel) {
-            m_TerminalPanel->CreateTerminal();
-            m_TerminalPanel->SetEnabled(true);
-            m_TerminalPanel->Focus();
+        if (m_Workspace) {
+            m_Workspace->NewTerminal();
             return true;
         }
         return false;
     });
     EventSystem::Register(newTerminalEvent);
-    
+
     // Close terminal event
     auto closeTerminalEvent = std::make_shared<Event>("close_terminal");
     closeTerminalEvent->SetHandler([this](const EventData& data) {
-        if (m_TerminalPanel && m_TerminalPanel->IsEnabled()) {
-            m_TerminalPanel->CloseTerminal(m_TerminalPanel->GetActiveTerminal());
+        if (m_Workspace) {
+            m_Workspace->CloseTerminal();
             return true;
         }
         return false;
     });
     EventSystem::Register(closeTerminalEvent);
     
-    // Next terminal event
-    auto nextTerminalEvent = std::make_shared<Event>("next_terminal");
-    nextTerminalEvent->SetHandler([this](const EventData& data) {
-        if (m_TerminalPanel && m_TerminalPanel->IsEnabled()) {
-            m_TerminalPanel->NextTerminal();
-            return true;
-        }
-        return false;
-    });
-    EventSystem::Register(nextTerminalEvent);
-    
-    // Previous terminal event
-    auto prevTerminalEvent = std::make_shared<Event>("prev_terminal");
-    prevTerminalEvent->SetHandler([this](const EventData& data) {
-        if (m_TerminalPanel && m_TerminalPanel->IsEnabled()) {
-            m_TerminalPanel->PrevTerminal();
-            return true;
-        }
-        return false;
-    });
-    EventSystem::Register(prevTerminalEvent);
-    
     // Next buffer event (cycle through buffer tabs)
     auto nextBufferEvent = std::make_shared<Event>("next_buffer");
-    nextBufferEvent->SetHandler([](const EventData& data) {
+    nextBufferEvent->SetHandler([this](const EventData& data) {
         ResourceSystem::GetInstance().NextBuffer();
+        // Show the new active buffer in the active window
+        if (m_Workspace) {
+            auto active = ResourceSystem::GetInstance().GetActiveBuffer();
+            auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+            if (active && win && win->GetContentType() != WindowContent::Terminal)
+                win->ShowBuffer(active->GetId());
+        }
         return true;
     });
     EventSystem::Register(nextBufferEvent);
-    
+
     // Previous buffer event (cycle through buffer tabs)
     auto prevBufferEvent = std::make_shared<Event>("prev_buffer");
-    prevBufferEvent->SetHandler([](const EventData& data) {
+    prevBufferEvent->SetHandler([this](const EventData& data) {
         ResourceSystem::GetInstance().PrevBuffer();
+        if (m_Workspace) {
+            auto active = ResourceSystem::GetInstance().GetActiveBuffer();
+            auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+            if (active && win && win->GetContentType() != WindowContent::Terminal)
+                win->ShowBuffer(active->GetId());
+        }
         return true;
     });
     EventSystem::Register(prevBufferEvent);
-    
+
     // New buffer event
     auto newBufferEvent = std::make_shared<Event>("new_buffer");
-    newBufferEvent->SetHandler([](const EventData& data) {
+    newBufferEvent->SetHandler([this](const EventData& data) {
         auto buffer = ResourceSystem::GetInstance().CreateNewBuffer();
+        if (buffer && m_Workspace) {
+            auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+            if (win) win->ShowBuffer(buffer->GetId());
+        }
         return buffer != nullptr;
     });
     EventSystem::Register(newBufferEvent);
@@ -439,6 +425,32 @@ void Application::SetupEvents() {
         return true;
     });
     EventSystem::Register(openInNewInstanceEvent);
+
+    // Window split events
+    auto splitVerticalEvent = std::make_shared<Event>("split_vertical");
+    splitVerticalEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->SplitVertical(); return true; }
+        return false;
+    });
+    EventSystem::Register(splitVerticalEvent);
+
+    auto splitHorizontalEvent = std::make_shared<Event>("split_horizontal");
+    splitHorizontalEvent->SetHandler([this](const EventData& data) {
+        if (m_Workspace) { m_Workspace->SplitHorizontal(); return true; }
+        return false;
+    });
+    EventSystem::Register(splitHorizontalEvent);
+
+
+
+    // Show buffer in active window when a file is opened
+    ResourceSystem::GetInstance().SetOnBufferOpened([this](std::shared_ptr<Buffer> buffer) {
+        if (m_Workspace && buffer) {
+            auto* win = m_Workspace->GetWindowTree().GetActiveWindow();
+            if (win && win->GetContentType() != WindowContent::Terminal)
+                win->ShowBuffer(buffer->GetId());
+        }
+    });
 }
 
 void Application::SetupUILayers() {
@@ -447,9 +459,6 @@ void Application::SetupUILayers() {
 
     auto menuBar = std::make_shared<MenuBar>(&m_UISystem);
     m_UISystem.RegisterLayer(menuBar);
-    
-    auto explorer = std::make_shared<Explorer>();
-    m_UISystem.RegisterLayer(explorer);
     
     m_Workspace = std::make_shared<Workspace>();
     m_UISystem.RegisterLayer(m_Workspace);
@@ -465,11 +474,6 @@ void Application::SetupUILayers() {
     auto settings = std::make_shared<SettingsWindow>();
     settings->SetEnabled(false);
     m_UISystem.RegisterLayer(settings);
-    
-    // Terminal panel - disabled by default, toggle with Ctrl+`
-    m_TerminalPanel = std::make_shared<TerminalPanel>();
-    m_TerminalPanel->SetEnabled(false);
-    m_UISystem.RegisterLayer(m_TerminalPanel);
 }
 
 int Application::GetDockspaceFlags() {

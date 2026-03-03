@@ -278,8 +278,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Render Scope Highlight 
     RenderScope(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
 
-    // Render current line highlight
-    if ((m_IsFocused || m_IsActive || m_ShowCompletion) && !m_HasSelection) {
+    // Render current line highlight (only in active window)
+    if (m_IsWindowActive && (m_IsFocused || m_IsActive || m_ShowCompletion) && !m_HasSelection) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine && !IsLineHidden(cursorLine)) {
             // Calculate screen row for cursor line
@@ -323,9 +323,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     // Render diagnostics (squiggles)
     RenderDiagnostics(buffer, textPos, lineHeight, firstVisibleLine, lastVisibleLine);
 
-    // Render cursor (only if cursor line is visible)
-    // Show cursor when focused, active (clicked but focus temporarily lost), or showing completion
-    if ((m_IsFocused || m_IsActive || m_ShowCompletion) && !m_ReadOnly) {
+    // Render cursor only in the active window
+    if (m_IsWindowActive && (m_IsFocused || m_IsActive || m_ShowCompletion) && !m_ReadOnly) {
         auto [cursorLine, cursorCol] = buffer.PosToLineCol(m_CursorPos);
         if (cursorLine >= firstVisibleLine && cursorLine < lastVisibleLine) {
             RenderCursor(buffer, textPos, lineHeight, firstVisibleLine);
@@ -411,8 +410,8 @@ bool SyntaxEditor::Render(const char* label, TextBuffer& buffer, const ImVec2& s
     }
     
     // Handle keyboard input (Navigation and State Control)
-    // Use m_IsActive in addition to m_IsFocused to handle keyboard after mode switches
-    if (m_IsFocused || m_IsActive || m_ShowCompletion) {
+    // Only process input in the active window
+    if (m_IsWindowActive && (m_IsFocused || m_IsActive || m_ShowCompletion)) {
         bool inputHandled = HandleInput(buffer);
         
         // Update cursor position for status bar

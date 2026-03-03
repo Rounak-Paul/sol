@@ -7,7 +7,6 @@
 
 namespace sol {
 
-class TerminalPanel;
 class Buffer;
 class Workspace;
 
@@ -27,7 +26,6 @@ protected:
 
 private:
     UISystem m_UISystem;
-    std::shared_ptr<TerminalPanel> m_TerminalPanel;
     std::shared_ptr<Workspace> m_Workspace;
 
     std::string m_ExecutablePath;

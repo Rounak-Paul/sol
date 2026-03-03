@@ -99,11 +99,14 @@ std::vector<KeybindEntry> GetDefaultKeybindings() {
         {"Leader t t", "toggle_terminal", "Global"},
         {"Leader t n", "new_terminal", "Global"},
         {"Leader t x", "close_terminal", "Global"},
-        {"Leader b b", "focus_workspace", "Global"},
+        {"Leader b b", "next_buffer_or_focus", "Global"},
+        {"Leader b B", "prev_buffer_or_focus", "Global"},
         {"Leader b x", "close_buffer", "Global"},
         {"Leader b n", "new_buffer", "Global"},
         {"Leader b w", "write_file", "Global"},
         {"Leader b W", "write_all_files", "Global"},
+        {"Leader w v", "split_vertical", "Global"},
+        {"Leader w s", "split_horizontal", "Global"},
         {"Leader w n", "open_in_new_instance", "Global"},
     };
 }

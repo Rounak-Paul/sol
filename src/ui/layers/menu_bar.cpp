@@ -71,20 +71,19 @@ void MenuBar::RenderFileMenu() {
 
 void MenuBar::RenderViewMenu() {
     if (ImGui::BeginMenu("View")) {
-        auto explorer = m_UISystem->GetLayer("Explorer");
-        if (explorer) {
-            bool enabled = explorer->IsEnabled();
-            if (ImGui::MenuItem("Explorer", GetShortcut("toggle_explorer"), &enabled)) {
-                EventSystem::Execute("toggle_window", {{"window_id", std::string("Explorer")}});
-            }
+        if (ImGui::MenuItem("Explorer", GetShortcut("toggle_explorer"))) {
+            EventSystem::Execute("toggle_explorer");
         }
 
-        auto terminalPanel = m_UISystem->GetLayer("terminal_panel");
-        if (terminalPanel) {
-            bool enabled = terminalPanel->IsEnabled();
-            if (ImGui::MenuItem("Terminal", GetShortcut("toggle_terminal"), &enabled)) {
-                EventSystem::Execute("toggle_terminal");
-            }
+        if (ImGui::MenuItem("Terminal", GetShortcut("toggle_terminal"))) {
+            EventSystem::Execute("toggle_terminal");
+        }
+
+        if (ImGui::MenuItem("Split Vertical", GetShortcut("split_vertical"))) {
+            EventSystem::Execute("split_vertical");
+        }
+        if (ImGui::MenuItem("Split Horizontal", GetShortcut("split_horizontal"))) {
+            EventSystem::Execute("split_horizontal");
         }
 
         auto settings = m_UISystem->GetLayer("Settings");
