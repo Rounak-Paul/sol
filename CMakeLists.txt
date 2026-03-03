@@ -91,4 +91,18 @@ if(APPLE)
     target_link_libraries(sol PRIVATE "-framework UniformTypeIdentifiers")
 endif()
 
+if(APPLE)
+    set_target_properties(sol PROPERTIES
+        INSTALL_RPATH "@loader_path/../lib;/usr/local/lib"
+        BUILD_WITH_INSTALL_RPATH FALSE
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+    )
+else()
+    set_target_properties(sol PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../lib:/usr/local/lib"
+        BUILD_WITH_INSTALL_RPATH FALSE
+        INSTALL_RPATH_USE_LINK_PATH TRUE
+    )
+endif()
+
 install(TARGETS sol RUNTIME DESTINATION bin)
