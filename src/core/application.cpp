@@ -5,7 +5,6 @@
 #include "core/file_dialog.h"
 #include "core/text/text_buffer.h"
 #include "core/lsp/lsp_manager.h"
-#include "ui/layers/menu_bar.h"
 #include "ui/layers/workspace.h"
 #include "ui/layers/status_bar.h"
 #include "ui/layers/settings.h"
@@ -80,6 +79,10 @@ void Application::OnStart() {
 }
 
 void Application::OnUpdate() {
+}
+
+void Application::OnMenuBar() {
+    m_MenuBar.Render();
 }
 
 void Application::OnUI() {
@@ -552,9 +555,6 @@ void Application::SetupUILayers() {
     // Apply initial theme
     EditorSettings::Get().ApplyTheme();
 
-    auto menuBar = std::make_shared<MenuBar>(&m_UISystem);
-    m_UISystem.RegisterLayer(menuBar);
-    
     m_Workspace = std::make_shared<Workspace>();
     m_UISystem.RegisterLayer(m_Workspace);
     

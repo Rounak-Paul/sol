@@ -1,4 +1,5 @@
 #include "menu_bar.h"
+#include "ui/ui_system.h"
 #include "core/resource_system.h"
 #include "ui/editor_settings.h"
 #include <imgui.h>
@@ -14,33 +15,23 @@ static const char* GetShortcut(const std::string& eventId) {
     return shortcutCache.empty() ? nullptr : shortcutCache.c_str();
 }
 
-MenuBar::MenuBar(UISystem* uiSystem, const Id& id)
-    : UILayer(id), m_UISystem(uiSystem) {
-    SetupMenuBar();
-}
+MenuBar::MenuBar(UISystem* uiSystem)
+    : m_UISystem(uiSystem) {}
 
-void MenuBar::OnUI() {
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("Sol")) {
-            if (ImGui::MenuItem("Settings", GetShortcut("toggle_settings"))) {
-                EventSystem::Execute("toggle_window", {{"window_id", std::string("Settings")}});
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Exit", GetShortcut("exit"))) {
-                EventSystem::Execute("exit");
-            }
-            ImGui::EndMenu();
+void MenuBar::Render() {
+    if (ImGui::BeginMenu("Sol")) {
+        if (ImGui::MenuItem("Settings", GetShortcut("toggle_settings"))) {
+            EventSystem::Execute("toggle_window", {{"window_id", std::string("Settings")}});
         }
-        
-        RenderFileMenu();
-        RenderViewMenu();
-        
-        ImGui::EndMainMenuBar();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Exit", GetShortcut("exit"))) {
+            EventSystem::Execute("exit");
+        }
+        ImGui::EndMenu();
     }
-}
 
-void MenuBar::SetupMenuBar() {
-    // MenuBar setup if needed in the future
+    RenderFileMenu();
+    RenderViewMenu();
 }
 
 void MenuBar::RenderFileMenu() {

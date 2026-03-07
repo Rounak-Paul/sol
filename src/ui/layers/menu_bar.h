@@ -1,22 +1,22 @@
 #pragma once
 
-#include "ui/ui_system.h"
 #include "core/event_system.h"
 
 namespace sol {
 
-class MenuBar : public UILayer {
-public:
-    explicit MenuBar(UISystem* uiSystem, const Id& id = "menu_bar");
-    ~MenuBar() override = default;
+class UISystem;
 
-    void OnUI() override;
+class MenuBar {
+public:
+    explicit MenuBar(UISystem* uiSystem);
+
+    // Render menu items — call from inside an active menu bar context (OnMenuBar)
+    void Render();
 
 private:
-    void SetupMenuBar();
     void RenderFileMenu();
     void RenderViewMenu();
-    
+
     UISystem* m_UISystem;
 };
 
