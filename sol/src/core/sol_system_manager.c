@@ -16,6 +16,7 @@ struct SolSystemManager {
     pthread_mutex_t lock;
 
     SolEventBus *events;
+    SolBufferSystem *buffers;
     SolJobSystem *jobs;
     SolInputSystem *input;
     SolPluginManager *plugins;
@@ -69,6 +70,7 @@ static bool sol_system_reserve_services(SolSystemManager *manager, size_t min_ca
 static bool sol_system_register_builtin_services(SolSystemManager *manager)
 {
     return sol_system_register_service(manager, "core.events", manager->events, NULL, NULL) &&
+           sol_system_register_service(manager, "core.buffers", manager->buffers, NULL, NULL) &&
            sol_system_register_service(manager, "core.jobs", manager->jobs, NULL, NULL) &&
            sol_system_register_service(manager, "core.input", manager->input, NULL, NULL) &&
            sol_system_register_service(manager, "core.plugins", manager->plugins, NULL, NULL);
@@ -94,6 +96,7 @@ SolSystemConfig sol_system_config_default(void)
 {
     SolSystemConfig config;
     config.events = sol_event_bus_config_default();
+    config.buffers = sol_buffer_system_config_default();
     config.jobs = sol_job_system_config_default();
     config.input = sol_input_config_default();
     config.plugins = sol_plugin_manager_config_default();
@@ -116,6 +119,12 @@ SolSystemManager *sol_system_manager_create(const SolSystemConfig *config)
 
     manager->events = sol_event_bus_create(&effective.events);
     if (!manager->events) {
+        sol_system_manager_destroy(manager);
+        return NULL;
+    }
+
+    manager->buffers = sol_buffer_system_create(&effective.buffers);
+    if (!manager->buffers) {
         sol_system_manager_destroy(manager);
         return NULL;
     }
@@ -170,6 +179,11 @@ void sol_system_manager_destroy(SolSystemManager *manager)
         manager->jobs = NULL;
     }
 
+    if (manager->buffers) {
+        sol_buffer_system_destroy(manager->buffers);
+        manager->buffers = NULL;
+    }
+
     if (manager->events) {
         sol_event_bus_destroy(manager->events);
         manager->events = NULL;
@@ -182,6 +196,11 @@ void sol_system_manager_destroy(SolSystemManager *manager)
 SolEventBus *sol_system_events(SolSystemManager *manager)
 {
     return manager ? manager->events : NULL;
+}
+
+SolBufferSystem *sol_system_buffers(SolSystemManager *manager)
+{
+    return manager ? manager->buffers : NULL;
 }
 
 SolJobSystem *sol_system_jobs(SolSystemManager *manager)

@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "sol_event.h"
+#include "sol_buffer.h"
 #include "sol_input.h"
 #include "sol_job.h"
 #include "sol_plugin.h"
@@ -15,6 +16,7 @@ typedef void (*SolServiceDestroyFn)(void *service, void *user_data);
 
 typedef struct SolSystemConfig {
     SolEventBusConfig events;
+    SolBufferSystemConfig buffers;
     SolJobSystemConfig jobs;
     SolInputConfig input;
     SolPluginManagerConfig plugins;
@@ -26,6 +28,7 @@ SolSystemManager *sol_system_manager_create(const SolSystemConfig *config);
 void sol_system_manager_destroy(SolSystemManager *manager);
 
 SolEventBus *sol_system_events(SolSystemManager *manager);
+SolBufferSystem *sol_system_buffers(SolSystemManager *manager);
 SolJobSystem *sol_system_jobs(SolSystemManager *manager);
 SolInputSystem *sol_system_input(SolSystemManager *manager);
 SolPluginManager *sol_system_plugins(SolSystemManager *manager);
