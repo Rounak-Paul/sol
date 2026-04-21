@@ -1,6 +1,6 @@
 #include "sol_system_manager.h"
 
-#include <pthread.h>
+#include "sol_threading.h"
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>

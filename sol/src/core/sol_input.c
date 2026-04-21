@@ -1,6 +1,6 @@
 #include "sol_input.h"
 
-#include <pthread.h>
+#include "sol_threading.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>

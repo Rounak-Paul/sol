@@ -1,12 +1,17 @@
 #include "sol_job.h"
 
-#include <pthread.h>
+#include "sol_threading.h"
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 typedef struct SolJob {
     SolJobFn fn;
@@ -140,6 +145,18 @@ static void *sol_job_worker_main(void *arg)
 
 static uint32_t sol_default_worker_count(void)
 {
+#if defined(_WIN32)
+    DWORD cpu_count = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    if (cpu_count < 1u) {
+        return 1u;
+    }
+
+    if (cpu_count == 1u) {
+        return 1u;
+    }
+
+    return (uint32_t)(cpu_count - 1u);
+#else
     long cpu_count = sysconf(_SC_NPROCESSORS_ONLN);
     if (cpu_count < 1) {
         return 1u;
@@ -150,6 +167,7 @@ static uint32_t sol_default_worker_count(void)
     }
 
     return (uint32_t)(cpu_count - 1);
+#endif
 }
 
 SolJobSystemConfig sol_job_system_config_default(void)

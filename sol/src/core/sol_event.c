@@ -1,11 +1,15 @@
 #include "sol_event.h"
 
-#include <pthread.h>
+#include "sol_threading.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 typedef struct SolSubscription {
     SolSubscriptionToken token;
@@ -40,9 +44,20 @@ struct SolEventBus {
 
 static uint64_t sol_now_ns(void)
 {
+#if defined(_WIN32)
+    static LARGE_INTEGER frequency;
+    if (frequency.QuadPart == 0) {
+        QueryPerformanceFrequency(&frequency);
+    }
+
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return (uint64_t)((counter.QuadPart * 1000000000ll) / frequency.QuadPart);
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+#endif
 }
 
 static char *sol_strdup(const char *value)
