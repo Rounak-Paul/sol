@@ -1,14 +1,9 @@
 #include "sol_ui_system.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "style.h"
-
-typedef struct SolSaveState {
-    uint32_t count;
-} SolSaveState;
 
 typedef struct SolWorkspaceVisitorContext {
     SolUISystem *ui;
@@ -20,10 +15,8 @@ struct SolUISystem {
     SolBufferSystem *buffers;
 
     Ca_Stylesheet *stylesheet;
-    Ca_State *save_state;
 
     Ca_Div *workspace_host;
-    Ca_Label *status_label;
     bool workspace_dirty;
 };
 
@@ -55,9 +48,9 @@ static void sol_ui_visit_begin_split(SolBufferSplitDirection direction, float ra
     ca_split_begin(&(Ca_SplitDesc){
         .direction = sol_ui_split_direction_to_ca(direction),
         .ratio = ratio,
-        .bar_size = 5.0f,
-        .bar_color = ca_color(0.22f, 0.24f, 0.30f, 1.0f),
-        .bar_hover_color = ca_color(0.34f, 0.37f, 0.47f, 1.0f),
+        .bar_size = SOL_UI_SPLIT_BAR_SIZE,
+        .bar_color = SOL_UI_SPLIT_BAR_COLOR,
+        .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
     });
 }
 
@@ -82,16 +75,6 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
     });
 
     if (buffer) {
-        const char *name = sol_buffer_name(buffer);
-        if (!name) {
-            name = "[No Name]";
-        }
-
-        ca_text(&(Ca_TextDesc){
-            .text = name,
-            .style = "buffer-name",
-        });
-
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style = "buffer-body",
@@ -104,10 +87,12 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
 
         ca_div_end();
     } else {
-        ca_text(&(Ca_TextDesc){
-            .text = "Empty buffer",
-            .style = "buffer-body-text",
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style = "buffer-body",
         });
+
+        ca_div_end();
     }
 
     ca_div_end();
@@ -125,11 +110,12 @@ static void sol_ui_render_workspace_tree(SolUISystem *ui)
             .style = "buffer-pane",
         });
 
-        ca_text(&(Ca_TextDesc){
-            .text = "No buffers loaded",
-            .style = "buffer-body-text",
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style = "buffer-body",
         });
 
+        ca_div_end();
         ca_div_end();
         return;
     }
@@ -159,28 +145,6 @@ static void sol_ui_rebuild_workspace(SolUISystem *ui)
     ui->workspace_dirty = false;
 }
 
-static void sol_ui_on_save_state_changed(const void *value, void *user_data)
-{
-    if (!value || !user_data) {
-        return;
-    }
-
-    const SolSaveState *state = (const SolSaveState *)value;
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui->status_label) {
-        return;
-    }
-
-    char line[192];
-    snprintf(
-        line,
-        sizeof(line),
-        "Saves: %u  |  Ctrl+V vsplit  |  Ctrl+H split  |  Ctrl+W next pane",
-        state->count
-    );
-    ca_set_text(ui->status_label, line);
-}
-
 static void sol_ui_on_frame(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -202,16 +166,6 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .style = "app-root",
     });
 
-    ca_h1(&(Ca_TextDesc){
-        .text = "Sol",
-        .style = "title",
-    });
-
-    ca_text(&(Ca_TextDesc){
-        .text = "Everything is a buffer. Split panes to compose your workspace.",
-        .style = "subtitle",
-    });
-
     ui->workspace_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style = "workspace-host",
@@ -219,11 +173,6 @@ static bool sol_ui_build_layout(SolUISystem *ui)
 
     sol_ui_render_workspace_tree(ui);
     ca_div_end();
-
-    ui->status_label = ca_text(&(Ca_TextDesc){
-        .text = "Saves: 0  |  Ctrl+V vsplit  |  Ctrl+H split  |  Ctrl+W next pane",
-        .style = "status-line",
-    });
 
     ca_ui_end();
     return true;
@@ -250,9 +199,9 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     }
 
     ui->primary_window = ca_window_create(instance, &(Ca_WindowDesc){
-        .title = "Sol",
-        .width = 1080,
-        .height = 720,
+        .title = SOL_UI_WINDOW_TITLE,
+        .width = SOL_UI_WINDOW_WIDTH,
+        .height = SOL_UI_WINDOW_HEIGHT,
     });
 
     if (!ui->primary_window) {
@@ -263,17 +212,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
         return NULL;
     }
 
-    SolSaveState initial = { 0u };
-    ui->save_state = ca_state_create(instance, sizeof(SolSaveState), &initial);
-    if (ui->save_state) {
-        ca_state_observe(ui->save_state, sol_ui_on_save_state_changed, ui);
-    }
-
     if (!sol_ui_build_layout(ui)) {
-        if (ui->save_state) {
-            ca_state_destroy(ui->save_state);
-            ui->save_state = NULL;
-        }
         ca_window_destroy(ui->primary_window);
         ui->primary_window = NULL;
         if (ui->stylesheet) {
@@ -291,11 +230,6 @@ void sol_ui_system_destroy(SolUISystem *ui)
 {
     if (!ui) {
         return;
-    }
-
-    if (ui->save_state) {
-        ca_state_destroy(ui->save_state);
-        ui->save_state = NULL;
     }
 
     if (ui->primary_window) {
@@ -324,16 +258,9 @@ bool sol_ui_system_on_save_action(const char *action, const SolInputEvent *event
     (void)action;
     (void)event;
 
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui || !ui->save_state) {
+    if (!user_data) {
         return false;
     }
-
-    SolSaveState state;
-    memset(&state, 0, sizeof(state));
-    ca_state_get(ui->save_state, &state);
-    ++state.count;
-    ca_state_set(ui->save_state, &state);
 
     return true;
 }
@@ -401,6 +328,5 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
     if (ui->primary_window == window) {
         ui->primary_window = NULL;
         ui->workspace_host = NULL;
-        ui->status_label = NULL;
     }
 }

@@ -67,21 +67,10 @@ static void sol_text_buffer_destroy(void *state)
 
 static void sol_text_buffer_render(const SolBuffer *buffer, const SolBufferRenderArgs *args, void *state)
 {
+    (void)buffer;
     (void)args;
 
     const SolTextBufferState *text_state = (const SolTextBufferState *)state;
-    const char *name = sol_buffer_name(buffer);
-    if (!name) {
-        name = "[No Name]";
-    }
-
-    char line[192];
-    snprintf(line, sizeof(line), "Buffer: %s", name);
-
-    ca_text(&(Ca_TextDesc){
-        .text = line,
-        .style = "buffer-body-text",
-    });
 
     ca_text(&(Ca_TextDesc){
         .text = text_state && text_state->text ? text_state->text : "",
@@ -303,8 +292,8 @@ int main(void)
 
     const SolBufferId welcome_buffer = sol_create_text_buffer(
         app.buffers,
-        "welcome",
-        "Welcome to Sol.\n\nEverything is a buffer.\nUse Ctrl+V and Ctrl+H to split panes, Ctrl+W to cycle focus."
+        "main",
+        ""
     );
     if (welcome_buffer == 0u) {
         fprintf(stderr, "Failed to create initial buffer\n");
