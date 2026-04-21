@@ -27,10 +27,7 @@ typedef struct SolAppContext {
     SolJobSystem *jobs;
     SolInputSystem *input;
     SolSubscriptionToken startup_token;
-    SolInputActionToken save_action_token;
-    SolInputActionToken split_vertical_token;
-    SolInputActionToken split_horizontal_token;
-    SolInputActionToken focus_next_token;
+    bool command_flows_ready;
     SolUISystem *ui;
 } SolAppContext;
 
@@ -183,6 +180,7 @@ static void sol_on_ca_key(const Ca_Event *ev, void *user_data)
     input_event.data.key.modifiers = sol_modifiers_from_ca(ev->key.mods);
     input_event.data.key.repeated = (ev->key.action == CA_REPEAT);
 
+    sol_ui_system_handle_input_event(app->ui, &input_event);
     sol_input_system_process_event(app->input, &input_event);
 }
 
@@ -273,6 +271,16 @@ static void sol_on_ca_window_close(const Ca_Event *ev, void *user_data)
     sol_ui_system_on_window_close(app->ui, ev->window);
 }
 
+static void sol_on_ca_window_resize(const Ca_Event *ev, void *user_data)
+{
+    if (!ev || !user_data) {
+        return;
+    }
+
+    SolAppContext *app = (SolAppContext *)user_data;
+    sol_ui_system_on_window_resize(app->ui, ev->resize.width, ev->resize.height);
+}
+
 int main(void)
 {
     SolAppContext app;
@@ -327,53 +335,52 @@ int main(void)
         return 1;
     }
 
-    app.save_action_token = sol_input_bind_action(app.input, &(SolInputBindingDesc){
+    static const SolKeyCode flow_editor_save[] = { 'F', 'S' };
+    static const SolKeyCode flow_workspace_split_vertical[] = { 'W', 'V' };
+    static const SolKeyCode flow_workspace_split_horizontal[] = { 'W', 'H' };
+    static const SolKeyCode flow_workspace_focus_next[] = { 'W', 'N' };
+
+    const bool save_flow = sol_ui_system_register_command_flow(app.ui, &(SolCommandFlowDesc){
         .action = "editor.save",
+        .label = "Save",
+        .sequence = flow_editor_save,
+        .sequence_length = 2u,
         .key = 'S',
-        .required_modifiers = SOL_MOD_CTRL,
-        .forbidden_modifiers = SOL_MOD_NONE,
-        .trigger_on_release = false,
-        .allow_repeat = false,
-        .priority = 10,
         .callback = sol_ui_system_on_save_action,
         .user_data = app.ui,
     });
 
-    app.split_vertical_token = sol_input_bind_action(app.input, &(SolInputBindingDesc){
+    const bool split_vertical_flow = sol_ui_system_register_command_flow(app.ui, &(SolCommandFlowDesc){
         .action = "workspace.split.vertical",
+        .label = "Split Vertical",
+        .sequence = flow_workspace_split_vertical,
+        .sequence_length = 2u,
         .key = 'V',
-        .required_modifiers = SOL_MOD_CTRL,
-        .forbidden_modifiers = SOL_MOD_NONE,
-        .trigger_on_release = false,
-        .allow_repeat = false,
-        .priority = 10,
         .callback = sol_ui_system_on_split_vertical_action,
         .user_data = app.ui,
     });
 
-    app.split_horizontal_token = sol_input_bind_action(app.input, &(SolInputBindingDesc){
+    const bool split_horizontal_flow = sol_ui_system_register_command_flow(app.ui, &(SolCommandFlowDesc){
         .action = "workspace.split.horizontal",
+        .label = "Split Horizontal",
+        .sequence = flow_workspace_split_horizontal,
+        .sequence_length = 2u,
         .key = 'H',
-        .required_modifiers = SOL_MOD_CTRL,
-        .forbidden_modifiers = SOL_MOD_NONE,
-        .trigger_on_release = false,
-        .allow_repeat = false,
-        .priority = 10,
         .callback = sol_ui_system_on_split_horizontal_action,
         .user_data = app.ui,
     });
 
-    app.focus_next_token = sol_input_bind_action(app.input, &(SolInputBindingDesc){
+    const bool focus_next_flow = sol_ui_system_register_command_flow(app.ui, &(SolCommandFlowDesc){
         .action = "workspace.focus.next",
-        .key = 'W',
-        .required_modifiers = SOL_MOD_CTRL,
-        .forbidden_modifiers = SOL_MOD_NONE,
-        .trigger_on_release = false,
-        .allow_repeat = false,
-        .priority = 10,
+        .label = "Focus Next Pane",
+        .sequence = flow_workspace_focus_next,
+        .sequence_length = 2u,
+        .key = 'N',
         .callback = sol_ui_system_on_focus_next_action,
         .user_data = app.ui,
     });
+
+    app.command_flows_ready = save_flow && split_vertical_flow && split_horizontal_flow && focus_next_flow;
 
     ca_event_set_handler(instance, CA_EVENT_KEY, sol_on_ca_key, &app);
     ca_event_set_handler(instance, CA_EVENT_CHAR, sol_on_ca_char, &app);
@@ -381,6 +388,7 @@ int main(void)
     ca_event_set_handler(instance, CA_EVENT_MOUSE_MOVE, sol_on_ca_mouse_move, &app);
     ca_event_set_handler(instance, CA_EVENT_MOUSE_SCROLL, sol_on_ca_mouse_scroll, &app);
     ca_event_set_handler(instance, CA_EVENT_WINDOW_CLOSE, sol_on_ca_window_close, &app);
+    ca_event_set_handler(instance, CA_EVENT_WINDOW_RESIZE, sol_on_ca_window_resize, &app);
 
     Ca_Window *window = sol_ui_system_primary_window(app.ui);
     if (!window) {
@@ -407,7 +415,7 @@ int main(void)
         .worker_count = sol_job_system_worker_count(app.jobs),
         .loaded_plugins = loaded_plugins,
         .warmup_checksum = warmup_ok ? atomic_load_explicit(&warmup.checksum, memory_order_relaxed) : 0u,
-        .input_binding_active = (app.save_action_token != 0u),
+        .input_binding_active = app.command_flows_ready,
     };
 
     sol_event_bus_post(app.events, &(SolEventDesc){
@@ -428,18 +436,6 @@ int main(void)
         sol_system_end_frame(app.systems);
     }
 
-    if (app.save_action_token != 0u) {
-        sol_input_unbind_action(app.input, app.save_action_token);
-    }
-    if (app.split_vertical_token != 0u) {
-        sol_input_unbind_action(app.input, app.split_vertical_token);
-    }
-    if (app.split_horizontal_token != 0u) {
-        sol_input_unbind_action(app.input, app.split_horizontal_token);
-    }
-    if (app.focus_next_token != 0u) {
-        sol_input_unbind_action(app.input, app.focus_next_token);
-    }
     if (app.startup_token != 0u) {
         sol_event_bus_unsubscribe(app.events, app.startup_token);
     }

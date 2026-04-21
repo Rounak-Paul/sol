@@ -24,6 +24,7 @@ enum {
 
 enum {
     SOL_KEY_UNKNOWN = 0,
+    SOL_KEY_ESCAPE = 256,
     SOL_KEY_LEFT_SHIFT = 340,
     SOL_KEY_LEFT_CTRL = 341,
     SOL_KEY_LEFT_ALT = 342,
