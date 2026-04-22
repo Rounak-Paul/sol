@@ -16,6 +16,16 @@ typedef struct SolWorkspaceVisitorContext {
 #define SOL_UI_MAX_LABEL_LEN 95u
 #define SOL_UI_MAX_FLOW_SEQUENCE_LEN 8u
 #define SOL_UI_MAX_SUGGESTIONS 32u
+#define SOL_UI_TITLE_BAR_HEIGHT 22.0f
+#define SOL_UI_STATUS_BAR_HEIGHT 22.0f
+#define SOL_CF_PANEL_SHOW_HEADER 0
+#define SOL_CF_PANEL_HEIGHT_NO_HEADER 62.0f
+#define SOL_CF_PANEL_HEIGHT_WITH_HEADER 84.0f
+#define SOL_CF_STATUS_BAR_OVERLAP 3.0f
+#define SOL_CF_GRID_ROWS 3u
+#define SOL_CF_GRID_COLS 4u
+#define SOL_CF_GRID_CAPACITY (SOL_CF_GRID_ROWS * SOL_CF_GRID_COLS)
+#define SOL_UI_STATUS_TEXT_MAX_LEN 127u
 
 typedef struct SolCommandFlowBinding {
     char action[SOL_UI_MAX_ACTION_LEN + 1u];
@@ -42,9 +52,6 @@ typedef struct SolLeaderOptionContext {
     SolModifierMask modifier;
     const char *label;
 } SolLeaderOptionContext;
-
-static void sol_ui_refresh_overlay_now(struct SolUISystem *ui);
-
 struct SolUISystem {
     Ca_Instance *instance;
     Ca_Window *primary_window;
@@ -57,7 +64,6 @@ struct SolUISystem {
 
     Ca_Div *workspace_host;
     Ca_Div *workspace_content_host;
-    Ca_Div *overlay_host;
 
     SolModifierMask leader_modifier;
     bool leader_active;
@@ -74,7 +80,8 @@ struct SolUISystem {
     SolLeaderOptionContext leader_options[4];
 
     bool workspace_dirty;
-    bool overlay_dirty;
+    char status_bar_kind;
+    char status_bar_text[SOL_UI_STATUS_TEXT_MAX_LEN + 1u];
 };
 
 static void sol_ui_mark_workspace_dirty(SolUISystem *ui)
@@ -91,19 +98,9 @@ static void sol_ui_mark_workspace_dirty(SolUISystem *ui)
     ui->workspace_dirty = true;
 }
 
-static void sol_ui_mark_overlay_dirty(SolUISystem *ui)
+static void sol_ui_mark_ui_dirty(SolUISystem *ui)
 {
-    if (!ui) {
-        return;
-    }
-
-    if (ui->overlay_host) {
-        sol_ui_refresh_overlay_now(ui);
-        ui->overlay_dirty = false;
-        return;
-    }
-
-    ui->overlay_dirty = true;
+    sol_ui_mark_workspace_dirty(ui);
 }
 
 static void sol_ui_copy_text(char *dst, size_t dst_size, const char *src)
@@ -159,10 +156,66 @@ static bool sol_ui_is_leader_key(const SolUISystem *ui, SolKeyCode key)
     return false;
 }
 
+static float sol_ui_command_panel_height(void)
+{
+    return SOL_CF_PANEL_SHOW_HEADER
+        ? SOL_CF_PANEL_HEIGHT_WITH_HEADER
+        : SOL_CF_PANEL_HEIGHT_NO_HEADER;
+}
+
+static float sol_ui_content_area_height(const SolUISystem *ui)
+{
+    const float window_h = (ui && ui->viewport_height > 0)
+        ? (float)ui->viewport_height
+        : (float)SOL_UI_WINDOW_HEIGHT;
+
+    const float content_h = window_h - SOL_UI_TITLE_BAR_HEIGHT;
+    return content_h > 0.0f ? content_h : 0.0f;
+}
+
+static float sol_ui_workspace_tree_height(const SolUISystem *ui, bool with_panel)
+{
+    float content_h = sol_ui_content_area_height(ui) - SOL_UI_STATUS_BAR_HEIGHT;
+    if (with_panel) {
+        content_h -= sol_ui_command_panel_height();
+    }
+
+    return content_h > 0.0f ? content_h : 0.0f;
+}
+
+static float sol_ui_content_height(const SolUISystem *ui)
+{
+    return sol_ui_content_area_height(ui);
+}
+
 static void sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size)
 {
     if (!out || out_size == 0u) {
         return;
+    }
+
+    switch (key) {
+        case SOL_KEY_LEFT_CTRL:
+        case SOL_KEY_RIGHT_CTRL:
+            snprintf(out, out_size, "Ctrl");
+            return;
+        case SOL_KEY_LEFT_SHIFT:
+        case SOL_KEY_RIGHT_SHIFT:
+            snprintf(out, out_size, "Shift");
+            return;
+        case SOL_KEY_LEFT_ALT:
+        case SOL_KEY_RIGHT_ALT:
+            snprintf(out, out_size, "Alt");
+            return;
+        case SOL_KEY_LEFT_SUPER:
+        case SOL_KEY_RIGHT_SUPER:
+            snprintf(out, out_size, "Super");
+            return;
+        case SOL_KEY_ESCAPE:
+            snprintf(out, out_size, "Esc");
+            return;
+        default:
+            break;
     }
 
     if (key >= 'a' && key <= 'z') {
@@ -178,6 +231,140 @@ static void sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size)
     }
 
     snprintf(out, out_size, "K%u", (unsigned int)key);
+}
+
+static bool sol_ui_is_ctrl_key(SolKeyCode key)
+{
+    return key == SOL_KEY_LEFT_CTRL || key == SOL_KEY_RIGHT_CTRL;
+}
+
+static bool sol_ui_is_shift_key(SolKeyCode key)
+{
+    return key == SOL_KEY_LEFT_SHIFT || key == SOL_KEY_RIGHT_SHIFT;
+}
+
+static bool sol_ui_is_alt_key(SolKeyCode key)
+{
+    return key == SOL_KEY_LEFT_ALT || key == SOL_KEY_RIGHT_ALT;
+}
+
+static bool sol_ui_is_super_key(SolKeyCode key)
+{
+    return key == SOL_KEY_LEFT_SUPER || key == SOL_KEY_RIGHT_SUPER;
+}
+
+static void sol_ui_format_modified_key(
+    SolModifierMask modifiers,
+    SolKeyCode key,
+    char *out,
+    size_t out_size
+)
+{
+    if (!out || out_size == 0u) {
+        return;
+    }
+
+    size_t used = 0u;
+    out[0] = '\0';
+
+    if ((modifiers & SOL_MOD_CTRL) != 0u && !sol_ui_is_ctrl_key(key)) {
+        int written = snprintf(out + used, out_size - used, "Ctrl+");
+        if (written > 0) {
+            used += (size_t)written;
+        }
+    }
+    if ((modifiers & SOL_MOD_SHIFT) != 0u && !sol_ui_is_shift_key(key) && used < out_size) {
+        int written = snprintf(out + used, out_size - used, "Shift+");
+        if (written > 0) {
+            used += (size_t)written;
+        }
+    }
+    if ((modifiers & SOL_MOD_ALT) != 0u && !sol_ui_is_alt_key(key) && used < out_size) {
+        int written = snprintf(out + used, out_size - used, "Alt+");
+        if (written > 0) {
+            used += (size_t)written;
+        }
+    }
+    if ((modifiers & SOL_MOD_SUPER) != 0u && !sol_ui_is_super_key(key) && used < out_size) {
+        int written = snprintf(out + used, out_size - used, "Super+");
+        if (written > 0) {
+            used += (size_t)written;
+        }
+    }
+
+    if (used >= out_size) {
+        out[out_size - 1u] = '\0';
+        return;
+    }
+
+    sol_ui_format_key_name(key, out + used, out_size - used);
+}
+
+static void sol_ui_set_status_text(SolUISystem *ui, char kind, const char *text)
+{
+    if (!ui) {
+        return;
+    }
+
+    char next[SOL_UI_STATUS_TEXT_MAX_LEN + 1u];
+    next[0] = '\0';
+    if (text) {
+        snprintf(next, sizeof(next), "%s", text);
+    }
+
+    if (ui->status_bar_kind == kind && strcmp(ui->status_bar_text, next) == 0) {
+        return;
+    }
+
+    ui->status_bar_kind = kind;
+    snprintf(ui->status_bar_text, sizeof(ui->status_bar_text), "%s", next);
+    sol_ui_mark_ui_dirty(ui);
+}
+
+static void sol_ui_set_status_key(SolUISystem *ui, SolKeyCode key, SolModifierMask modifiers)
+{
+    char key_name[48];
+
+    sol_ui_format_modified_key(modifiers, key, key_name, sizeof(key_name));
+    sol_ui_set_status_text(ui, 'K', key_name);
+}
+
+static void sol_ui_set_status_sequence(
+    SolUISystem *ui,
+    const SolKeyCode *sequence,
+    size_t length,
+    SolModifierMask modifiers
+)
+{
+    if (!ui || !sequence || length == 0u) {
+        return;
+    }
+
+    char text[SOL_UI_STATUS_TEXT_MAX_LEN + 1u];
+    size_t used = 0u;
+
+    for (size_t i = 0u; i < length; ++i) {
+        char key_name[48];
+        int written;
+
+        if (i + 1u == length) {
+            sol_ui_format_modified_key(modifiers, sequence[i], key_name, sizeof(key_name));
+        } else {
+            sol_ui_format_key_name(sequence[i], key_name, sizeof(key_name));
+        }
+        written = snprintf(text + used, sizeof(text) - used, "%s%s", i == 0u ? "" : " ", key_name);
+        if (written < 0) {
+            break;
+        }
+
+        used += (size_t)written;
+        if (used >= sizeof(text)) {
+            text[sizeof(text) - 1u] = '\0';
+            break;
+        }
+    }
+
+    sol_ui_set_status_text(ui, 'C', text);
 }
 
 static SolKeyCode sol_ui_normalize_flow_key(SolKeyCode key)
@@ -203,96 +390,6 @@ static SolCommandFlowBinding *sol_ui_find_flow_by_action(SolUISystem *ui, const 
     return NULL;
 }
 
-/* ---- Floating panel positioning ------------------------------------------------
-   Panels use CA_POSITION_FIXED coordinates, which are relative to the content
-   area that begins immediately below the 22 px custom title bar.
-   ------------------------------------------------------------------------------- */
-typedef enum SolPanelSide {
-    SOL_PANEL_SIDE_TOP          = 0,
-    SOL_PANEL_SIDE_BOTTOM       = 1,
-    SOL_PANEL_SIDE_LEFT         = 2,
-    SOL_PANEL_SIDE_RIGHT        = 3,
-    SOL_PANEL_SIDE_CENTER       = 4,
-    SOL_PANEL_SIDE_TOP_LEFT     = 5,
-    SOL_PANEL_SIDE_TOP_RIGHT    = 6,
-    SOL_PANEL_SIDE_BOTTOM_LEFT  = 7,
-    SOL_PANEL_SIDE_BOTTOM_RIGHT = 8,
-} SolPanelSide;
-
-typedef struct SolPanelRect {
-    float x, y, width, height;
-} SolPanelRect;
-
-/* Returns a CA_POSITION_FIXED rectangle anchored to the requested side.
-   Pass panel_width  <= 0 to fill the full content width.
-   Pass panel_height <= 0 to default to 60 px. */
-static SolPanelRect sol_ui_get_panel_rect(
-    const SolUISystem *ui,
-    SolPanelSide       side,
-    float              panel_width,
-    float              panel_height
-)
-{
-    const float title_bar_h = 22.0f;
-    const float win_w = (ui && ui->viewport_width  > 0)
-        ? (float)ui->viewport_width  : (float)SOL_UI_WINDOW_WIDTH;
-    const float win_h = (ui && ui->viewport_height > 0)
-        ? (float)ui->viewport_height : (float)SOL_UI_WINDOW_HEIGHT;
-    const float content_w = win_w;
-    const float content_h = win_h - title_bar_h;
-
-    if (panel_width  <= 0.0f) panel_width  = content_w;
-    if (panel_height <= 0.0f) panel_height = 60.0f;
-
-    float x = 0.0f;
-    float y = 0.0f;
-
-    switch (side) {
-        case SOL_PANEL_SIDE_TOP:
-            x = (content_w - panel_width) * 0.5f;
-            y = 0.0f;
-            break;
-        case SOL_PANEL_SIDE_BOTTOM:
-            x = 0.0f;
-            y = content_h - panel_height;
-            break;
-        case SOL_PANEL_SIDE_LEFT:
-            x = 0.0f;
-            y = (content_h - panel_height) * 0.5f;
-            break;
-        case SOL_PANEL_SIDE_RIGHT:
-            x = content_w - panel_width;
-            y = (content_h - panel_height) * 0.5f;
-            break;
-        case SOL_PANEL_SIDE_CENTER:
-            x = (content_w - panel_width) * 0.5f;
-            y = (content_h - panel_height) * 0.5f;
-            break;
-        case SOL_PANEL_SIDE_TOP_LEFT:
-            x = 0.0f;
-            y = 0.0f;
-            break;
-        case SOL_PANEL_SIDE_TOP_RIGHT:
-            x = content_w - panel_width;
-            y = 0.0f;
-            break;
-        case SOL_PANEL_SIDE_BOTTOM_LEFT:
-            x = 0.0f;
-            y = content_h - panel_height;
-            break;
-        case SOL_PANEL_SIDE_BOTTOM_RIGHT:
-            x = content_w - panel_width;
-            y = content_h - panel_height;
-            break;
-        default:
-            x = 0.0f;
-            y = content_h - panel_height;
-            break;
-    }
-
-    return (SolPanelRect){ x, y, panel_width, panel_height };
-}
-
 static void sol_ui_reset_leader_prefix(SolUISystem *ui)
 {
     if (!ui) {
@@ -312,7 +409,7 @@ static void sol_ui_open_leader_popup(SolUISystem *ui)
 
     ui->leader_active = true;
     sol_ui_reset_leader_prefix(ui);
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_mark_ui_dirty(ui);
 }
 
 static void sol_ui_close_leader_popup(SolUISystem *ui)
@@ -323,7 +420,7 @@ static void sol_ui_close_leader_popup(SolUISystem *ui)
 
     ui->leader_active = false;
     sol_ui_reset_leader_prefix(ui);
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_mark_ui_dirty(ui);
 }
 
 static bool sol_ui_flow_matches_prefix(
@@ -588,8 +685,11 @@ static void sol_ui_on_settings_menu_action(void *user_data)
     }
 
     ui->settings_visible = !ui->settings_visible;
+    if (ui->settings_visible && ui->leader_active) {
+        sol_ui_close_leader_popup(ui);
+    }
     sol_ui_mark_workspace_dirty(ui);
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_mark_ui_dirty(ui);
 }
 
 static void sol_ui_on_leader_option_click(Ca_Button *button, void *user_data)
@@ -602,10 +702,8 @@ static void sol_ui_on_leader_option_click(Ca_Button *button, void *user_data)
     }
 
     context->ui->leader_modifier = context->modifier;
-    context->ui->leader_active = false;
-    sol_ui_reset_leader_prefix(context->ui);
+    sol_ui_close_leader_popup(context->ui);
     sol_ui_mark_workspace_dirty(context->ui);
-    sol_ui_mark_overlay_dirty(context->ui);
 }
 
 static void sol_ui_on_settings_close_click(Ca_Button *button, void *user_data)
@@ -619,7 +717,7 @@ static void sol_ui_on_settings_close_click(Ca_Button *button, void *user_data)
 
     ui->settings_visible = false;
     sol_ui_mark_workspace_dirty(ui);
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_mark_ui_dirty(ui);
 }
 
 static void sol_ui_on_binding_input_change(Ca_TextInput *input, void *user_data)
@@ -656,10 +754,8 @@ static void sol_ui_on_binding_input_change(Ca_TextInput *input, void *user_data)
     ca_set_text(input, normalized);
 
     sol_ui_mark_workspace_dirty(context->ui);
-    sol_ui_mark_overlay_dirty(context->ui);
+    sol_ui_mark_ui_dirty(context->ui);
 }
-
-#define SOL_CF_PANEL_HEIGHT 68.0f
 
 static void sol_ui_render_command_flow_panel(SolUISystem *ui)
 {
@@ -667,8 +763,12 @@ static void sol_ui_render_command_flow_panel(SolUISystem *ui)
         return;
     }
 
-    const SolPanelRect rect =
-        sol_ui_get_panel_rect(ui, SOL_PANEL_SIDE_BOTTOM, 0.0f, SOL_CF_PANEL_HEIGHT);
+    const float panel_height = sol_ui_command_panel_height();
+    const float panel_width = (ui->viewport_width > 0)
+        ? (float)ui->viewport_width
+        : (float)SOL_UI_WINDOW_WIDTH;
+    const float panel_pos_y =
+        sol_ui_content_height(ui) - panel_height + SOL_CF_STATUS_BAR_OVERLAP;
 
     SolFlowSuggestion suggestions[SOL_UI_MAX_SUGGESTIONS];
     const size_t suggestion_count =
@@ -678,49 +778,51 @@ static void sol_ui_render_command_flow_panel(SolUISystem *ui)
     ca_div_begin(&(Ca_DivDesc){
         .direction       = CA_VERTICAL,
         .position        = CA_POSITION_FIXED,
-        .pos_x           = rect.x,
-        .pos_y           = rect.y,
-        .width           = rect.width,
-        .height          = rect.height,
+        .pos_x           = 0.0f,
+        .pos_y           = panel_pos_y > 0.0f ? panel_pos_y : 0.0f,
+        .width           = panel_width,
+        .height          = panel_height,
         .z_index         = 50,
         .border_width    = 1.0f,
         .border_color    = ca_color(0.14f, 0.21f, 0.32f, 1.0f),
         .shadow_offset_x = 0.0f,
-        .shadow_offset_y = -4.0f,
-        .shadow_blur     = 20.0f,
-        .shadow_color    = ca_color(0.0f, 0.0f, 0.0f, 0.55f),
+        .shadow_offset_y = 0.0f,
+        .shadow_blur     = 0.0f,
+        .shadow_color    = ca_color(0.0f, 0.0f, 0.0f, 0.0f),
         .style           = "cf-panel",
     });
 
-    /* ---- header: leader modifier + pressed-prefix breadcrumb ---- */
-    ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_HORIZONTAL,
-        .style     = "cf-header",
-    });
+    if (SOL_CF_PANEL_SHOW_HEADER) {
+        /* ---- header: leader modifier + pressed-prefix breadcrumb ---- */
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style     = "cf-header",
+        });
 
-    /* Find the label for the active leader modifier. */
-    const char *leader_name = "Keys";
-    for (size_t i = 0u; i < 4u; ++i) {
-        if (ui->leader_options[i].modifier == ui->leader_modifier) {
-            leader_name = ui->leader_options[i].label;
-            break;
+        /* Find the label for the active leader modifier. */
+        const char *leader_name = "Keys";
+        for (size_t i = 0u; i < 4u; ++i) {
+            if (ui->leader_options[i].modifier == ui->leader_modifier) {
+                leader_name = ui->leader_options[i].label;
+                break;
+            }
         }
+        ca_text(&(Ca_TextDesc){ .text = leader_name, .style = "cf-title" });
+
+        for (size_t i = 0u; i < ui->leader_prefix_length; ++i) {
+            char prefix_key[24];
+            sol_ui_format_key_name(ui->leader_prefix[i], prefix_key, sizeof(prefix_key));
+            ca_text(&(Ca_TextDesc){ .text = ">", .style = "cf-prefix-sep" });
+            ca_text(&(Ca_TextDesc){ .text = prefix_key, .style = "cf-prefix-key" });
+        }
+
+        ca_div_end(); /* cf-header */
     }
-    ca_text(&(Ca_TextDesc){ .text = leader_name, .style = "cf-title" });
 
-    for (size_t i = 0u; i < ui->leader_prefix_length; ++i) {
-        char prefix_key[24];
-        sol_ui_format_key_name(ui->leader_prefix[i], prefix_key, sizeof(prefix_key));
-        ca_text(&(Ca_TextDesc){ .text = ">", .style = "cf-prefix-sep" });
-        ca_text(&(Ca_TextDesc){ .text = prefix_key, .style = "cf-prefix-key" });
-    }
-
-    ca_div_end(); /* cf-header */
-
-    /* ---- items row: one chip per available next key ---- */
+    /* ---- items grid: 3 rows x 4 columns, left-aligned compact cells ---- */
     ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_HORIZONTAL,
-        .style     = "cf-items",
+        .direction = CA_VERTICAL,
+        .style     = "cf-grid",
     });
 
     if (ui->leader_no_match) {
@@ -729,38 +831,122 @@ static void sol_ui_render_command_flow_panel(SolUISystem *ui)
 
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_HORIZONTAL,
-            .style     = "cf-chip cf-chip-error",
+            .style     = "cf-grid-row",
         });
-        ca_text(&(Ca_TextDesc){ .text = bad_key,          .style = "cf-chip-key" });
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style     = "cf-cell cf-chip-error",
+        });
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style     = "cf-chip-key-group",
+        });
+        ca_text(&(Ca_TextDesc){ .text = bad_key, .style = "cf-chip-key" });
+        ca_div_end();
         ca_text(&(Ca_TextDesc){ .text = "No matching flow", .style = "cf-chip-label cf-label-error" });
         ca_div_end();
-
+        ca_div_end();
     } else if (suggestion_count == 0u) {
         ca_text(&(Ca_TextDesc){ .text = "No bindings", .style = "cf-empty" });
-
     } else {
-        for (size_t i = 0u; i < suggestion_count; ++i) {
-            char key_name[24];
-            sol_ui_format_key_name(suggestions[i].key, key_name, sizeof(key_name));
+        const size_t max_items = suggestion_count < SOL_CF_GRID_CAPACITY
+            ? suggestion_count
+            : SOL_CF_GRID_CAPACITY;
 
+        for (size_t row = 0u; row < SOL_CF_GRID_ROWS; ++row) {
             ca_div_begin(&(Ca_DivDesc){
                 .direction = CA_HORIZONTAL,
-                .style     = "cf-chip",
+                .style     = "cf-grid-row",
             });
-            ca_text(&(Ca_TextDesc){ .text = key_name,             .style = "cf-chip-key" });
-            ca_text(&(Ca_TextDesc){ .text = suggestions[i].label, .style = "cf-chip-label" });
-            if (suggestions[i].continuation_count > 0u) {
-                char more[16];
-                snprintf(more, sizeof(more), "+%u",
-                         (unsigned int)suggestions[i].continuation_count);
-                ca_text(&(Ca_TextDesc){ .text = more, .style = "cf-chip-more" });
+
+            for (size_t col = 0u; col < SOL_CF_GRID_COLS; ++col) {
+                const size_t idx = row * SOL_CF_GRID_COLS + col;
+
+                ca_div_begin(&(Ca_DivDesc){
+                    .direction = CA_HORIZONTAL,
+                    .style     = "cf-cell",
+                });
+
+                if (idx < max_items) {
+                    char key_name[24];
+                    sol_ui_format_key_name(suggestions[idx].key, key_name, sizeof(key_name));
+
+                    ca_div_begin(&(Ca_DivDesc){
+                        .direction = CA_HORIZONTAL,
+                        .style     = "cf-chip-key-group",
+                    });
+                    ca_text(&(Ca_TextDesc){ .text = key_name, .style = "cf-chip-key" });
+                    if (suggestions[idx].continuation_count > 0u) {
+                        char more[16];
+                        snprintf(more, sizeof(more), "+%u",
+                                 (unsigned int)suggestions[idx].continuation_count);
+                        ca_text(&(Ca_TextDesc){ .text = more, .style = "cf-chip-more" });
+                    }
+                    ca_div_end();
+
+                    ca_text(&(Ca_TextDesc){
+                        .text = suggestions[idx].label,
+                        .style = "cf-chip-label",
+                    });
+                }
+
+                ca_div_end(); /* cf-cell */
             }
-            ca_div_end(); /* cf-chip */
+
+            ca_div_end(); /* cf-grid-row */
         }
     }
 
-    ca_div_end(); /* cf-items */
+    ca_div_end(); /* cf-grid */
     ca_div_end(); /* cf-panel */
+}
+
+static void sol_ui_render_status_bar(SolUISystem *ui)
+{
+    if (!ui) {
+        return;
+    }
+
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .height = SOL_UI_STATUS_BAR_HEIGHT,
+        .style = "status-bar",
+    });
+
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .style = "status-bar-left",
+    });
+
+    if (ui->status_bar_text[0] != '\0') {
+        const char badge_text[2] = {
+            ui->status_bar_kind == 'C' ? 'C' : (ui->status_bar_kind == 'L' ? 'L' : 'K'),
+            '\0',
+        };
+        const char *badge_style = ui->status_bar_kind == 'C'
+            ? "status-bar-badge status-bar-badge-command"
+            : (ui->status_bar_kind == 'L'
+                ? "status-bar-badge status-bar-badge-leader"
+                : "status-bar-badge status-bar-badge-key");
+
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style = badge_style,
+        });
+        ca_text(&(Ca_TextDesc){ .text = badge_text, .style = "status-bar-badge-text" });
+        ca_div_end();
+
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style = "status-bar-value",
+        });
+        ca_text(&(Ca_TextDesc){ .text = ui->status_bar_text, .style = "status-bar-text" });
+        ca_div_end();
+    }
+
+    ca_div_end();
+
+    ca_div_end();
 }
 
 static void sol_ui_render_settings_panel(SolUISystem *ui)
@@ -769,14 +955,60 @@ static void sol_ui_render_settings_panel(SolUISystem *ui)
         return;
     }
 
-    ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
-        .style = "settings-panel",
-    });
+    const float viewport_w = (ui->viewport_width > 0)
+        ? (float)ui->viewport_width
+        : (float)SOL_UI_WINDOW_WIDTH;
+    const float viewport_h = sol_ui_content_area_height(ui);
+
+    float card_w = viewport_w * 0.62f;
+    if (card_w < 520.0f) {
+        card_w = 520.0f;
+    }
+    if (card_w > 760.0f) {
+        card_w = 760.0f;
+    }
+    if (card_w > viewport_w - 24.0f) {
+        card_w = viewport_w - 24.0f;
+    }
+
+    const float ideal_h = 170.0f + (float)ui->command_flow_count * 28.0f;
+    float card_h = ideal_h;
+    if (card_h < 240.0f) {
+        card_h = 240.0f;
+    }
+    if (card_h > 460.0f) {
+        card_h = 460.0f;
+    }
+    if (card_h > viewport_h - 20.0f) {
+        card_h = viewport_h - 20.0f;
+    }
+
+    const float card_x = (viewport_w - card_w) * 0.5f;
+    const float card_y = (viewport_h - card_h) * 0.5f;
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style = "settings-card",
+        .position = CA_POSITION_FIXED,
+        .pos_x = 0.0f,
+        .pos_y = 0.0f,
+        .width = viewport_w,
+        .height = viewport_h,
+        .z_index = 58,
+        .style = "settings-overlay",
+    });
+    ca_div_end();
+
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .position = CA_POSITION_FIXED,
+        .pos_x = card_x > 0.0f ? card_x : 0.0f,
+        .pos_y = card_y > 0.0f ? card_y : 0.0f,
+        .width = card_w,
+        .height = card_h,
+        .z_index = 59,
+        .border_width = 1.0f,
+        .border_color = ca_color(0.19f, 0.25f, 0.37f, 1.0f),
+        .style = "settings-card settings-card-floating",
     });
 
     ca_div_begin(&(Ca_DivDesc){
@@ -785,7 +1017,7 @@ static void sol_ui_render_settings_panel(SolUISystem *ui)
     });
 
     ca_text(&(Ca_TextDesc){
-        .text = "Settings",
+        .text = "Command Flow Settings",
         .style = "settings-title",
     });
 
@@ -799,7 +1031,7 @@ static void sol_ui_render_settings_panel(SolUISystem *ui)
     ca_div_end();
 
     ca_text(&(Ca_TextDesc){
-        .text = "Configure the leader modifier and command flow key bindings.",
+        .text = "Leader modifier and key bindings",
         .style = "settings-help-text",
     });
 
@@ -830,7 +1062,7 @@ static void sol_ui_render_settings_panel(SolUISystem *ui)
     ca_div_end();
 
     ca_text(&(Ca_TextDesc){
-        .text = "Command Flow Bindings",
+        .text = "Bindings",
         .style = "settings-heading",
     });
 
@@ -892,8 +1124,6 @@ static void sol_ui_render_settings_panel(SolUISystem *ui)
     ca_div_end();
 
     ca_div_end();
-
-    ca_div_end();
 }
 
 static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
@@ -905,36 +1135,27 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         return;
     }
 
-    if (ui->settings_visible) {
-        sol_ui_render_settings_panel(ui);
-    } else {
-        sol_ui_render_workspace_tree(ui);
-    }
-}
+    const bool show_command_panel = !ui->settings_visible && ui->leader_active;
 
-static void sol_ui_overlay_builder(Ca_Div *div, void *user_data)
-{
-    (void)div;
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style = "workspace-main-content",
+        .height = sol_ui_workspace_tree_height(ui, false),
+    });
 
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui) {
-        return;
-    }
+    sol_ui_render_workspace_tree(ui);
 
-    if (!ui->settings_visible && ui->leader_active) {
+    ca_div_end();
+
+    if (show_command_panel) {
         sol_ui_render_command_flow_panel(ui);
     }
-}
 
-static void sol_ui_refresh_overlay_now(SolUISystem *ui)
-{
-    if (!ui || !ui->overlay_host) {
-        return;
+    if (ui->settings_visible) {
+        sol_ui_render_settings_panel(ui);
     }
 
-    ca_div_clear(ui->overlay_host);
-    sol_ui_overlay_builder(ui->overlay_host, ui);
-    ca_div_end();
+    sol_ui_render_status_bar(ui);
 }
 
 static void sol_ui_on_frame(void *user_data)
@@ -947,10 +1168,6 @@ static void sol_ui_on_frame(void *user_data)
     if (ui->workspace_dirty && ui->workspace_content_host) {
         ca_div_invalidate(ui->workspace_content_host);
         ui->workspace_dirty = false;
-    }
-    if (ui->overlay_dirty && ui->overlay_host) {
-        ca_div_invalidate(ui->overlay_host);
-        ui->overlay_dirty = false;
     }
 }
 
@@ -1008,19 +1225,6 @@ static bool sol_ui_build_layout(SolUISystem *ui)
 
     ca_div_end();
 
-    ui->overlay_host = ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
-        .position = CA_POSITION_FIXED,
-        .pos_x = 0.0f,
-        .pos_y = 0.0f,
-        .z_index = 40,
-    });
-
-    ca_div_set_builder(ui->overlay_host, sol_ui_overlay_builder, ui);
-    sol_ui_overlay_builder(ui->overlay_host, ui);
-
-    ca_div_end();
-
     ca_div_end();
 
     ca_ui_end();
@@ -1044,7 +1248,8 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->viewport_height = SOL_UI_WINDOW_HEIGHT;
     ui->leader_modifier = SOL_MOD_CTRL;
     ui->workspace_dirty = true;
-    ui->overlay_dirty = true;
+    ui->status_bar_kind = 'K';
+    ui->status_bar_text[0] = '\0';
 
     ui->leader_options[0].ui = ui;
     ui->leader_options[0].modifier = SOL_MOD_CTRL;
@@ -1157,7 +1362,7 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDe
         existing->user_data = desc->user_data;
         sol_ui_copy_text(existing->label, sizeof(existing->label), desc->label ? desc->label : desc->action);
         sol_ui_mark_workspace_dirty(ui);
-        sol_ui_mark_overlay_dirty(ui);
+        sol_ui_mark_ui_dirty(ui);
         return true;
     }
 
@@ -1184,7 +1389,7 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDe
     sol_ui_copy_text(flow->label, sizeof(flow->label), desc->label ? desc->label : desc->action);
 
     sol_ui_mark_workspace_dirty(ui);
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_mark_ui_dirty(ui);
     return true;
 }
 
@@ -1199,6 +1404,28 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
     }
 
     const SolKeyCode key = sol_ui_normalize_flow_key(event->data.key.key);
+    if (sol_ui_is_leader_key(ui, key)) {
+        char key_name[48];
+        sol_ui_format_modified_key(event->data.key.modifiers, key, key_name, sizeof(key_name));
+        sol_ui_set_status_text(ui, 'L', key_name);
+    } else {
+        sol_ui_set_status_key(ui, key, event->data.key.modifiers);
+    }
+
+    if (ui->settings_visible) {
+        if (ui->leader_active) {
+            sol_ui_close_leader_popup(ui);
+        }
+        return false;
+    }
+
+    if (key == SOL_KEY_ESCAPE) {
+        if (ui->leader_active) {
+            sol_ui_close_leader_popup(ui);
+            return true;
+        }
+        return false;
+    }
 
     if (sol_ui_is_leader_key(ui, key)) {
         if (event->data.key.repeated) {
@@ -1222,14 +1449,20 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
         sol_ui_open_leader_popup(ui);
     }
 
-    if (key == SOL_KEY_ESCAPE) {
-        sol_ui_close_leader_popup(ui);
-        return true;
-    }
-
     if (sol_ui_is_modifier_key(key)) {
         return true;
     }
+
+    SolKeyCode attempted_sequence[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    size_t attempted_length = ui->leader_prefix_length;
+    if (attempted_length > SOL_UI_MAX_FLOW_SEQUENCE_LEN - 1u) {
+        attempted_length = SOL_UI_MAX_FLOW_SEQUENCE_LEN - 1u;
+    }
+    for (size_t i = 0u; i < attempted_length; ++i) {
+        attempted_sequence[i] = ui->leader_prefix[i];
+    }
+    attempted_sequence[attempted_length++] = key;
+    sol_ui_set_status_sequence(ui, attempted_sequence, attempted_length, event->data.key.modifiers);
 
     ui->leader_no_match = false;
     ui->leader_last_invalid_key = SOL_KEY_UNKNOWN;
@@ -1259,10 +1492,7 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
     }
 
     if (!has_candidate) {
-        ui->leader_no_match = true;
-        ui->leader_last_invalid_key = key;
-        ui->leader_prefix_length = 0u;
-        sol_ui_mark_overlay_dirty(ui);
+        sol_ui_close_leader_popup(ui);
         return true;
     }
 
@@ -1274,12 +1504,11 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     if (has_deeper_path && ui->leader_prefix_length < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
         ui->leader_prefix[ui->leader_prefix_length++] = key;
-        sol_ui_mark_overlay_dirty(ui);
+        sol_ui_mark_ui_dirty(ui);
         return true;
     }
 
-    sol_ui_reset_leader_prefix(ui);
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_close_leader_popup(ui);
     return true;
 }
 
@@ -1359,7 +1588,6 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
         ui->primary_window = NULL;
         ui->workspace_host = NULL;
         ui->workspace_content_host = NULL;
-        ui->overlay_host = NULL;
     }
 }
 
@@ -1376,5 +1604,5 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
         ui->viewport_height = height;
     }
 
-    sol_ui_mark_overlay_dirty(ui);
+    sol_ui_mark_workspace_dirty(ui);
 }

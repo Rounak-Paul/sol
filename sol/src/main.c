@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "sol_buffer.h"
+#include "sol_ui_constants.h"
 #include "sol_system_manager.h"
 #include "sol_ui_system.h"
 
@@ -319,7 +320,7 @@ int main(void)
     Ca_Instance *instance = ca_instance_create(&(Ca_InstanceDesc){
         .app_name             = "Sol",
         .prefer_dedicated_gpu = true,
-        .font_size_px         = 14.0f,
+        .font_size_px         = SOL_UI_BOOT_FONT_SIZE_PX_FLOAT,
     });
     if (!instance) {
         fprintf(stderr, "Failed to create causality instance\n");
