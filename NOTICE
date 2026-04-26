@@ -1,0 +1,33 @@
+Sol — modal-flow code editor
+Copyright 2026 Sol contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product includes the following third-party software:
+
+  - Causality UI library (Apache-2.0) — vendored at vendors/causality/
+    See vendors/causality/LICENSE.
+
+  - GLFW (Zlib) — vendored transitively via causality.
+    https://www.glfw.org/
+    Copyright (c) 2002-2006 Marcus Geelnard
+    Copyright (c) 2006-2019 Camilla Löwy
+
+  - GLM (MIT) — vendored transitively via causality.
+    https://github.com/g-truc/glm
+    Copyright (c) 2005-present G-Truc Creation
+
+  - Vulkan Memory Allocator (MIT) — vendored transitively via causality.
+    https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+    Copyright (c) 2017-2024 Advanced Micro Devices, Inc.
+
+  - stb_truetype (Public Domain / MIT dual) — vendored transitively via causality.
+    https://github.com/nothings/stb
+    Copyright (c) 2017 Sean Barrett
+
+  - shaderc (Apache-2.0) — required at link time, ships with the LunarG Vulkan SDK.
+    https://github.com/google/shaderc
+
+  - Vulkan headers (Apache-2.0) — required at link time, ships with the LunarG Vulkan SDK.
+
+  - Embedded font (see vendors/causality/NOTICE for the specific font and license).
