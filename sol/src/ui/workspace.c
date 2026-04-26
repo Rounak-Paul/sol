@@ -516,10 +516,10 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
     /* No pixel math here — causality reflows the title/status strips and
        content_root automatically; we only need to invalidate the
        reactive workspace builder so it redraws against the new size. */
-    (void)width;
-    (void)height;
     if (!ui) {
         return;
     }
+    ui->window_w = width;
+    ui->window_h = height;
     sol_ui_mark_workspace_dirty(ui);
 }

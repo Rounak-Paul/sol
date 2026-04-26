@@ -36,10 +36,6 @@
    status-bar height it wants reserved. The title bar height is fixed by
    causality itself and not visible from sol's layout code. */
 #define SOL_UI_STATUS_BAR_HEIGHT      22.0f
-#define SOL_UI_CF_PANEL_HEIGHT        62.0f
-#define SOL_UI_CF_GRID_ROWS           3u
-#define SOL_UI_CF_GRID_COLS           4u
-#define SOL_UI_CF_GRID_CAPACITY       (SOL_UI_CF_GRID_ROWS * SOL_UI_CF_GRID_COLS)
 
 /* Status badge kinds — single byte to keep the struct compact. */
 #define SOL_UI_STATUS_KIND_KEY        'K'
@@ -88,6 +84,12 @@ struct SolUISystem {
 
     /* Pending workspace rebuild flag (deferred until content_host exists). */
     bool   workspace_dirty;
+
+    /* Last-known window size in logical px. Updated from the resize
+       callback; consumed by the floating command panel for responsive
+       width clamping. 0 until the first frame. */
+    int    window_w;
+    int    window_h;
 
     /* Status bar single-line text + kind for badge styling. */
     char   status_bar_kind;
