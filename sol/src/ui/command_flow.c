@@ -1,0 +1,383 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Sol contributors.
+
+/* command_flow.c — Sol's flow-based command system.
+ *
+ * Owns:
+ *   - Key normalisation, modifier classification, key formatting.
+ *   - Command-flow registry (insert / lookup by action / matching).
+ *   - Leader popup open/close + suggestion collection.
+ *
+ * No rendering happens here; that lives in command_panel.c and status_bar.c.
+ */
+
+#include "sol_ui_internal.h"
+
+#include <ctype.h>
+#include <stdio.h>
+#include <string.h>
+
+/* ------------------------------------------------------------------ */
+/* Internal helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+static SolCommandFlowBinding *
+sol_ui_find_flow_by_action(SolUISystem *ui, const char *action)
+{
+    if (!ui || !action) {
+        return NULL;
+    }
+
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        if (strcmp(ui->command_flows[i].action, action) == 0) {
+            return &ui->command_flows[i];
+        }
+    }
+    return NULL;
+}
+
+static void sol_ui_copy_text(char *dst, size_t dst_size, const char *src)
+{
+    if (!dst || dst_size == 0u) {
+        return;
+    }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+    snprintf(dst, dst_size, "%s", src);
+}
+
+static const char *
+sol_ui_flow_label_for_next(const SolUISystem *ui,
+                           const SolKeyCode *prefix,
+                           size_t prefix_length,
+                           SolKeyCode next_key)
+{
+    if (!ui) {
+        return "More";
+    }
+
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        const SolCommandFlowBinding *flow = &ui->command_flows[i];
+        if (!sol_ui_flow_matches_prefix(flow, prefix, prefix_length)) {
+            continue;
+        }
+        if (flow->sequence_length <= prefix_length || flow->sequence[prefix_length] != next_key) {
+            continue;
+        }
+        if (flow->sequence_length == prefix_length + 1u) {
+            return flow->label[0] != '\0' ? flow->label : flow->action;
+        }
+    }
+    return "More";
+}
+
+static uint32_t
+sol_ui_flow_continuation_count(const SolUISystem *ui,
+                               const SolKeyCode *prefix,
+                               size_t prefix_length,
+                               SolKeyCode next_key)
+{
+    if (!ui || prefix_length + 1u >= SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
+        return 0u;
+    }
+
+    SolKeyCode unique[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    size_t     unique_count = 0u;
+
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        const SolCommandFlowBinding *flow = &ui->command_flows[i];
+        if (!sol_ui_flow_matches_prefix(flow, prefix, prefix_length)) {
+            continue;
+        }
+        if (flow->sequence_length <= prefix_length + 1u) {
+            continue;
+        }
+        if (flow->sequence[prefix_length] != next_key) {
+            continue;
+        }
+
+        const SolKeyCode child = flow->sequence[prefix_length + 1u];
+        bool exists = false;
+        for (size_t j = 0u; j < unique_count; ++j) {
+            if (unique[j] == child) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists && unique_count < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
+            unique[unique_count++] = child;
+        }
+    }
+    return (uint32_t)unique_count;
+}
+
+/* ------------------------------------------------------------------ */
+/* Key classification + formatting                                     */
+/* ------------------------------------------------------------------ */
+
+bool sol_ui_is_modifier_key(SolKeyCode key)
+{
+    switch (key) {
+    case SOL_KEY_LEFT_SHIFT:
+    case SOL_KEY_RIGHT_SHIFT:
+    case SOL_KEY_LEFT_CTRL:
+    case SOL_KEY_RIGHT_CTRL:
+    case SOL_KEY_LEFT_ALT:
+    case SOL_KEY_RIGHT_ALT:
+    case SOL_KEY_LEFT_SUPER:
+    case SOL_KEY_RIGHT_SUPER:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool sol_ui_is_leader_key(const SolUISystem *ui, SolKeyCode key)
+{
+    if (!ui) {
+        return false;
+    }
+    switch (ui->leader_modifier) {
+    case SOL_MOD_CTRL:  return key == SOL_KEY_LEFT_CTRL  || key == SOL_KEY_RIGHT_CTRL;
+    case SOL_MOD_ALT:   return key == SOL_KEY_LEFT_ALT   || key == SOL_KEY_RIGHT_ALT;
+    case SOL_MOD_SHIFT: return key == SOL_KEY_LEFT_SHIFT || key == SOL_KEY_RIGHT_SHIFT;
+    case SOL_MOD_SUPER: return key == SOL_KEY_LEFT_SUPER || key == SOL_KEY_RIGHT_SUPER;
+    default:            return false;
+    }
+}
+
+SolKeyCode sol_ui_normalize_flow_key(SolKeyCode key)
+{
+    if (key >= 'a' && key <= 'z') {
+        return (SolKeyCode)(key - ('a' - 'A'));
+    }
+    return key;
+}
+
+void sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size)
+{
+    if (!out || out_size == 0u) {
+        return;
+    }
+
+    switch (key) {
+    case SOL_KEY_LEFT_CTRL:
+    case SOL_KEY_RIGHT_CTRL:
+        snprintf(out, out_size, "Ctrl");  return;
+    case SOL_KEY_LEFT_SHIFT:
+    case SOL_KEY_RIGHT_SHIFT:
+        snprintf(out, out_size, "Shift"); return;
+    case SOL_KEY_LEFT_ALT:
+    case SOL_KEY_RIGHT_ALT:
+        snprintf(out, out_size, "Alt");   return;
+    case SOL_KEY_LEFT_SUPER:
+    case SOL_KEY_RIGHT_SUPER:
+        snprintf(out, out_size, "Super"); return;
+    case SOL_KEY_ESCAPE:
+        snprintf(out, out_size, "Esc");   return;
+    default: break;
+    }
+
+    if (key >= 'a' && key <= 'z') {
+        out[0] = (char)toupper((unsigned char)key);
+        out[1] = '\0';
+        return;
+    }
+    if (key >= 32u && key <= 126u) {
+        out[0] = (char)key;
+        out[1] = '\0';
+        return;
+    }
+    snprintf(out, out_size, "K%u", (unsigned int)key);
+}
+
+void sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key,
+                                char *out, size_t out_size)
+{
+    if (!out || out_size == 0u) {
+        return;
+    }
+
+    out[0] = '\0';
+    size_t used = 0u;
+
+    /* Skip the leader-modifier prefix when the key itself IS that modifier. */
+    const bool skip_ctrl  = key == SOL_KEY_LEFT_CTRL  || key == SOL_KEY_RIGHT_CTRL;
+    const bool skip_shift = key == SOL_KEY_LEFT_SHIFT || key == SOL_KEY_RIGHT_SHIFT;
+    const bool skip_alt   = key == SOL_KEY_LEFT_ALT   || key == SOL_KEY_RIGHT_ALT;
+    const bool skip_super = key == SOL_KEY_LEFT_SUPER || key == SOL_KEY_RIGHT_SUPER;
+
+    static const struct {
+        SolModifierMask mask;
+        const char     *prefix;
+        bool            skipped;
+    } prefixes[] = {
+        { SOL_MOD_CTRL,  "Ctrl+",  false },
+        { SOL_MOD_SHIFT, "Shift+", false },
+        { SOL_MOD_ALT,   "Alt+",   false },
+        { SOL_MOD_SUPER, "Super+", false },
+    };
+
+    const bool skips[4] = { skip_ctrl, skip_shift, skip_alt, skip_super };
+
+    for (size_t i = 0u; i < 4u; ++i) {
+        if ((modifiers & prefixes[i].mask) == 0u || skips[i] || used >= out_size) {
+            continue;
+        }
+        const int written = snprintf(out + used, out_size - used, "%s", prefixes[i].prefix);
+        if (written > 0) {
+            used += (size_t)written;
+        }
+    }
+
+    if (used >= out_size) {
+        out[out_size - 1u] = '\0';
+        return;
+    }
+    sol_ui_format_key_name(key, out + used, out_size - used);
+}
+
+/* ------------------------------------------------------------------ */
+/* Leader popup state                                                  */
+/* ------------------------------------------------------------------ */
+
+static void sol_ui_reset_leader_prefix(SolUISystem *ui)
+{
+    if (!ui) {
+        return;
+    }
+    ui->leader_prefix_length    = 0u;
+    ui->leader_no_match         = false;
+    ui->leader_last_invalid_key = SOL_KEY_UNKNOWN;
+}
+
+void sol_ui_open_leader_popup(SolUISystem *ui)
+{
+    if (!ui) {
+        return;
+    }
+    ui->leader_active = true;
+    sol_ui_reset_leader_prefix(ui);
+    sol_ui_mark_workspace_dirty(ui);
+}
+
+void sol_ui_close_leader_popup(SolUISystem *ui)
+{
+    if (!ui) {
+        return;
+    }
+    ui->leader_active = false;
+    sol_ui_reset_leader_prefix(ui);
+    sol_ui_mark_workspace_dirty(ui);
+}
+
+/* ------------------------------------------------------------------ */
+/* Flow matching                                                       */
+/* ------------------------------------------------------------------ */
+
+bool sol_ui_flow_matches_prefix(const SolCommandFlowBinding *flow,
+                                const SolKeyCode *prefix, size_t prefix_length)
+{
+    if (!flow || prefix_length > flow->sequence_length) {
+        return false;
+    }
+    for (size_t i = 0u; i < prefix_length; ++i) {
+        if (flow->sequence[i] != prefix[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+size_t sol_ui_collect_suggestions(SolUISystem *ui,
+                                  SolFlowSuggestion *out, size_t capacity)
+{
+    if (!ui || !out || capacity == 0u) {
+        return 0u;
+    }
+
+    size_t count = 0u;
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        const SolCommandFlowBinding *flow = &ui->command_flows[i];
+        if (!sol_ui_flow_matches_prefix(flow, ui->leader_prefix, ui->leader_prefix_length)) {
+            continue;
+        }
+        if (flow->sequence_length <= ui->leader_prefix_length) {
+            continue;
+        }
+
+        const SolKeyCode next_key = flow->sequence[ui->leader_prefix_length];
+
+        bool exists = false;
+        for (size_t j = 0u; j < count; ++j) {
+            if (out[j].key == next_key) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists || count >= capacity) {
+            continue;
+        }
+
+        out[count].key   = next_key;
+        out[count].label = sol_ui_flow_label_for_next(
+            ui, ui->leader_prefix, ui->leader_prefix_length, next_key);
+        out[count].continuation_count = sol_ui_flow_continuation_count(
+            ui, ui->leader_prefix, ui->leader_prefix_length, next_key);
+        ++count;
+    }
+    return count;
+}
+
+/* ------------------------------------------------------------------ */
+/* Public registration API                                             */
+/* ------------------------------------------------------------------ */
+
+bool sol_ui_system_register_command_flow(SolUISystem *ui,
+                                         const SolCommandFlowDesc *desc)
+{
+    if (!ui || !desc || !desc->action || !desc->callback) {
+        return false;
+    }
+
+    size_t sequence_length = 0u;
+    if (desc->sequence && desc->sequence_length > 0u) {
+        sequence_length = desc->sequence_length;
+    } else if (desc->key != SOL_KEY_UNKNOWN) {
+        sequence_length = 1u;
+    }
+    if (sequence_length == 0u || sequence_length > SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
+        return false;
+    }
+
+    SolCommandFlowBinding *flow = sol_ui_find_flow_by_action(ui, desc->action);
+    if (!flow) {
+        if (ui->command_flow_count >= SOL_UI_MAX_COMMAND_FLOWS) {
+            return false;
+        }
+        flow = &ui->command_flows[ui->command_flow_count++];
+        memset(flow, 0, sizeof(*flow));
+        sol_ui_copy_text(flow->action, sizeof(flow->action), desc->action);
+    } else {
+        memset(flow->sequence, 0, sizeof(flow->sequence));
+    }
+
+    flow->sequence_length = sequence_length;
+    if (desc->sequence && desc->sequence_length > 0u) {
+        for (size_t i = 0u; i < sequence_length; ++i) {
+            flow->sequence[i] = sol_ui_normalize_flow_key(desc->sequence[i]);
+        }
+    } else {
+        flow->sequence[0] = sol_ui_normalize_flow_key(desc->key);
+    }
+
+    flow->callback  = desc->callback;
+    flow->user_data = desc->user_data;
+    sol_ui_copy_text(flow->label, sizeof(flow->label),
+                     desc->label ? desc->label : desc->action);
+
+    sol_ui_mark_workspace_dirty(ui);
+    return true;
+}

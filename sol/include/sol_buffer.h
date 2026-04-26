@@ -1,0 +1,97 @@
+#ifndef SOL_BUFFER_H
+#define SOL_BUFFER_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct SolBufferSystem SolBufferSystem;
+typedef struct SolBuffer SolBuffer;
+
+typedef uint64_t SolBufferId;
+typedef uint64_t SolBufferNodeId;
+
+typedef enum SolBufferKind {
+    SOL_BUFFER_KIND_TEXT = 0,
+    SOL_BUFFER_KIND_PLUGIN,
+    SOL_BUFFER_KIND_TERMINAL,
+    SOL_BUFFER_KIND_CUSTOM,
+} SolBufferKind;
+
+typedef enum SolBufferSplitDirection {
+    SOL_BUFFER_SPLIT_HORIZONTAL = 0,
+    SOL_BUFFER_SPLIT_VERTICAL,
+} SolBufferSplitDirection;
+
+typedef struct SolBufferRenderArgs {
+    bool is_active;
+    void *ui_context;
+} SolBufferRenderArgs;
+
+typedef void (*SolBufferDestroyFn)(void *state);
+typedef void (*SolBufferRenderFn)(const SolBuffer *buffer, const SolBufferRenderArgs *args, void *state);
+
+typedef struct SolBufferOps {
+    SolBufferDestroyFn destroy;
+    SolBufferRenderFn render;
+} SolBufferOps;
+
+typedef struct SolBufferDesc {
+    const char *name;
+    SolBufferKind kind;
+    void *state;
+    SolBufferOps ops;
+} SolBufferDesc;
+
+typedef struct SolBufferSystemConfig {
+    size_t initial_buffer_capacity;
+    size_t initial_node_capacity;
+} SolBufferSystemConfig;
+
+typedef struct SolBufferWorkspaceVisitor {
+    void (*begin_split)(SolBufferSplitDirection direction, float ratio, void *user_data);
+    void (*end_split)(void *user_data);
+    void (*render_leaf)(SolBuffer *buffer, SolBufferNodeId leaf_id, bool is_active, void *user_data);
+} SolBufferWorkspaceVisitor;
+
+SolBufferSystemConfig sol_buffer_system_config_default(void);
+
+SolBufferSystem *sol_buffer_system_create(const SolBufferSystemConfig *config);
+void sol_buffer_system_destroy(SolBufferSystem *system);
+
+SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc);
+bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id);
+
+SolBuffer *sol_buffer_get(SolBufferSystem *system, SolBufferId buffer_id);
+const SolBuffer *sol_buffer_get_const(const SolBufferSystem *system, SolBufferId buffer_id);
+
+const char *sol_buffer_name(const SolBuffer *buffer);
+SolBufferKind sol_buffer_kind(const SolBuffer *buffer);
+SolBufferId sol_buffer_id(const SolBuffer *buffer);
+void *sol_buffer_state(SolBuffer *buffer);
+const void *sol_buffer_state_const(const SolBuffer *buffer);
+
+bool sol_buffer_split_active(
+    SolBufferSystem *system,
+    SolBufferSplitDirection direction,
+    float ratio,
+    SolBufferId new_buffer_id,
+    SolBufferNodeId *out_new_leaf_id
+);
+
+bool sol_buffer_focus_next_leaf(SolBufferSystem *system);
+bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buffer_id);
+
+SolBufferId sol_buffer_active_buffer(const SolBufferSystem *system);
+SolBufferNodeId sol_buffer_active_leaf(const SolBufferSystem *system);
+size_t sol_buffer_count(const SolBufferSystem *system);
+
+void sol_buffer_workspace_visit(
+    SolBufferSystem *system,
+    const SolBufferWorkspaceVisitor *visitor,
+    void *user_data
+);
+
+void sol_buffer_render(SolBuffer *buffer, const SolBufferRenderArgs *args);
+
+#endif
