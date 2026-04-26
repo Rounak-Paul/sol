@@ -1,6 +1,6 @@
 # Sol + Causality — Refactor Plan
 
-> **Status:** Batches 1–3 landed; build green; reactive core, asset embedding, sol piece-table & file I/O all in.
+> **Status:** Batches 1–4 landed; build green; reactive core, asset embedding, sol piece-table & file I/O, scorched-earth state→signals migration, and explicit `_begin/_end` API all in. See *Batch 4* at bottom for the API/reactivity finalisation that supersedes §C2.4 and §C3.1.
 > **Scope locked by user:** keep GLFW + Vulkan; builder-call API; full CSS3 target; reactivity model = architect's choice; everything must be Apache-2.0 compliant; **no separate runtime assets — everything embedded.**
 
 ---
@@ -283,3 +283,19 @@ After each phase, both repos build, sandbox runs, sol runs, no regressions.
 3. Settings/keys persistence file format: TOML, JSON, or RON-like? (Default: TOML via a tiny vendored parser, MIT/Apache-2.0 only.)
 
 Reply "go" and I'll start with **C1 + S1** (license + safety-net pass, no behavior change) as the first PR-sized chunk.
+
+---
+
+## ✅ Batch 4 — Causality reactivity + API finalisation (LANDED)
+
+**Direction shift from §C2.4 / §C3.1:** scorched-earth, no compat shim, explicit `_begin/_end` retained.
+
+- **`ca_state_*` removed entirely.** `Ca_State`, `Ca_StateDesc`, `state_pool`, `dirty_states`, `CA_DIRTY_REBUILD`, `ca_widget_rebuild_pass`, `ca_node_subscribe`, the per-node `subs/sub_count/sub_flags` arrays, and `CA_MAX_STATES`/`CA_MAX_NODE_SUBS`/`CA_MAX_STATE_SUBSCRIBERS` caps are gone. No deprecation, no shim.
+- **All reactivity now flows through signals/effects** ([signal.c](vendors/causality/causality/src/reactive/signal.c), [ca_reactive.h](vendors/causality/causality/include/ca_reactive.h)).
+- **`ca_div_set_builder` returns `Ca_Effect *`** and is implemented as a real effect: the builder body re-runs whenever any `ca_signal_get` it touched changes. `ca_div_invalidate` is a thin wrapper over `ca_effect_invalidate`. Tick order: `reactive_flush → ui_update → renderer_frame`, so builder rebuilds populate fresh children for the same frame's layout pass.
+- **Explicit per-container `_begin/_end` API.** `ca_div_begin/end`, `ca_btn_begin/end`, `ca_list_begin/end`, `ca_li_begin/end`, `ca_tree_begin/end`, `ca_tree_node_begin/end` (with collapsed-children hide hook), `ca_table_begin/end`, `ca_table_row_begin/end`, `ca_modal_begin/end`, `ca_split_begin/end` — each `_end` is a real function next to its `_begin`, no aliases or shims. (Reverses the brief consolidation to a single `ca_end()` after user feedback that "begin/end was more explicit".)
+- **`text-align` default flipped to left** (HTML user-agent default). Encoding is now `0=left, 1=center, 2=right`. `ca_btn_begin` keeps centred text by default to match HTML `<button>`.
+- **`causality.h` is now the single public header** — auto-includes both `ca_components.h` and `ca_reactive.h`.
+- All callsites in `vendors/causality/causality/src/ui/title_bar.c`, `vendors/causality/sandbox/src/main.c`, `sol/src/main.c`, `sol/src/ui/sol_editor.c` updated.
+
+Build green, smoke clean (exit=143, empty log).
