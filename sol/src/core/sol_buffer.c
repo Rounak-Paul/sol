@@ -68,6 +68,7 @@ static char *sol_strdup(const char *value)
     return out;
 }
 
+// Clamps the split ratio to a reasonable range to prevent unusable splits.
 static float sol_clamp_ratio(float ratio)
 {
     if (ratio < 0.1f) {
