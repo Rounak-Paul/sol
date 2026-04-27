@@ -26,6 +26,7 @@
 /* ------------------------------------------------------------------ */
 
 #define SOL_UI_MAX_COMMAND_FLOWS      64u
+#define SOL_UI_MAX_SPLIT_CALLBACKS    64u
 #define SOL_UI_MAX_ACTION_LEN         63u
 #define SOL_UI_MAX_LABEL_LEN          95u
 #define SOL_UI_MAX_FLOW_SEQUENCE_LEN  8u
@@ -61,6 +62,15 @@ typedef struct SolFlowSuggestion {
     uint32_t    continuation_count;
 } SolFlowSuggestion;
 
+/* Persistent context handed to causality split widgets so their drag
+   callback can update the buffer system's stored ratio. Pointers must
+   remain stable across rebuilds, so they live in a fixed-size array on
+   SolUISystem. */
+typedef struct SolSplitCallbackCtx {
+    struct SolUISystem *ui;
+    SolBufferNodeId     node_id;
+} SolSplitCallbackCtx;
+
 struct SolUISystem {
     Ca_Instance      *instance;
     Ca_Window        *primary_window;
@@ -94,6 +104,13 @@ struct SolUISystem {
     /* Status bar single-line text + kind for badge styling. */
     char   status_bar_kind;
     char   status_bar_text[SOL_UI_STATUS_TEXT_MAX_LEN + 1u];
+
+    /* Pool of per-split callback contexts handed to causality. Reset
+       at the start of each workspace visit; entries persist between
+       rebuilds so dragging in-between frames still finds a valid
+       pointer. */
+    SolSplitCallbackCtx split_callback_ctxs[SOL_UI_MAX_SPLIT_CALLBACKS];
+    size_t              split_callback_ctx_count;
 };
 
 /* ------------------------------------------------------------------ */

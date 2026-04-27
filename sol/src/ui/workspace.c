@@ -23,6 +23,7 @@
 
 #include "style.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,12 +61,34 @@ static int sol_ui_split_direction_to_ca(SolBufferSplitDirection direction)
     return direction == SOL_BUFFER_SPLIT_VERTICAL ? CA_HORIZONTAL : CA_VERTICAL;
 }
 
+static void sol_ui_split_on_resize(float ratio, void *user_data)
+{
+    SolSplitCallbackCtx *ctx = (SolSplitCallbackCtx *)user_data;
+    if (!ctx || !ctx->ui || !ctx->ui->buffers || ctx->node_id == 0u) {
+        return;
+    }
+    sol_buffer_set_split_ratio(ctx->ui->buffers, ctx->node_id, ratio);
+}
+
 static void sol_ui_visit_begin_split(SolBufferSplitDirection direction,
-                                     float ratio, void *user_data)
+                                     float ratio, SolBufferNodeId node_id,
+                                     void *user_data)
 {
     SolWorkspaceVisitorContext *ctx = (SolWorkspaceVisitorContext *)user_data;
     if (!ctx || !ctx->ui) {
         return;
+    }
+
+    SolSplitCallbackCtx *cb_ctx = NULL;
+    if (ctx->ui->split_callback_ctx_count < SOL_UI_MAX_SPLIT_CALLBACKS) {
+        cb_ctx = &ctx->ui->split_callback_ctxs[ctx->ui->split_callback_ctx_count++];
+        cb_ctx->ui = ctx->ui;
+        cb_ctx->node_id = node_id;
+    } else {
+        /* Pool exhausted: this split's drag will not persist across
+           rebuilds. The ceiling is generous; if you hit this, raise
+           SOL_UI_MAX_SPLIT_CALLBACKS. */
+        assert(false && "SOL_UI_MAX_SPLIT_CALLBACKS exceeded");
     }
 
     ca_split_begin(&(Ca_SplitDesc){
@@ -74,6 +97,8 @@ static void sol_ui_visit_begin_split(SolBufferSplitDirection direction,
         .bar_size        = SOL_UI_SPLIT_BAR_SIZE,
         .bar_color       = SOL_UI_SPLIT_BAR_COLOR,
         .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
+        .on_resize       = cb_ctx ? sol_ui_split_on_resize : NULL,
+        .user_data       = cb_ctx,
     });
 }
 
@@ -135,6 +160,10 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     }
 
     SolWorkspaceVisitorContext visitor_context = { .ui = ui };
+
+    /* Reset the per-frame split callback pool. Pointers handed out
+       below stay valid until the next call to this function. */
+    ui->split_callback_ctx_count = 0u;
 
     SolBufferWorkspaceVisitor visitor;
     memset(&visitor, 0, sizeof(visitor));

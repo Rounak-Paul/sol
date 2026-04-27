@@ -538,6 +538,19 @@ bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buff
     return true;
 }
 
+bool sol_buffer_set_split_ratio(SolBufferSystem *system, SolBufferNodeId split_node_id, float ratio)
+{
+    if (!system) {
+        return false;
+    }
+    SolLayoutNode *node = sol_layout_find_node(system, split_node_id);
+    if (!node || node->type != SOL_LAYOUT_NODE_SPLIT) {
+        return false;
+    }
+    node->as.split.ratio = sol_clamp_ratio(ratio);
+    return true;
+}
+
 SolBufferId sol_buffer_active_buffer(const SolBufferSystem *system)
 {
     if (!system || system->active_leaf_id == 0u) {
@@ -594,7 +607,7 @@ static void sol_buffer_visit_node(
     }
 
     if (visitor->begin_split) {
-        visitor->begin_split(node->as.split.direction, node->as.split.ratio, user_data);
+        visitor->begin_split(node->as.split.direction, node->as.split.ratio, node->id, user_data);
     }
 
     sol_buffer_visit_node(system, visitor, node->as.split.first_id, user_data);

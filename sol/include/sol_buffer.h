@@ -49,7 +49,7 @@ typedef struct SolBufferSystemConfig {
 } SolBufferSystemConfig;
 
 typedef struct SolBufferWorkspaceVisitor {
-    void (*begin_split)(SolBufferSplitDirection direction, float ratio, void *user_data);
+    void (*begin_split)(SolBufferSplitDirection direction, float ratio, SolBufferNodeId node_id, void *user_data);
     void (*end_split)(void *user_data);
     void (*render_leaf)(SolBuffer *buffer, SolBufferNodeId leaf_id, bool is_active, void *user_data);
 } SolBufferWorkspaceVisitor;
@@ -81,6 +81,8 @@ bool sol_buffer_split_active(
 
 bool sol_buffer_focus_next_leaf(SolBufferSystem *system);
 bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buffer_id);
+
+bool sol_buffer_set_split_ratio(SolBufferSystem *system, SolBufferNodeId split_node_id, float ratio);
 
 SolBufferId sol_buffer_active_buffer(const SolBufferSystem *system);
 SolBufferNodeId sol_buffer_active_leaf(const SolBufferSystem *system);
