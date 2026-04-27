@@ -538,6 +538,92 @@ bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buff
     return true;
 }
 
+bool sol_buffer_set_active_leaf(SolBufferSystem *system, SolBufferNodeId leaf_id)
+{
+    if (!system) return false;
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) {
+        return false;
+    }
+    system->active_leaf_id = leaf_id;
+    return true;
+}
+
+bool sol_buffer_set_leaf_buffer(SolBufferSystem *system, SolBufferNodeId leaf_id, SolBufferId buffer_id)
+{
+    if (!system || !sol_buffer_find(system, buffer_id)) return false;
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return false;
+    if (leaf->as.leaf.buffer_id == buffer_id) return false;
+    leaf->as.leaf.buffer_id = buffer_id;
+    return true;
+}
+
+SolBufferId sol_buffer_leaf_buffer(const SolBufferSystem *system, SolBufferNodeId leaf_id)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return 0u;
+    return leaf->as.leaf.buffer_id;
+}
+
+/* Recursive hit-test helper. (x,y,w,h) is the rect this subtree
+   occupies in screen space. Mirrors causality's split-bar layout:
+   each split places `bar_size` pixels between its two children, with
+   the first child taking `ratio` of the remaining axis. */
+static SolBufferNodeId sol_layout_hit_test(const SolBufferSystem *system,
+                                           SolBufferNodeId node_id,
+                                           float x, float y, float w, float h,
+                                           float bar_size,
+                                           float px, float py)
+{
+    const SolLayoutNode *node = sol_layout_find_node_const(system, node_id);
+    if (!node) return 0u;
+
+    if (px < x || py < y || px > x + w || py > y + h) return 0u;
+
+    if (node->type == SOL_LAYOUT_NODE_LEAF) {
+        return node->id;
+    }
+
+    const float r = node->as.split.ratio;
+    if (node->as.split.direction == SOL_BUFFER_SPLIT_VERTICAL) {
+        /* Vertical split = panes side-by-side (laid out horizontally). */
+        const float avail = w - bar_size;
+        const float first_w  = avail > 0.0f ? avail * r        : 0.0f;
+        const float second_w = avail > 0.0f ? avail - first_w  : 0.0f;
+        const float second_x = x + first_w + bar_size;
+        if (px < second_x) {
+            return sol_layout_hit_test(system, node->as.split.first_id,
+                                       x, y, first_w, h, bar_size, px, py);
+        }
+        return sol_layout_hit_test(system, node->as.split.second_id,
+                                   second_x, y, second_w, h, bar_size, px, py);
+    }
+
+    /* Horizontal split = panes stacked top-bottom (laid out vertically). */
+    const float avail = h - bar_size;
+    const float first_h  = avail > 0.0f ? avail * r        : 0.0f;
+    const float second_h = avail > 0.0f ? avail - first_h  : 0.0f;
+    const float second_y = y + first_h + bar_size;
+    if (py < second_y) {
+        return sol_layout_hit_test(system, node->as.split.first_id,
+                                   x, y, w, first_h, bar_size, px, py);
+    }
+    return sol_layout_hit_test(system, node->as.split.second_id,
+                               x, second_y, w, second_h, bar_size, px, py);
+}
+
+SolBufferNodeId sol_buffer_leaf_at_point(const SolBufferSystem *system,
+                                         float x, float y,
+                                         float w, float h,
+                                         float bar_size,
+                                         float px, float py)
+{
+    if (!system || system->root_id == 0u) return 0u;
+    return sol_layout_hit_test(system, system->root_id,
+                               x, y, w, h, bar_size, px, py);
+}
+
 bool sol_buffer_set_split_ratio(SolBufferSystem *system, SolBufferNodeId split_node_id, float ratio)
 {
     if (!system) {
@@ -584,6 +670,77 @@ size_t sol_buffer_count(const SolBufferSystem *system)
     }
 
     return count;
+}
+
+SolBufferId sol_buffer_at(const SolBufferSystem *system, size_t index)
+{
+    if (!system) {
+        return 0u;
+    }
+
+    size_t cursor = 0u;
+    for (size_t i = 0u; i < system->buffer_count; ++i) {
+        if (!system->buffers[i].in_use) {
+            continue;
+        }
+        if (cursor == index) {
+            return system->buffers[i].id;
+        }
+        ++cursor;
+    }
+    return 0u;
+}
+
+bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
+{
+    if (!system || direction == 0) {
+        return false;
+    }
+
+    SolLayoutNode *leaf = sol_layout_find_node(system, system->active_leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) {
+        return false;
+    }
+
+    /* Build a flat list of live buffer ids in registration order. */
+    size_t total = sol_buffer_count(system);
+    if (total < 2u) {
+        return false;
+    }
+
+    SolBufferId *ids = (SolBufferId *)calloc(total, sizeof(SolBufferId));
+    if (!ids) {
+        return false;
+    }
+
+    size_t cursor = 0u;
+    for (size_t i = 0u; i < system->buffer_count; ++i) {
+        if (system->buffers[i].in_use) {
+            ids[cursor++] = system->buffers[i].id;
+        }
+    }
+
+    size_t current = total;   /* sentinel = not found */
+    for (size_t i = 0u; i < total; ++i) {
+        if (ids[i] == leaf->as.leaf.buffer_id) {
+            current = i;
+            break;
+        }
+    }
+
+    size_t next;
+    if (current == total) {
+        next = 0u;
+    } else if (direction > 0) {
+        next = (current + 1u) % total;
+    } else {
+        next = (current + total - 1u) % total;
+    }
+
+    bool changed = (ids[next] != leaf->as.leaf.buffer_id);
+    leaf->as.leaf.buffer_id = ids[next];
+    free(ids);
+    return changed;
 }
 
 static void sol_buffer_visit_node(

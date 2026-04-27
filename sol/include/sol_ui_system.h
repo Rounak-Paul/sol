@@ -11,6 +11,11 @@
 
 typedef struct SolUISystem SolUISystem;
 
+/* Callback invoked when the user clicks a file row in the tree panel.
+ * Sol's main wires this to a buffer-create + focus path. Return true on
+ * success — the UI ignores the value today but will surface it later. */
+typedef bool (*SolUIFileOpenFn)(const char *path, void *user_data);
+
 typedef struct SolCommandFlowDesc {
 	const char *action;
 	const char *label;
@@ -33,8 +38,50 @@ bool sol_ui_system_on_save_action(const char *action, const SolInputEvent *event
 bool sol_ui_system_on_split_vertical_action(const char *action, const SolInputEvent *event, void *user_data);
 bool sol_ui_system_on_split_horizontal_action(const char *action, const SolInputEvent *event, void *user_data);
 bool sol_ui_system_on_focus_next_action(const char *action, const SolInputEvent *event, void *user_data);
+bool sol_ui_system_on_buffer_next_action(const char *action, const SolInputEvent *event, void *user_data);
+bool sol_ui_system_on_buffer_prev_action(const char *action, const SolInputEvent *event, void *user_data);
 
 void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window);
 void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height);
+
+/* File tree integration. Calling set_file_tree_root with a directory
+ * path mounts the left-side hierarchy panel. Pass NULL to hide it. */
+bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path);
+void sol_ui_system_set_file_open_callback(SolUISystem *ui,
+                                          SolUIFileOpenFn callback,
+                                          void *user_data);
+
+/* Force the buffer split-tree area to rebuild on the next reactive
+ * flush. Call this after externally swapping the active buffer (e.g.
+ * from a file-picker callback) so the new contents render immediately
+ * instead of waiting for an unrelated invalidation. */
+void sol_ui_system_invalidate_buffer_area(SolUISystem *ui);
+
+/* Last-known logical window size in CSS pixels. Either out param may be
+ * NULL. Both are 0 until the first resize callback fires. */
+void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h);
+
+/* Geometry of the chrome strips around the buffer area, in CSS pixels.
+ * Used by the host application to do its own hit-testing (e.g. routing
+ * mouse-wheel events to the pane under the cursor instead of the
+ * focused one). */
+int  sol_ui_system_title_bar_height(const SolUISystem *ui);
+int  sol_ui_system_status_bar_height(const SolUISystem *ui);
+int  sol_ui_system_tree_panel_width(const SolUISystem *ui);
+
+/* Title-bar menu integration. The two callbacks fire when the user
+ * picks "File → Open File…" or "File → Open Folder…" respectively.
+ * Pass NULL for either to leave that item disabled. The menu is
+ * (re)installed on the primary window's title bar each call. */
+typedef void (*SolUIMenuActionFn)(void *user_data);
+void sol_ui_system_install_menu(SolUISystem      *ui,
+                                SolUIMenuActionFn on_open_file,
+                                SolUIMenuActionFn on_open_folder,
+                                void             *user_data);
+
+/* Per-frame tick — drives async UI work owned by the UI system
+ * (currently: reaping closed file-picker windows). Safe to call
+ * even when nothing async is in flight. */
+void sol_ui_system_tick(SolUISystem *ui);
 
 #endif

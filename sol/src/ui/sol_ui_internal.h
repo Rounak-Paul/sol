@@ -19,6 +19,7 @@
 
 #include <causality.h>
 
+#include "sol_file_tree.h"
 #include "sol_ui_system.h"
 
 /* ------------------------------------------------------------------ */
@@ -71,6 +72,25 @@ typedef struct SolSplitCallbackCtx {
     SolBufferNodeId     node_id;
 } SolSplitCallbackCtx;
 
+/* Persistent context handed to every clickable row in the file tree
+   panel. Pointers must stay stable across rebuilds (causality keeps
+   button nodes alive between frames); the pool is grown on demand. */
+typedef struct SolFileTreeClickCtx {
+    struct SolUISystem *ui;
+    size_t              row_index;
+} SolFileTreeClickCtx;
+
+/* Persistent context handed to clickable elements inside a buffer pane
+   (the pane body, and per-tab buttons). When `tab_buffer_id` is 0 the
+   click means "focus this pane"; when nonzero it means "switch this
+   pane to that buffer (and focus it)". The pool is reset and refilled
+   each time the buffer area rebuilds. */
+typedef struct SolPaneClickCtx {
+    struct SolUISystem *ui;
+    SolBufferNodeId     leaf_id;
+    SolBufferId         tab_buffer_id;
+} SolPaneClickCtx;
+
 struct SolUISystem {
     Ca_Instance      *instance;
     Ca_Window        *primary_window;
@@ -80,6 +100,12 @@ struct SolUISystem {
 
     Ca_Div           *workspace_host;
     Ca_Div           *workspace_content_host;
+    /* Sub-hosts inside workspace_content_host. Each owns its own
+       reactive builder so toggling the file tree only rebuilds the
+       tree panel, and opening a buffer only rebuilds the buffer area —
+       not the whole workspace. NULL until the workspace builder runs. */
+    Ca_Div           *tree_panel_host;
+    Ca_Div           *buffer_area_host;
 
     /* Leader / flow state. */
     SolModifierMask   leader_modifier;
@@ -111,6 +137,30 @@ struct SolUISystem {
        pointer. */
     SolSplitCallbackCtx split_callback_ctxs[SOL_UI_MAX_SPLIT_CALLBACKS];
     size_t              split_callback_ctx_count;
+
+    /* File tree state + click-context pool. file_tree is NULL until a
+       directory has been set as the root. */
+    SolFileTree                *file_tree;
+    SolFileTreeClickCtx        *file_tree_click_ctxs;
+    size_t                      file_tree_click_ctx_count;
+    size_t                      file_tree_click_ctx_capacity;
+
+    /* Click-context pool for buffer-pane elements (per-pane focus
+       click + per-tab buttons). Reset at the start of every buffer
+       area rebuild; grown on demand. */
+    SolPaneClickCtx            *pane_click_ctxs;
+    size_t                      pane_click_ctx_count;
+    size_t                      pane_click_ctx_capacity;
+
+    SolUIFileOpenFn  file_open_callback;
+    void            *file_open_user_data;
+
+    /* Title-bar menu callbacks. Installed via
+       sol_ui_system_install_menu(); the trampolines defined in
+       workspace.c look these up to dispatch to main.c. */
+    SolUIMenuActionFn menu_on_open_file;
+    SolUIMenuActionFn menu_on_open_folder;
+    void             *menu_user_data;
 };
 
 /* ------------------------------------------------------------------ */
@@ -118,8 +168,16 @@ struct SolUISystem {
 /* ------------------------------------------------------------------ */
 
 /* Workspace dirty marking: reactivity-aware (invalidates effect when host
-   exists, otherwise sets a flag the on_frame hook acts on). */
+   exists, otherwise sets a flag the on_frame hook acts on).
+
+   - sol_ui_mark_workspace_dirty: invalidates the whole workspace
+     content tree. Use only for layout-shape changes (leader popup
+     toggle, file tree root attach/detach, window resize).
+   - sol_ui_mark_tree_dirty:      invalidates only the file-tree panel.
+   - sol_ui_mark_buffers_dirty:   invalidates only the buffer area. */
 void sol_ui_mark_workspace_dirty(SolUISystem *ui);
+void sol_ui_mark_tree_dirty(SolUISystem *ui);
+void sol_ui_mark_buffers_dirty(SolUISystem *ui);
 
 /* Key utilities (command_flow.c) */
 bool        sol_ui_is_modifier_key(SolKeyCode key);
@@ -149,5 +207,7 @@ size_t sol_ui_collect_suggestions(SolUISystem *ui,
 /* Render passes (command_panel.c, workspace.c) */
 void sol_ui_render_command_flow_panel(SolUISystem *ui);
 void sol_ui_render_workspace_tree(SolUISystem *ui);
+void sol_ui_render_file_tree_panel(SolUISystem *ui);
+void sol_ui_render_file_tree_panel_body(SolUISystem *ui);
 
 #endif /* SOL_UI_INTERNAL_H */

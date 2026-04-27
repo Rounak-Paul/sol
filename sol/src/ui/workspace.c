@@ -21,6 +21,7 @@
 
 #include "sol_ui_internal.h"
 
+#include "sol_file_picker.h"
 #include "style.h"
 
 #include <assert.h>
@@ -50,6 +51,28 @@ void sol_ui_mark_workspace_dirty(SolUISystem *ui)
         return;
     }
     ui->workspace_dirty = true;
+}
+
+void sol_ui_mark_tree_dirty(SolUISystem *ui)
+{
+    if (!ui) return;
+    if (ui->tree_panel_host) {
+        ca_div_invalidate(ui->tree_panel_host);
+        return;
+    }
+    /* No dedicated host yet — fall back to a full workspace rebuild so
+       the panel is at least re-emitted on the next frame. */
+    sol_ui_mark_workspace_dirty(ui);
+}
+
+void sol_ui_mark_buffers_dirty(SolUISystem *ui)
+{
+    if (!ui) return;
+    if (ui->buffer_area_host) {
+        ca_div_invalidate(ui->buffer_area_host);
+        return;
+    }
+    sol_ui_mark_workspace_dirty(ui);
 }
 
 /* ------------------------------------------------------------------ */
@@ -108,34 +131,144 @@ static void sol_ui_visit_end_split(void *user_data)
     ca_split_end();
 }
 
+/* ------------------------------------------------------------------ */
+/* Pane-click context pool                                             */
+/* ------------------------------------------------------------------ */
+
+static SolPaneClickCtx *sol_ui_acquire_pane_click_ctx(SolUISystem *ui)
+{
+    if (!ui) return NULL;
+    if (ui->pane_click_ctx_count == ui->pane_click_ctx_capacity) {
+        size_t new_cap = ui->pane_click_ctx_capacity
+                            ? ui->pane_click_ctx_capacity * 2u
+                            : 32u;
+        SolPaneClickCtx *grown = (SolPaneClickCtx *)realloc(
+            ui->pane_click_ctxs, new_cap * sizeof(SolPaneClickCtx));
+        if (!grown) return NULL;
+        ui->pane_click_ctxs        = grown;
+        ui->pane_click_ctx_capacity = new_cap;
+    }
+    return &ui->pane_click_ctxs[ui->pane_click_ctx_count++];
+}
+
+static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
+{
+    (void)button;
+    SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
+    if (!cb || !cb->ui || !cb->ui->buffers) return;
+    if (sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id)) {
+        sol_ui_mark_buffers_dirty(cb->ui);
+    }
+}
+
+static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
+{
+    (void)button;
+    SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
+    if (!cb || !cb->ui || !cb->ui->buffers) return;
+    bool changed = false;
+    /* Always focus the host pane first. */
+    if (sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id)) {
+        changed = true;
+    }
+    if (cb->tab_buffer_id != 0u &&
+        sol_buffer_set_leaf_buffer(cb->ui->buffers, cb->leaf_id, cb->tab_buffer_id)) {
+        changed = true;
+    }
+    if (changed) {
+        sol_ui_mark_buffers_dirty(cb->ui);
+    }
+}
+
+/* Global tab strip rendered ONCE above the entire split tree (Neovim
+   tabline style). Each tab is one live buffer; clicking a tab focuses
+   the currently-active leaf and swaps in that buffer. The active tab
+   is the one whose buffer the active leaf is currently showing. */
+static void sol_ui_render_global_tab_strip(SolUISystem *ui)
+{
+    if (!ui || !ui->buffers) return;
+    const size_t tab_count = sol_buffer_count(ui->buffers);
+    if (tab_count == 0u) return;
+
+    const SolBufferNodeId active_leaf  = sol_buffer_active_leaf(ui->buffers);
+    const SolBufferId     active_bufid = sol_buffer_leaf_buffer(ui->buffers, active_leaf);
+
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .style     = "buffer-tabs-row",
+    });
+    for (size_t i = 0u; i < tab_count; ++i) {
+        const SolBufferId tab_id = sol_buffer_at(ui->buffers, i);
+        if (tab_id == 0u) continue;
+        const SolBuffer *tab_buf = sol_buffer_get_const(ui->buffers, tab_id);
+        if (!tab_buf) continue;
+        const bool tab_active = (tab_id == active_bufid);
+        SolPaneClickCtx *cb = sol_ui_acquire_pane_click_ctx(ui);
+        if (cb) {
+            cb->ui            = ui;
+            cb->leaf_id       = active_leaf;
+            cb->tab_buffer_id = tab_id;
+        }
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = tab_active ? "buffer-tab buffer-tab-active"
+                                      : "buffer-tab",
+            .direction  = CA_HORIZONTAL,
+            .background = 0u,
+            .on_click   = cb ? sol_ui_on_tab_click : NULL,
+            .click_data = cb,
+        });
+        ca_text(&(Ca_TextDesc){
+            .text  = sol_buffer_name(tab_buf),
+            .style = tab_active ? "buffer-tab-text buffer-tab-text-active"
+                                : "buffer-tab-text",
+        });
+        ca_btn_end();
+    }
+    ca_div_end();   /* buffer-tabs-row */
+}
+
 static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
                                      bool is_active, void *user_data)
 {
-    (void)leaf_id;
     SolWorkspaceVisitorContext *ctx = (SolWorkspaceVisitorContext *)user_data;
     if (!ctx || !ctx->ui) {
         return;
     }
+    SolUISystem *ui = ctx->ui;
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style     = is_active ? "buffer-pane buffer-pane-active" : "buffer-pane",
     });
 
-    ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
-        .style     = "buffer-body",
-    });
+    /* Pane body wrapped in a button so clicking anywhere inside the
+       buffer area focuses this pane (without disturbing the buffer's
+       own contents). */
+    {
+        SolPaneClickCtx *cb = sol_ui_acquire_pane_click_ctx(ui);
+        if (cb) {
+            cb->ui            = ui;
+            cb->leaf_id       = leaf_id;
+            cb->tab_buffer_id = 0u;
+        }
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = "buffer-body",
+            .direction  = CA_VERTICAL,
+            .background = 0u,
+            .on_click   = cb ? sol_ui_on_pane_click : NULL,
+            .click_data = cb,
+        });
+    }
 
     if (buffer) {
         SolBufferRenderArgs args = {
             .is_active   = is_active,
-            .ui_context  = ctx->ui,
+            .ui_context  = ui,
         };
         sol_buffer_render(buffer, &args);
     }
 
-    ca_div_end();  /* buffer-body */
+    ca_btn_end();  /* buffer-body */
     ca_div_end();  /* buffer-pane */
 }
 
@@ -164,6 +297,8 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     /* Reset the per-frame split callback pool. Pointers handed out
        below stay valid until the next call to this function. */
     ui->split_callback_ctx_count = 0u;
+    /* Note: pane_click_ctx pool is reset by the buffer-area builder so
+       it spans both the global tab strip and the split-tree. */
 
     SolBufferWorkspaceVisitor visitor;
     memset(&visitor, 0, sizeof(visitor));
@@ -178,6 +313,32 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
 /* Reactive content builder                                            */
 /* ------------------------------------------------------------------ */
 
+/* Builder for the left file-tree panel. Owns its own reactive effect so
+   tree expand/collapse only rebuilds this subtree, not the whole
+   workspace. The host div carries the "tree-panel" style; this body
+   only emits the header text and rows. */
+static void sol_ui_tree_panel_builder(Ca_Div *div, void *user_data)
+{
+    (void)div;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return;
+    sol_ui_render_file_tree_panel_body(ui);
+}
+
+/* Builder for the buffer split-tree area. Invalidated independently
+   when the active buffer or split topology changes. */
+static void sol_ui_buffer_area_builder(Ca_Div *div, void *user_data)
+{
+    (void)div;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui) return;
+    /* Reset the per-rebuild pane-click pool here so both the global tab
+       strip and the split-tree share a single fresh allocation cycle. */
+    ui->pane_click_ctx_count = 0u;
+    sol_ui_render_global_tab_strip(ui);
+    sol_ui_render_workspace_tree(ui);
+}
+
 static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -186,13 +347,33 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         return;
     }
 
-    /* Workspace tree fills all remaining vertical space. */
+    /* Top region: optional left tree panel + buffer area. */
     ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
+        .direction = CA_HORIZONTAL,
         .style     = "workspace-main-content",
     });
-    sol_ui_render_workspace_tree(ui);
-    ca_div_end();
+
+    if (ui->file_tree && sol_file_tree_root(ui->file_tree)) {
+        ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style     = "tree-panel",
+        });
+        ca_div_set_builder(ui->tree_panel_host,
+                           sol_ui_tree_panel_builder, ui);
+        ca_div_end();   /* tree-panel-host */
+    } else {
+        ui->tree_panel_host = NULL;
+    }
+
+    ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style     = "workspace-buffer-area",
+    });
+    ca_div_set_builder(ui->buffer_area_host,
+                       sol_ui_buffer_area_builder, ui);
+    ca_div_end();   /* workspace-buffer-area */
+
+    ca_div_end();   /* workspace-main-content */
 
     /* Command-flow panel renders inline above the (causality) status
        bar when leader is active. As a regular flex sibling it pushes
@@ -225,6 +406,8 @@ static void sol_ui_on_frame(void *user_data)
         ca_div_invalidate(ui->workspace_content_host);
         ui->workspace_dirty = false;
     }
+    /* Reap closed file-picker windows. Safe even when none are open. */
+    sol_file_picker_tick();
 }
 
 static bool sol_ui_build_layout(SolUISystem *ui)
@@ -248,8 +431,11 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .style     = "workspace-main-full",
     });
 
+    /* set_builder runs the builder once synchronously on registration
+       (and on every invalidate); it clears children before each run. Do
+       NOT also call the builder explicitly here — that would emit two
+       copies of the workspace content tree. */
     ca_div_set_builder(ui->workspace_content_host, sol_ui_workspace_content_builder, ui);
-    sol_ui_workspace_content_builder(ui->workspace_content_host, ui);
 
     ca_div_end();   /* workspace-content-host */
     ca_div_end();   /* workspace-host */
@@ -278,6 +464,13 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->leader_modifier = SOL_MOD_CTRL;
     ui->workspace_dirty = true;
     ui->status_bar_kind = SOL_UI_STATUS_KIND_KEY;
+
+    /* Seed the cached window size with the configured initial size so
+       the first render — which happens before any resize event — has a
+       sensible value to derive scroll viewport metrics from. The real
+       size lands here as soon as the first resize callback fires. */
+    ui->window_w = SOL_UI_WINDOW_WIDTH;
+    ui->window_h = SOL_UI_WINDOW_HEIGHT;
 
     ui->stylesheet = ca_css_parse(SOL_UI_MAIN_WINDOW_CSS);
     if (ui->stylesheet) {
@@ -323,6 +516,15 @@ void sol_ui_system_destroy(SolUISystem *ui)
     if (!ui) {
         return;
     }
+
+    if (ui->file_tree) {
+        sol_file_tree_destroy(ui->file_tree);
+        ui->file_tree = NULL;
+    }
+    free(ui->file_tree_click_ctxs);
+    ui->file_tree_click_ctxs = NULL;
+    free(ui->pane_click_ctxs);
+    ui->pane_click_ctxs = NULL;
 
     if (ui->primary_window) {
         ca_window_destroy(ui->primary_window);
@@ -526,6 +728,34 @@ bool sol_ui_system_on_focus_next_action(const char *action,
     return true;
 }
 
+static bool sol_ui_cycle_active_buffer(SolUISystem *ui, int direction)
+{
+    if (!ui || !ui->buffers) {
+        return false;
+    }
+    if (!sol_buffer_cycle_active_leaf(ui->buffers, direction)) {
+        return false;
+    }
+    sol_ui_mark_buffers_dirty(ui);
+    return true;
+}
+
+bool sol_ui_system_on_buffer_next_action(const char *action,
+                                         const SolInputEvent *event, void *user_data)
+{
+    (void)action;
+    (void)event;
+    return sol_ui_cycle_active_buffer((SolUISystem *)user_data, +1);
+}
+
+bool sol_ui_system_on_buffer_prev_action(const char *action,
+                                         const SolInputEvent *event, void *user_data)
+{
+    (void)action;
+    (void)event;
+    return sol_ui_cycle_active_buffer((SolUISystem *)user_data, -1);
+}
+
 /* ------------------------------------------------------------------ */
 /* Window event hooks                                                  */
 /* ------------------------------------------------------------------ */
@@ -538,6 +768,8 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
     ui->primary_window         = NULL;
     ui->workspace_host         = NULL;
     ui->workspace_content_host = NULL;
+    ui->tree_panel_host        = NULL;
+    ui->buffer_area_host       = NULL;
 }
 
 void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
@@ -551,4 +783,110 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
     ui->window_w = width;
     ui->window_h = height;
     sol_ui_mark_workspace_dirty(ui);
+}
+
+/* ------------------------------------------------------------------ */
+/* Title-bar menu                                                      */
+/* ------------------------------------------------------------------ */
+
+static void sol_ui_menu_open_file_action(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (ui && ui->menu_on_open_file) {
+        ui->menu_on_open_file(ui->menu_user_data);
+    }
+}
+
+static void sol_ui_menu_open_folder_action(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (ui && ui->menu_on_open_folder) {
+        ui->menu_on_open_folder(ui->menu_user_data);
+    }
+}
+
+void sol_ui_system_install_menu(SolUISystem      *ui,
+                                SolUIMenuActionFn on_open_file,
+                                SolUIMenuActionFn on_open_folder,
+                                void             *user_data)
+{
+    if (!ui || !ui->primary_window) {
+        return;
+    }
+
+    ui->menu_on_open_file   = on_open_file;
+    ui->menu_on_open_folder = on_open_folder;
+    ui->menu_user_data      = user_data;
+
+    /* Build the File menu. ca_window_set_title_bar_menus deep-copies
+       these structs, so stack storage is fine. */
+    Ca_MenuItemDesc file_items[] = {
+        {
+            .label       = "Open File...",
+            .action      = sol_ui_menu_open_file_action,
+            .action_data = ui,
+        },
+        {
+            .label       = "Open Folder...",
+            .action      = sol_ui_menu_open_folder_action,
+            .action_data = ui,
+        },
+    };
+
+    Ca_MenuDesc menus[] = {
+        {
+            .label      = "File",
+            .items      = file_items,
+            .item_count = (int)(sizeof(file_items) / sizeof(file_items[0])),
+        },
+    };
+
+    ca_window_set_title_bar_menus(ui->primary_window, menus,
+                                  (int)(sizeof(menus) / sizeof(menus[0])));
+}
+
+void sol_ui_system_tick(SolUISystem *ui)
+{
+    (void)ui;
+    /* Currently equivalent to the on_frame reaping path, but exposed
+       publicly so hosts that drive the loop themselves can keep async
+       UI work moving forward without depending on the primary window's
+       on_frame callback. */
+    sol_file_picker_tick();
+}
+
+void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
+{
+    sol_ui_mark_buffers_dirty(ui);
+}
+
+void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h)
+{
+    if (out_w) *out_w = ui ? ui->window_w : 0;
+    if (out_h) *out_h = ui ? ui->window_h : 0;
+}
+
+/* Causality places its custom title bar at a fixed 30 px height (see
+   causality/src/ui/title_bar.c). The status bar height is whatever sol
+   asked causality to reserve. The tree panel width is the value baked
+   into .tree-panel in style.h. Keep these in sync if either changes. */
+#define SOL_UI_TITLE_BAR_HEIGHT_PX  30
+#define SOL_UI_TREE_PANEL_WIDTH_PX  240
+
+int sol_ui_system_title_bar_height(const SolUISystem *ui)
+{
+    (void)ui;
+    return SOL_UI_TITLE_BAR_HEIGHT_PX;
+}
+
+int sol_ui_system_status_bar_height(const SolUISystem *ui)
+{
+    (void)ui;
+    return (int)SOL_UI_STATUS_BAR_HEIGHT;
+}
+
+int sol_ui_system_tree_panel_width(const SolUISystem *ui)
+{
+    if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return 0;
+    return SOL_UI_TREE_PANEL_WIDTH_PX;
 }

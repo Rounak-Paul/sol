@@ -82,11 +82,46 @@ bool sol_buffer_split_active(
 bool sol_buffer_focus_next_leaf(SolBufferSystem *system);
 bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buffer_id);
 
+/* Make `leaf_id` the active (focused) leaf. Used to implement
+   click-to-focus on a buffer pane. Returns false when leaf_id is not a
+   live leaf. */
+bool sol_buffer_set_active_leaf(SolBufferSystem *system, SolBufferNodeId leaf_id);
+
+/* Replace the buffer assigned to a specific leaf (not necessarily the
+   active one). Used to implement clicking a tab inside a pane. Returns
+   true when the leaf's buffer changed. */
+bool sol_buffer_set_leaf_buffer(SolBufferSystem *system, SolBufferNodeId leaf_id, SolBufferId buffer_id);
+
+/* Read the buffer currently assigned to a specific leaf. Returns 0
+   when leaf_id is not a live leaf. */
+SolBufferId sol_buffer_leaf_buffer(const SolBufferSystem *system, SolBufferNodeId leaf_id);
+
+/* Hit-test the split tree against a point in screen space. The buffer
+   area is the rect (x, y, w, h); `bar_size` is the gutter width
+   between split children (mirror the value passed to ca_split_begin).
+   Returns the leaf id whose rect contains (px, py), or 0 when the
+   point is outside the area. */
+SolBufferNodeId sol_buffer_leaf_at_point(const SolBufferSystem *system,
+                                         float x, float y,
+                                         float w, float h,
+                                         float bar_size,
+                                         float px, float py);
+
 bool sol_buffer_set_split_ratio(SolBufferSystem *system, SolBufferNodeId split_node_id, float ratio);
 
 SolBufferId sol_buffer_active_buffer(const SolBufferSystem *system);
 SolBufferNodeId sol_buffer_active_leaf(const SolBufferSystem *system);
 size_t sol_buffer_count(const SolBufferSystem *system);
+
+/* Iterate live buffers in registration order. `index` is in [0, count).
+   Returns 0u when index is out of range. Use together with
+   sol_buffer_get / sol_buffer_name to drive UI like tab strips. */
+SolBufferId sol_buffer_at(const SolBufferSystem *system, size_t index);
+
+/* Cycle the buffer assigned to the active leaf through all live buffers.
+   `direction` > 0 advances to the next buffer, < 0 to the previous.
+   Returns true when the active leaf's buffer changed. */
+bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction);
 
 void sol_buffer_workspace_visit(
     SolBufferSystem *system,
