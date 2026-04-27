@@ -264,6 +264,7 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
         SolBufferRenderArgs args = {
             .is_active   = is_active,
             .ui_context  = ui,
+            .leaf_id     = leaf_id,
         };
         sol_buffer_render(buffer, &args);
     }
@@ -889,4 +890,19 @@ int sol_ui_system_tree_panel_width(const SolUISystem *ui)
 {
     if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return 0;
     return SOL_UI_TREE_PANEL_WIDTH_PX;
+}
+
+bool sol_ui_system_is_leader_active(const SolUISystem *ui)
+{
+    return ui ? ui->leader_active : false;
+}
+
+bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
+{
+    if (!ui || !ui->buffers || leaf_id == 0u) return false;
+    if (!sol_buffer_set_active_leaf(ui->buffers, leaf_id)) {
+        return false;
+    }
+    sol_ui_mark_buffers_dirty(ui);
+    return true;
 }

@@ -57,6 +57,12 @@ void sol_ui_system_set_file_open_callback(SolUISystem *ui,
  * instead of waiting for an unrelated invalidation. */
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui);
 
+/* Set the active workspace leaf and force a rebuild. Returns true if
+ * the focused leaf actually changed. Used by buffer-content click
+ * handlers (e.g. clicking a line of text) so they don't have to reach
+ * into the buffer system directly. */
+bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id);
+
 /* Last-known logical window size in CSS pixels. Either out param may be
  * NULL. Both are 0 until the first resize callback fires. */
 void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h);
@@ -68,6 +74,12 @@ void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h);
 int  sol_ui_system_title_bar_height(const SolUISystem *ui);
 int  sol_ui_system_status_bar_height(const SolUISystem *ui);
 int  sol_ui_system_tree_panel_width(const SolUISystem *ui);
+
+/* True while the leader-key popup is visible / a flow chord is being
+ * captured. Hosts use this to suppress raw editing input (typing,
+ * arrows, backspace, …) while a flow is in progress, so e.g. pressing
+ * Ctrl+W,V doesn't also insert characters into the active buffer. */
+bool sol_ui_system_is_leader_active(const SolUISystem *ui);
 
 /* Title-bar menu integration. The two callbacks fire when the user
  * picks "File → Open File…" or "File → Open Folder…" respectively.

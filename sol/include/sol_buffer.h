@@ -26,6 +26,7 @@ typedef enum SolBufferSplitDirection {
 typedef struct SolBufferRenderArgs {
     bool is_active;
     void *ui_context;
+    SolBufferNodeId leaf_id;
 } SolBufferRenderArgs;
 
 typedef void (*SolBufferDestroyFn)(void *state);

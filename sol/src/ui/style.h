@@ -283,6 +283,33 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  width: 100%;"
     "  flex-shrink: 0;"
     "}"
+    /* Per-line row used for every line. Each row contains a single
+       full-width ca_text. The active line additionally emits an
+       absolutely-positioned caret div which sits on top of the text
+       without disturbing flex flow — so cursor and non-cursor lines
+       have IDENTICAL layout and text never shifts. */
+    ".buffer-line-row {"
+    "  height: 20px;"
+    "  width: 100%;"
+    "  flex-shrink: 0;"
+    "  gap: 0px;"
+    "}"
+    ".buffer-caret {"
+    "  width: 2px;"
+    "  height: 18px;"
+    "  background: #c8d0ff;"
+    "  flex-shrink: 0;"
+    "}"
+    /* Transparent button wrapping each visible line. Clicks anywhere on
+       the row focus the host pane and reposition the cursor. */
+    ".buffer-line-btn {"
+    "  width: 100%;"
+    "  height: 20px;"
+    "  flex-shrink: 0;"
+    "  background: rgba(0, 0, 0, 0);"
+    "  padding: 0px;"
+    "  gap: 0px;"
+    "}"
     /* Custom virtual scrollbar — vertical column with a top spacer,
        a thumb, and a flex-grow filler. Heights are computed in C. */
     ".buffer-scrollbar {"

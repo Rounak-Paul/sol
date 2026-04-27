@@ -24,6 +24,21 @@ enum {
 
 enum {
     SOL_KEY_UNKNOWN = 0,
+    /* GLFW-aligned non-printable keys. We pass GLFW key codes through
+       unchanged in main.c, so these constants are just named aliases. */
+    SOL_KEY_ENTER     = 257,
+    SOL_KEY_TAB       = 258,
+    SOL_KEY_BACKSPACE = 259,
+    SOL_KEY_INSERT    = 260,
+    SOL_KEY_DELETE    = 261,
+    SOL_KEY_RIGHT     = 262,
+    SOL_KEY_LEFT      = 263,
+    SOL_KEY_DOWN      = 264,
+    SOL_KEY_UP        = 265,
+    SOL_KEY_PAGE_UP   = 266,
+    SOL_KEY_PAGE_DOWN = 267,
+    SOL_KEY_HOME      = 268,
+    SOL_KEY_END       = 269,
     SOL_KEY_ESCAPE = 256,
     SOL_KEY_LEFT_SHIFT = 340,
     SOL_KEY_LEFT_CTRL = 341,
