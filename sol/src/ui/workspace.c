@@ -55,23 +55,16 @@ void sol_ui_mark_workspace_dirty(SolUISystem *ui)
 
 void sol_ui_mark_tree_dirty(SolUISystem *ui)
 {
-    if (!ui) return;
-    if (ui->tree_panel_host) {
-        ca_div_invalidate(ui->tree_panel_host);
-        return;
-    }
-    /* No dedicated host yet — fall back to a full workspace rebuild so
-       the panel is at least re-emitted on the next frame. */
+    /* tree_panel_host content is emitted inline by sol_ui_workspace_content_builder,
+       so tree changes rebuild the whole workspace content tree. */
     sol_ui_mark_workspace_dirty(ui);
 }
 
 void sol_ui_mark_buffers_dirty(SolUISystem *ui)
 {
-    if (!ui) return;
-    if (ui->buffer_area_host) {
-        ca_div_invalidate(ui->buffer_area_host);
-        return;
-    }
+    /* buffer_area_host no longer has its own reactive sub-builder — its
+       content is emitted inline by sol_ui_workspace_content_builder, so any
+       buffer change needs to rebuild the whole workspace content tree. */
     sol_ui_mark_workspace_dirty(ui);
 }
 
@@ -314,32 +307,6 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
 /* Reactive content builder                                            */
 /* ------------------------------------------------------------------ */
 
-/* Builder for the left file-tree panel. Owns its own reactive effect so
-   tree expand/collapse only rebuilds this subtree, not the whole
-   workspace. The host div carries the "tree-panel" style; this body
-   only emits the header text and rows. */
-static void sol_ui_tree_panel_builder(Ca_Div *div, void *user_data)
-{
-    (void)div;
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return;
-    sol_ui_render_file_tree_panel_body(ui);
-}
-
-/* Builder for the buffer split-tree area. Invalidated independently
-   when the active buffer or split topology changes. */
-static void sol_ui_buffer_area_builder(Ca_Div *div, void *user_data)
-{
-    (void)div;
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui) return;
-    /* Reset the per-rebuild pane-click pool here so both the global tab
-       strip and the split-tree share a single fresh allocation cycle. */
-    ui->pane_click_ctx_count = 0u;
-    sol_ui_render_global_tab_strip(ui);
-    sol_ui_render_workspace_tree(ui);
-}
-
 static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -359,8 +326,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             .direction = CA_VERTICAL,
             .style     = "tree-panel",
         });
-        ca_div_set_builder(ui->tree_panel_host,
-                           sol_ui_tree_panel_builder, ui);
+        sol_ui_render_file_tree_panel_body(ui);
         ca_div_end();   /* tree-panel-host */
     } else {
         ui->tree_panel_host = NULL;
@@ -370,8 +336,12 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         .direction = CA_VERTICAL,
         .style     = "workspace-buffer-area",
     });
-    ca_div_set_builder(ui->buffer_area_host,
-                       sol_ui_buffer_area_builder, ui);
+    /* Inline the buffer-area content directly — calling ca_div_set_builder
+       inside a reconcile context would cause the outer ca_div_end() to trim
+       the children built by the nested effect (cursor stays 0 at this level). */
+    ui->pane_click_ctx_count = 0u;
+    sol_ui_render_global_tab_strip(ui);
+    sol_ui_render_workspace_tree(ui);
     ca_div_end();   /* workspace-buffer-area */
 
     ca_div_end();   /* workspace-main-content */
