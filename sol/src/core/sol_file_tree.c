@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol contributors.
 
-/* file_tree.c — Implementation of sol_file_tree.h.
+/* sol_file_tree.c — Implementation of sol_file_tree.h.
  *
  * The tree keeps a flat heap-allocated array of nodes (`Node`). Each node
  * is either a folder or a leaf file; folders carry an array of indices into
