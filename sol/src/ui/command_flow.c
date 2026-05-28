@@ -251,6 +251,10 @@ static void sol_ui_reset_leader_prefix(SolUISystem *ui)
     ui->leader_prefix_length    = 0u;
     ui->leader_no_match         = false;
     ui->leader_last_invalid_key = SOL_KEY_UNKNOWN;
+    /* The prefix changed shape — notify subscribers of the popup
+       builder. Safe to bump even when the popup is closed: the popup
+       builder won't be subscribed to this signal then. */
+    sol_ui_bump_u32(ui->sig_leader_prefix_rev);
 }
 
 void sol_ui_open_leader_popup(SolUISystem *ui)
@@ -258,9 +262,12 @@ void sol_ui_open_leader_popup(SolUISystem *ui)
     if (!ui) {
         return;
     }
+    /* Set the cached field first so non-reactive paths (key dispatch)
+       observe the new state immediately, then flip the signal so
+       reactive subscribers (the popup builder) re-run. */
     ui->leader_active = true;
     sol_ui_reset_leader_prefix(ui);
-    sol_ui_invalidate_popup(ui);
+    ca_signal_set_bool(ui->sig_leader_active, true);
 }
 
 void sol_ui_close_leader_popup(SolUISystem *ui)
@@ -270,7 +277,7 @@ void sol_ui_close_leader_popup(SolUISystem *ui)
     }
     ui->leader_active = false;
     sol_ui_reset_leader_prefix(ui);
-    sol_ui_invalidate_popup(ui);
+    ca_signal_set_bool(ui->sig_leader_active, false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -378,8 +385,8 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
     sol_ui_copy_text(flow->label, sizeof(flow->label),
                      desc->label ? desc->label : desc->action);
 
-    /* Registration only affects the which-key panel's suggestion set;
-       no workspace shape change — invalidate only the popup host. */
-    sol_ui_invalidate_popup(ui);
+    /* Registration affects the which-key suggestion set; notify the
+       popup builder's flow-registry subscription. */
+    sol_ui_bump_u32(ui->sig_flow_registry_rev);
     return true;
 }

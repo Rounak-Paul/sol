@@ -26,16 +26,11 @@
 
 bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path)
 {
-    if (!ui) return false;
-    if (!ui->file_tree) {
-        ui->file_tree = sol_file_tree_create();
-        if (!ui->file_tree) return false;
-    }
-    bool ok = sol_file_tree_set_root(ui->file_tree, path);
-    /* Adding/removing a root toggles whether the tree column exists
-       inside the workspace builder, so the parent host must rebuild. */
-    sol_ui_invalidate_content(ui);
-    return ok;
+    if (!ui || !ui->file_tree) return false;
+    /* sol_file_tree_set_root self-notifies via sig_file_tree_rev, so
+       the workspace content builder re-runs and the tree panel column
+       appears/disappears as appropriate. */
+    return sol_file_tree_set_root(ui->file_tree, path);
 }
 
 void sol_ui_system_set_file_open_callback(SolUISystem *ui,
@@ -81,18 +76,13 @@ static void on_row_click(Ca_Button *button, void *user_data)
     if (!entry) return;
 
     if (entry->is_dir) {
-        if (sol_file_tree_toggle(ctx->ui->file_tree, ctx->row_index)) {
-            /* Only the tree panel needs to rebuild — buffers, splits,
-               and the rest of the workspace are untouched. */
-            sol_ui_invalidate_content(ctx->ui);
-        }
+        /* sol_file_tree_toggle self-notifies via sig_file_tree_rev. */
+        (void)sol_file_tree_toggle(ctx->ui->file_tree, ctx->row_index);
     } else if (ctx->ui->file_open_callback) {
+        /* The callback typically creates/switches a buffer, which
+           self-notifies via sig_buffer_rev — nothing else to do. */
         ctx->ui->file_open_callback(entry->full_path,
                                     ctx->ui->file_open_user_data);
-        /* The callback swapped the active buffer; force the buffer
-           area to rebuild so the new contents show up immediately
-           instead of waiting for the next unrelated UI update. */
-        sol_ui_invalidate_content(ctx->ui);
     }
 }
 

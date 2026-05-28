@@ -19,6 +19,8 @@
 
 #include "sol_file_tree.h"
 
+#include <causality.h>   /* Ca_Signal, ca_signal_set_u32, ca_signal_get_u32 */
+
 #include <ctype.h>
 #include <dirent.h>
 #include <stdlib.h>
@@ -49,7 +51,18 @@ struct SolFileTree {
     SolFileEntry *visible;   /* owned, rebuilt on every mutation           */
     size_t        visible_count;
     size_t        visible_capacity;
+
+    /* Optional caller-owned u32 revision signal. Bumped after every
+       successful mutation so causality effects that read it re-run. */
+    Ca_Signal *rev;
 };
+
+static void bump_rev(SolFileTree *t)
+{
+    if (t && t->rev) {
+        ca_signal_set_u32(t->rev, ca_signal_get_u32(t->rev) + 1u);
+    }
+}
 
 /* ---------------------------------------------------------------- */
 /* Helpers                                                           */
@@ -302,6 +315,12 @@ void sol_file_tree_destroy(SolFileTree *tree)
     free(tree);
 }
 
+void sol_file_tree_attach_revision_signal(SolFileTree *tree, Ca_Signal *sig)
+{
+    if (!tree) return;
+    tree->rev = sig;
+}
+
 bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
 {
     if (!tree) return false;
@@ -328,6 +347,7 @@ bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
     tree->root_index = root_idx;
     tree->nodes[root_idx].expanded = true;     /* root always open */
     rebuild_visible(tree);
+    bump_rev(tree);
     return true;
 }
 
@@ -361,5 +381,6 @@ bool sol_file_tree_toggle(SolFileTree *tree, size_t index)
     if (!tree->nodes[found].is_dir) return false;
     tree->nodes[found].expanded = !tree->nodes[found].expanded;
     rebuild_visible(tree);
+    bump_rev(tree);
     return true;
 }

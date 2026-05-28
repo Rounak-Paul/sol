@@ -1,5 +1,7 @@
 #include "sol_buffer.h"
 
+#include <causality.h>   /* Ca_Signal, ca_signal_set_u32, ca_signal_get_u32 */
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -50,7 +52,21 @@ struct SolBufferSystem {
 
     SolBufferNodeId root_id;
     SolBufferNodeId active_leaf_id;
+
+    /* Optional caller-owned u32 revision signal. Bumped by bump_rev()
+       on every successful state mutation. NULL until attached. */
+    Ca_Signal *rev;
 };
+
+/* Single point of notification — every mutator that changes
+   user-visible state calls this once on success. Cheap when no signal
+   is attached, idiomatic causality when one is. */
+static void bump_rev(SolBufferSystem *system)
+{
+    if (system && system->rev) {
+        ca_signal_set_u32(system->rev, ca_signal_get_u32(system->rev) + 1u);
+    }
+}
 
 static char *sol_strdup(const char *value)
 {
@@ -312,6 +328,14 @@ void sol_buffer_system_destroy(SolBufferSystem *system)
     free(system);
 }
 
+void sol_buffer_attach_revision_signal(SolBufferSystem *system, Ca_Signal *sig)
+{
+    if (!system) {
+        return;
+    }
+    system->rev = sig;
+}
+
 SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc)
 {
     if (!system || !desc) {
@@ -355,6 +379,7 @@ SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc
         system->active_leaf_id = leaf->id;
     }
 
+    bump_rev(system);
     return buffer.id;
 }
 
@@ -377,6 +402,7 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
     const SolBufferId fallback = sol_first_live_buffer_id(system);
     sol_replace_buffer_in_layout(system, buffer_id, fallback);
 
+    bump_rev(system);
     return true;
 }
 
@@ -479,6 +505,7 @@ bool sol_buffer_split_active(
         *out_new_leaf_id = new_leaf->id;
     }
 
+    bump_rev(system);
     return true;
 }
 
@@ -520,6 +547,9 @@ bool sol_buffer_focus_next_leaf(SolBufferSystem *system)
     }
 
     free(leaf_ids);
+    if (changed) {
+        bump_rev(system);
+    }
     return changed;
 }
 
@@ -535,6 +565,7 @@ bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buff
     }
 
     leaf->as.leaf.buffer_id = buffer_id;
+    bump_rev(system);
     return true;
 }
 
@@ -545,7 +576,11 @@ bool sol_buffer_set_active_leaf(SolBufferSystem *system, SolBufferNodeId leaf_id
     if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) {
         return false;
     }
+    if (system->active_leaf_id == leaf_id) {
+        return false;
+    }
     system->active_leaf_id = leaf_id;
+    bump_rev(system);
     return true;
 }
 
@@ -556,6 +591,7 @@ bool sol_buffer_set_leaf_buffer(SolBufferSystem *system, SolBufferNodeId leaf_id
     if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return false;
     if (leaf->as.leaf.buffer_id == buffer_id) return false;
     leaf->as.leaf.buffer_id = buffer_id;
+    bump_rev(system);
     return true;
 }
 
@@ -633,7 +669,12 @@ bool sol_buffer_set_split_ratio(SolBufferSystem *system, SolBufferNodeId split_n
     if (!node || node->type != SOL_LAYOUT_NODE_SPLIT) {
         return false;
     }
-    node->as.split.ratio = sol_clamp_ratio(ratio);
+    const float clamped = sol_clamp_ratio(ratio);
+    if (node->as.split.ratio == clamped) {
+        return true;   /* no observable change — skip the bump */
+    }
+    node->as.split.ratio = clamped;
+    bump_rev(system);
     return true;
 }
 
@@ -740,6 +781,9 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
     bool changed = (ids[next] != leaf->as.leaf.buffer_id);
     leaf->as.leaf.buffer_id = ids[next];
     free(ids);
+    if (changed) {
+        bump_rev(system);
+    }
     return changed;
 }
 

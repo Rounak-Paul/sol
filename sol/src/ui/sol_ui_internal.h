@@ -114,24 +114,40 @@ struct SolUISystem {
 
     /* ---- Reactive state (causality fine-grained signals) ----
      *
-     * All UI-driving state mutations go through these two version
-     * counters. Builders subscribe by calling ca_signal_get_u32 inside
-     * their body; the runtime re-runs only the affected builder(s) on
-     * the next reactive flush.
+     * In the idiomatic causality design, state IS the signal: every
+     * coherent piece of UI-driving state owns a signal that builders
+     * subscribe to via ca_signal_get_*. Mutations write the signal
+     * (and, for cached scalars, the plain field that non-reactive code
+     * paths read). There are no "invalidate" helpers — the data layer
+     * self-notifies and the UI layer notifies on UI-only state.
      *
-     *   sig_content_version : bumped on workspace-content changes
-     *                         (file tree root attach/detach, file
-     *                         tree expand/collapse, active leaf,
-     *                         buffer split/swap, window resize).
-     *   sig_popup_version   : bumped on popup-affecting changes
-     *                         (open/close, leader prefix extend,
-     *                         flow registration).
+     * Signals are owned by `instance` and freed in ca_instance_destroy;
+     * sol never calls ca_signal_destroy directly.
      *
-     * Use the helpers sol_ui_invalidate_content() and
-     * sol_ui_invalidate_popup() rather than poking the signals
-     * directly. */
-    Ca_Signal        *sig_content_version;
-    Ca_Signal        *sig_popup_version;
+     *   sig_buffer_rev        — u32 revision counter attached to
+     *                           ui->buffers. Bumped by every successful
+     *                           sol_buffer_* mutation.
+     *   sig_file_tree_rev     — u32 revision counter attached to
+     *                           ui->file_tree. Bumped on set_root /
+     *                           toggle.
+     *   sig_leader_active     — bool. True while the which-key popup
+     *                           is open. Mirrored by the leader_active
+     *                           field for non-reactive readers.
+     *   sig_leader_prefix_rev — u32 revision counter bumped whenever
+     *                           the leader prefix array grows / resets
+     *                           / changes no-match state.
+     *   sig_flow_registry_rev — u32 revision counter bumped whenever a
+     *                           command flow is registered or updated.
+     *   sig_window_rev        — u32 revision counter bumped on window
+     *                           resize (so layout-sensitive builders
+     *                           re-flow).
+     */
+    Ca_Signal        *sig_buffer_rev;
+    Ca_Signal        *sig_file_tree_rev;
+    Ca_Signal        *sig_leader_active;
+    Ca_Signal        *sig_leader_prefix_rev;
+    Ca_Signal        *sig_flow_registry_rev;
+    Ca_Signal        *sig_window_rev;
 
     /* Leader / flow state. */
     SolModifierMask   leader_modifier;
@@ -190,19 +206,12 @@ struct SolUISystem {
 /* Cross-module helpers                                                */
 /* ------------------------------------------------------------------ */
 
-/* Reactive invalidation. Bumps the matching version signal; the
-   reactive runtime re-runs every effect that read that signal during
-   its last evaluation (and only those effects).
- *
- *   sol_ui_invalidate_content : workspace tree (file tree column +
- *                               buffer split tree + tab strip).
- *   sol_ui_invalidate_popup   : floating which-key card.
- *
- * Safe to call before the corresponding host has been mounted: the
- * signal still records the change; the builder picks up the latest
- * state on its first run. */
-void sol_ui_invalidate_content(SolUISystem *ui);
-void sol_ui_invalidate_popup  (SolUISystem *ui);
+/* Bump a u32 revision signal: read-current + set-plus-one. Cheap when
+   nothing has subscribed. Use this for UI-only revision counters
+   (sig_leader_prefix_rev, sig_flow_registry_rev, sig_window_rev).
+   Data-layer signals (sig_buffer_rev, sig_file_tree_rev) are bumped
+   by the data systems themselves — callers don't touch them. */
+void sol_ui_bump_u32(Ca_Signal *sig);
 
 /* Key utilities (command_flow.c) */
 bool        sol_ui_is_modifier_key(SolKeyCode key);

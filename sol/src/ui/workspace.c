@@ -15,16 +15,28 @@
  *               └── cf-panel            (only when leader_active)
  *   <causality status bar>           (system-managed; sol installs builder)
  *
- * Each reactive host owns an independent effect installed via
- * ca_div_set_builder. The builder body reads version signals and
- * automatically subscribes; bumping a signal re-runs every effect
- * that read it during its last evaluation — and nothing else:
+ * Reactive design (idiomatic causality):
  *
- *   - sol_ui_invalidate_content → sig_content_version → workspace builder
- *   - sol_ui_invalidate_popup   → sig_popup_version   → popup builder
+ *   State IS the signal. Each coherent piece of UI-driving state owns
+ *   a Ca_Signal*. Mutations write the signal; builders subscribe by
+ *   reading it inside their body via ca_signal_get_*. The runtime
+ *   re-runs the affected builders — nothing else.
  *
- * There is no manual ca_div_invalidate in sol, no deferred dirty
- * flag, and no on-frame dirty drain — the framework owns scheduling.
+ *   Data-layer signals self-notify:
+ *     - SolBufferSystem owns sig_buffer_rev; every sol_buffer_*
+ *       mutator bumps it. The workspace content builder subscribes.
+ *     - SolFileTree owns sig_file_tree_rev; every sol_file_tree_*
+ *       mutator bumps it. The tree panel reads it.
+ *
+ *   UI-only signals (this file owns):
+ *     - sig_leader_active (bool)
+ *     - sig_leader_prefix_rev (u32)
+ *     - sig_flow_registry_rev (u32)
+ *     - sig_window_rev (u32)
+ *
+ *   There are no "invalidate" helpers, no manual ca_div_invalidate, no
+ *   deferred dirty flag, and no on-frame dirty drain — the framework
+ *   owns scheduling.
  */
 
 #include "sol_ui_internal.h"
@@ -45,29 +57,19 @@ typedef struct SolWorkspaceVisitorContext {
 } SolWorkspaceVisitorContext;
 
 /* ------------------------------------------------------------------ */
-/* Reactive invalidation                                               */
+/* Reactive helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Bump a u32 version signal. Reading the current value here is a
-   plain read (no effect context on the call stack), so no spurious
-   subscriptions. Each bump notifies every effect that subscribed via
-   ca_signal_get_u32 during its last evaluation. */
-static void sol_ui_bump_signal(Ca_Signal *sig)
+/* Bump a u32 revision signal: read current value (no subscription —
+   this runs outside any effect context), then write +1. Notifies
+   every effect that subscribed via ca_signal_get_u32 during its last
+   evaluation. */
+void sol_ui_bump_u32(Ca_Signal *sig)
 {
     if (!sig) {
         return;
     }
     ca_signal_set_u32(sig, ca_signal_get_u32(sig) + 1u);
-}
-
-void sol_ui_invalidate_content(SolUISystem *ui)
-{
-    if (ui) sol_ui_bump_signal(ui->sig_content_version);
-}
-
-void sol_ui_invalidate_popup(SolUISystem *ui)
-{
-    if (ui) sol_ui_bump_signal(ui->sig_popup_version);
 }
 
 
@@ -152,9 +154,9 @@ static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
     (void)button;
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
-    if (sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id)) {
-        sol_ui_invalidate_content(cb->ui);
-    }
+    /* sol_buffer_set_active_leaf self-notifies via sig_buffer_rev when
+       the leaf actually changes — no explicit invalidation needed. */
+    (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
 }
 
 static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
@@ -162,17 +164,12 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
     (void)button;
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
-    bool changed = false;
-    /* Always focus the host pane first. */
-    if (sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id)) {
-        changed = true;
-    }
-    if (cb->tab_buffer_id != 0u &&
-        sol_buffer_set_leaf_buffer(cb->ui->buffers, cb->leaf_id, cb->tab_buffer_id)) {
-        changed = true;
-    }
-    if (changed) {
-        sol_ui_invalidate_content(cb->ui);
+    /* Both sol_buffer_set_active_leaf and sol_buffer_set_leaf_buffer
+       self-notify on success. */
+    (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
+    if (cb->tab_buffer_id != 0u) {
+        (void)sol_buffer_set_leaf_buffer(cb->ui->buffers, cb->leaf_id,
+                                         cb->tab_buffer_id);
     }
 }
 
@@ -318,9 +315,20 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         return;
     }
 
-    /* Subscribe this effect to the content version signal. Any
-       sol_ui_invalidate_content() call re-runs this builder. */
-    (void)ca_signal_get_u32(ui->sig_content_version);
+    /* Subscribe this effect to every signal whose state this builder
+       reads. Causality re-runs us exactly when one of them changes:
+         - sig_buffer_rev    : the buffer/split tree (auto-bumped by
+                               sol_buffer_*)
+         - sig_file_tree_rev : the file tree pane (auto-bumped by
+                               sol_file_tree_*); only meaningful while
+                               a root is set, but reading it
+                               unconditionally keeps the subscription
+                               attached across set_root.
+         - sig_window_rev    : window resize — layout-sensitive
+                               children (split bars, tabs) re-flow. */
+    (void)ca_signal_get_u32(ui->sig_buffer_rev);
+    (void)ca_signal_get_u32(ui->sig_file_tree_rev);
+    (void)ca_signal_get_u32(ui->sig_window_rev);
 
     /* Top region: optional left tree panel + buffer area. */
     ca_div_begin(&(Ca_DivDesc){
@@ -371,13 +379,18 @@ static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
     if (!ui) {
         return;
     }
-    /* Subscribe to the popup version signal. Open/close, prefix
-       advance, and flow registration all bump this and re-run us. */
-    (void)ca_signal_get_u32(ui->sig_popup_version);
-
-    if (!ui->leader_active) {
+    /* Subscribe to the leader-active signal. Open/close re-runs us. */
+    const bool active = ca_signal_get_bool(ui->sig_leader_active);
+    if (!active) {
         return;
     }
+    /* When open we additionally depend on the leader-prefix and
+       flow-registry revisions: prefix advance or a new flow
+       registration changes the suggestion set. We do NOT subscribe
+       to these when closed — typing while no popup is open must not
+       force the popup host to re-evaluate. */
+    (void)ca_signal_get_u32(ui->sig_leader_prefix_rev);
+    (void)ca_signal_get_u32(ui->sig_flow_registry_rev);
     sol_ui_render_command_flow_panel(ui);
 }
 
@@ -478,17 +491,39 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->leader_modifier = SOL_MOD_CTRL;
     ui->status_bar_kind = SOL_UI_STATUS_KIND_KEY;
 
-    /* Reactive state. Signals are owned by the instance and freed in
-       ca_instance_destroy; we never call ca_signal_destroy ourselves.
-       Initial value 0 is arbitrary \u2014 builders read the current value
-       only to subscribe. Created BEFORE the window so the layout
-       builder can safely call ca_signal_get_u32. */
-    ui->sig_content_version = ca_signal_u32(instance, 0u);
-    ui->sig_popup_version   = ca_signal_u32(instance, 0u);
-    if (!ui->sig_content_version || !ui->sig_popup_version) {
+    /* ---- Reactive state ----
+       All signals are owned by the instance and freed in
+       ca_instance_destroy; sol never calls ca_signal_destroy. Created
+       BEFORE the window so the layout builder can safely subscribe.
+
+       The buffer system's revision signal is created here and attached
+       to ui->buffers; from this point every successful sol_buffer_*
+       mutation auto-notifies our content builder.
+
+       The file tree is created eagerly (it's a UI concern that lives
+       for the UI system's lifetime) and its revision signal attached;
+       the builder always reads sig_file_tree_rev so it stays
+       subscribed across set_root attach/detach. */
+    ui->sig_buffer_rev        = ca_signal_u32 (instance, 0u);
+    ui->sig_file_tree_rev     = ca_signal_u32 (instance, 0u);
+    ui->sig_leader_active     = ca_signal_bool(instance, false);
+    ui->sig_leader_prefix_rev = ca_signal_u32 (instance, 0u);
+    ui->sig_flow_registry_rev = ca_signal_u32 (instance, 0u);
+    ui->sig_window_rev        = ca_signal_u32 (instance, 0u);
+    if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
+        !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
+        !ui->sig_flow_registry_rev || !ui->sig_window_rev) {
         free(ui);
         return NULL;
     }
+    sol_buffer_attach_revision_signal(buffers, ui->sig_buffer_rev);
+
+    ui->file_tree = sol_file_tree_create();
+    if (!ui->file_tree) {
+        free(ui);
+        return NULL;
+    }
+    sol_file_tree_attach_revision_signal(ui->file_tree, ui->sig_file_tree_rev);
 
     /* Seed the cached window size with the configured initial size so
        the first render — which happens before any resize event — has a
@@ -683,7 +718,9 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     if (has_deeper && ui->leader_prefix_length < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
         ui->leader_prefix[ui->leader_prefix_length++] = key;
-        sol_ui_invalidate_popup(ui);
+        /* Prefix grew: bump the leader-prefix revision so the popup
+           builder re-runs and renders the deeper suggestion set. */
+        sol_ui_bump_u32(ui->sig_leader_prefix_rev);
         return true;
     }
 
@@ -712,11 +749,9 @@ bool sol_ui_system_on_split_vertical_action(const char *action,
     if (!ui || !ui->buffers) {
         return false;
     }
-    if (!sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_VERTICAL, 0.5f, 0u, NULL)) {
-        return false;
-    }
-    sol_ui_invalidate_content(ui);
-    return true;
+    /* sol_buffer_split_active self-notifies via sig_buffer_rev. */
+    return sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_VERTICAL,
+                                   0.5f, 0u, NULL);
 }
 
 bool sol_ui_system_on_split_horizontal_action(const char *action,
@@ -729,11 +764,8 @@ bool sol_ui_system_on_split_horizontal_action(const char *action,
     if (!ui || !ui->buffers) {
         return false;
     }
-    if (!sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_HORIZONTAL, 0.5f, 0u, NULL)) {
-        return false;
-    }
-    sol_ui_invalidate_content(ui);
-    return true;
+    return sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_HORIZONTAL,
+                                   0.5f, 0u, NULL);
 }
 
 bool sol_ui_system_on_focus_next_action(const char *action,
@@ -746,11 +778,7 @@ bool sol_ui_system_on_focus_next_action(const char *action,
     if (!ui || !ui->buffers) {
         return false;
     }
-    if (!sol_buffer_focus_next_leaf(ui->buffers)) {
-        return false;
-    }
-    sol_ui_invalidate_content(ui);
-    return true;
+    return sol_buffer_focus_next_leaf(ui->buffers);
 }
 
 static bool sol_ui_cycle_active_buffer(SolUISystem *ui, int direction)
@@ -758,11 +786,7 @@ static bool sol_ui_cycle_active_buffer(SolUISystem *ui, int direction)
     if (!ui || !ui->buffers) {
         return false;
     }
-    if (!sol_buffer_cycle_active_leaf(ui->buffers, direction)) {
-        return false;
-    }
-    sol_ui_invalidate_content(ui);
-    return true;
+    return sol_buffer_cycle_active_leaf(ui->buffers, direction);
 }
 
 bool sol_ui_system_on_buffer_next_action(const char *action,
@@ -801,14 +825,14 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
 void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
 {
     /* No pixel math here — causality reflows the title/status strips and
-       content_root automatically; we only need to invalidate the
-       reactive workspace builder so it redraws against the new size. */
+       content_root automatically; we only bump the window-rev signal so
+       size-sensitive builders re-flow against the new metrics. */
     if (!ui) {
         return;
     }
     ui->window_w = width;
     ui->window_h = height;
-    sol_ui_invalidate_content(ui);
+    sol_ui_bump_u32(ui->sig_window_rev);
 }
 
 /* ------------------------------------------------------------------ */
@@ -883,7 +907,12 @@ void sol_ui_system_tick(SolUISystem *ui)
 
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
 {
-    sol_ui_invalidate_content(ui);
+    /* Back-compat shim. The buffer system self-notifies through
+       sig_buffer_rev on every mutation, so this should normally not be
+       needed. Kept so external callers (e.g. main.c) that haven't yet
+       migrated still produce a redraw — we route through the same
+       buffer-rev signal the data layer uses. */
+    if (ui) sol_ui_bump_u32(ui->sig_buffer_rev);
 }
 
 void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h)
@@ -925,9 +954,6 @@ bool sol_ui_system_is_leader_active(const SolUISystem *ui)
 bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
 {
     if (!ui || !ui->buffers || leaf_id == 0u) return false;
-    if (!sol_buffer_set_active_leaf(ui->buffers, leaf_id)) {
-        return false;
-    }
-    sol_ui_invalidate_content(ui);
-    return true;
+    /* sol_buffer_set_active_leaf self-notifies. */
+    return sol_buffer_set_active_leaf(ui->buffers, leaf_id);
 }

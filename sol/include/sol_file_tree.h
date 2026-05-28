@@ -23,6 +23,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+/* Forward-declaration only — the file tree does not link against
+ * causality; it just bumps a caller-owned u32 signal on every
+ * mutation when one is attached. */
+typedef struct Ca_Signal Ca_Signal;
+
 typedef struct SolFileTree  SolFileTree;
 typedef struct SolFileEntry SolFileEntry;
 
@@ -39,6 +44,11 @@ struct SolFileEntry {
 
 SolFileTree *sol_file_tree_create(void);
 void         sol_file_tree_destroy(SolFileTree *tree);
+
+/* Attach (or detach with NULL) a u32 revision signal that the tree
+ * bumps on every mutation (set_root, toggle, refresh). Same contract
+ * as sol_buffer_attach_revision_signal. */
+void sol_file_tree_attach_revision_signal(SolFileTree *tree, Ca_Signal *sig);
 
 /* Set (or replace) the root directory. Returns false if the path is
  * not a directory or could not be read; in that case the tree is

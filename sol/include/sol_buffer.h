@@ -5,6 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Forward-declaration only — the buffer system does not depend on
+ * causality directly; it just bumps a caller-owned u32 signal on every
+ * mutation when one is attached. Pulls causality.h into sol_buffer.c
+ * only via this typedef. */
+typedef struct Ca_Signal Ca_Signal;
+
 typedef struct SolBufferSystem SolBufferSystem;
 typedef struct SolBuffer SolBuffer;
 
@@ -59,6 +65,15 @@ SolBufferSystemConfig sol_buffer_system_config_default(void);
 
 SolBufferSystem *sol_buffer_system_create(const SolBufferSystemConfig *config);
 void sol_buffer_system_destroy(SolBufferSystem *system);
+
+/* Attach (or detach with NULL) a u32 revision signal that the buffer
+ * system bumps via ca_signal_set_u32(sig, get+1) on every state
+ * mutation: create/close, split, focus change, leaf-buffer swap,
+ * split-ratio change, cycle. The signal is owned by the caller (and
+ * typically by the causality instance — freed in ca_instance_destroy).
+ * Builders that read this signal auto-subscribe and re-run on any
+ * buffer-tree change without any explicit invalidate call. */
+void sol_buffer_attach_revision_signal(SolBufferSystem *system, Ca_Signal *sig);
 
 SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc);
 bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id);
