@@ -41,17 +41,11 @@
 #include "sol_text_view.h"
 #include "sol_ui_constants.h"
 #include "sol_ui_system.h"
+#include "sol_event.h"
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
-
-typedef struct SolStartupPayload {
-    uint32_t worker_count;
-    uint32_t loaded_plugins;
-    uint64_t warmup_checksum;
-    bool     input_binding_active;
-} SolStartupPayload;
 
 typedef struct SolWarmupContext {
     _Atomic uint64_t checksum;
@@ -152,10 +146,10 @@ static bool sol_on_startup_event(const SolEvent *event, void *user_data)
 {
     (void)user_data;
     if (!event || !event->payload ||
-        event->payload_size != sizeof(SolStartupPayload)) {
+        event->payload_size != sizeof(SolAppStartupPayload)) {
         return false;
     }
-    const SolStartupPayload *p = (const SolStartupPayload *)event->payload;
+    const SolAppStartupPayload *p = (const SolAppStartupPayload *)event->payload;
     printf("[sol] startup: workers=%u plugins=%u warmup=%llu input=%s\n",
            p->worker_count, p->loaded_plugins,
            (unsigned long long)p->warmup_checksum,
@@ -257,7 +251,7 @@ int main(int argc, char **argv)
 
     app.startup_token = sol_event_bus_subscribe(app.events,
         &(SolEventSubscriptionDesc){
-            .event_name = "core.startup",
+            .event_name = SOL_EVENT_APP_STARTUP,
             .priority   = 100,
             .handler    = sol_on_startup_event,
             .user_data  = NULL,
@@ -274,6 +268,12 @@ int main(int argc, char **argv)
         return 1;
     }
     app.instance = instance;
+
+    /* Wire the buffer system to the bus BEFORE the UI is built so the
+       UI system can in turn share the bus with the file tree. After
+       this call, every buffer create/close/focus and every text edit
+       fans out to subscribers. */
+    sol_buffer_attach_event_bus(app.buffers, app.events);
 
     app.ui = sol_ui_system_create(instance, app.buffers);
     if (!app.ui) {
@@ -340,7 +340,7 @@ int main(int argc, char **argv)
     const uint32_t loaded_plugins =
         (uint32_t)sol_system_load_plugins_from_directory(app.systems, NULL);
 
-    const SolStartupPayload startup = {
+    const SolAppStartupPayload startup = {
         .worker_count = sol_job_system_worker_count(app.jobs),
         .loaded_plugins = loaded_plugins,
         .warmup_checksum = warmup_ok
@@ -350,13 +350,18 @@ int main(int argc, char **argv)
     };
 
     sol_event_bus_post(app.events, &(SolEventDesc){
-        .event_name   = "core.startup",
+        .event_name   = SOL_EVENT_APP_STARTUP,
         .payload      = &startup,
         .payload_size = sizeof(startup),
         .sender       = app.systems,
         .flags        = SOL_EVENT_FLAG_NONE,
     });
     sol_system_pump_events(app.systems, 16u);
+
+    /* Window and subsystems are live — announce app readiness. Plugins
+       can use this hook to perform first-frame setup that needs the
+       window to exist. Payload is intentionally empty. */
+    sol_event_publish(app.events, SOL_EVENT_APP_READY, NULL, 0u, app.systems);
 
     for (;;) {
         sol_system_begin_frame(app.systems);

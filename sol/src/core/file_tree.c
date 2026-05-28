@@ -21,6 +21,8 @@
 
 #include <causality.h>   /* Ca_Signal, ca_signal_set_u32, ca_signal_get_u32 */
 
+#include "sol_event.h"
+
 #include <ctype.h>
 #include <dirent.h>
 #include <stdlib.h>
@@ -55,6 +57,10 @@ struct SolFileTree {
     /* Optional caller-owned u32 revision signal. Bumped after every
        successful mutation so causality effects that read it re-run. */
     Ca_Signal *rev;
+
+    /* Optional caller-owned event bus. When attached, the tree
+       publishes sol.file_tree.root_changed on every set_root success. */
+    SolEventBus *events;
 };
 
 static void bump_rev(SolFileTree *t)
@@ -321,6 +327,12 @@ void sol_file_tree_attach_revision_signal(SolFileTree *tree, Ca_Signal *sig)
     tree->rev = sig;
 }
 
+void sol_file_tree_attach_event_bus(SolFileTree *tree, SolEventBus *bus)
+{
+    if (!tree) return;
+    tree->events = bus;
+}
+
 bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
 {
     if (!tree) return false;
@@ -348,6 +360,12 @@ bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
     tree->nodes[root_idx].expanded = true;     /* root always open */
     rebuild_visible(tree);
     bump_rev(tree);
+    if (tree->events) {
+        SolFileTreeRootPayload payload;
+        payload.path = tree->root_path;
+        sol_event_publish(tree->events, SOL_EVENT_FILE_TREE_ROOT,
+                           &payload, sizeof(payload), tree);
+    }
     return true;
 }
 

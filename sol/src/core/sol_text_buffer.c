@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sol_event.h"
+
 /* ------------------------------------------------------------------ */
 /* State                                                               */
 /* ------------------------------------------------------------------ */
@@ -36,7 +38,29 @@ struct SolTextBuffer {
     size_t   preferred_col_cp;
     int      scroll_top_line; /* first visible line                 */
     char    *source_path;     /* owned; NULL for unsaved/scratch    */
+
+    /* Event-bus wiring, filled in by tb_register() once the
+       SolBufferSystem has minted an id. Both may be zero/NULL when
+       the buffer is detached from a system. */
+    SolEventBus *events;
+    SolBufferId  self_id;
 };
+
+/* Publish sol.text.edited. `removed` and `inserted` are byte counts;
+   `at` is the byte offset in the rope BEFORE the change took effect
+   (so observers see a consistent pre-edit coordinate). */
+static void tb_publish_edit(const SolTextBuffer *tb, size_t at,
+                            size_t removed, size_t inserted)
+{
+    if (!tb || !tb->events) return;
+    SolTextEditedPayload payload;
+    payload.buffer_id      = tb->self_id;
+    payload.byte_offset    = at;
+    payload.removed_bytes  = removed;
+    payload.inserted_bytes = inserted;
+    sol_event_publish(tb->events, SOL_EVENT_TEXT_EDITED,
+                       &payload, sizeof(payload), (void *)tb);
+}
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -240,6 +264,12 @@ static SolBufferId tb_register(SolBufferSystem *system, SolTextBuffer *tb,
     const SolBufferId id = sol_buffer_create(system, &desc);
     if (id == 0u) {
         tb_destroy(tb);
+    } else {
+        /* Wire the bus so subsequent edits can publish text events.
+           Pulled from the buffer system so callers don't have to
+           plumb it through every open_* entry point. */
+        tb->events  = sol_buffer_event_bus(system);
+        tb->self_id = id;
     }
     return id;
 }
@@ -471,11 +501,13 @@ bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
     uint8_t enc[4];
     const int n = tb_utf8_encode(cp, enc);
     if (n <= 0) return false;
-    if (!sol_rope_insert(tb->rope, tb->cursor_byte, enc, (size_t)n)) {
+    const size_t at = tb->cursor_byte;
+    if (!sol_rope_insert(tb->rope, at, enc, (size_t)n)) {
         return false;
     }
     tb->cursor_byte += (size_t)n;
     tb_update_preferred_col(tb);
+    tb_publish_edit(tb, at, 0u, (size_t)n);
     return true;
 }
 
@@ -483,9 +515,11 @@ bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
     const uint8_t nl = '\n';
-    if (!sol_rope_insert(tb->rope, tb->cursor_byte, &nl, 1u)) return false;
+    const size_t at = tb->cursor_byte;
+    if (!sol_rope_insert(tb->rope, at, &nl, 1u)) return false;
     tb->cursor_byte += 1u;
     tb->preferred_col_cp = 0u;
+    tb_publish_edit(tb, at, 0u, 1u);
     return true;
 }
 
@@ -499,6 +533,7 @@ bool sol_text_buffer_backspace(SolTextBuffer *tb)
     if (!sol_rope_remove(tb->rope, at, step)) return false;
     tb->cursor_byte = at;
     tb_update_preferred_col(tb);
+    tb_publish_edit(tb, at, step, 0u);
     return true;
 }
 
@@ -507,9 +542,11 @@ bool sol_text_buffer_delete_forward(SolTextBuffer *tb)
     if (!tb || !tb->rope) return false;
     const size_t step = tb_cp_len_at(tb->rope, tb->cursor_byte);
     if (step == 0u) return false;
-    if (!sol_rope_remove(tb->rope, tb->cursor_byte, step)) return false;
+    const size_t at = tb->cursor_byte;
+    if (!sol_rope_remove(tb->rope, at, step)) return false;
     /* Cursor unchanged in absolute byte offset terms. */
     tb_update_preferred_col(tb);
+    tb_publish_edit(tb, at, step, 0u);
     return true;
 }
 

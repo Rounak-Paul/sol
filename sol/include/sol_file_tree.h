@@ -28,6 +28,10 @@
  * mutation when one is attached. */
 typedef struct Ca_Signal Ca_Signal;
 
+/* Forward-decl of the event bus — see sol_event.h. When attached
+ * the tree publishes sol.file_tree.root_changed on set_root. */
+typedef struct SolEventBus SolEventBus;
+
 typedef struct SolFileTree  SolFileTree;
 typedef struct SolFileEntry SolFileEntry;
 
@@ -49,6 +53,10 @@ void         sol_file_tree_destroy(SolFileTree *tree);
  * bumps on every mutation (set_root, toggle, refresh). Same contract
  * as sol_buffer_attach_revision_signal. */
 void sol_file_tree_attach_revision_signal(SolFileTree *tree, Ca_Signal *sig);
+
+/* Attach (or detach with NULL) an event bus. When attached, the tree
+ * publishes sol.file_tree.root_changed on every set_root success. */
+void sol_file_tree_attach_event_bus(SolFileTree *tree, SolEventBus *bus);
 
 /* Set (or replace) the root directory. Returns false if the path is
  * not a directory or could not be read; in that case the tree is

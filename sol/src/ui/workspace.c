@@ -42,6 +42,7 @@
 #include "sol_ui_internal.h"
 
 #include "sol_file_picker.h"
+#include "sol_event.h"
 #include "style.h"
 
 #include <assert.h>
@@ -524,6 +525,10 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
         return NULL;
     }
     sol_file_tree_attach_revision_signal(ui->file_tree, ui->sig_file_tree_rev);
+    /* Share the same event bus as the buffer system so file-tree
+       events fan out to the same observers without a separate hookup
+       in main.c. No-op when buffers has no bus attached yet. */
+    sol_file_tree_attach_event_bus(ui->file_tree, sol_buffer_event_bus(buffers));
 
     /* Seed the cached window size with the configured initial size so
        the first render — which happens before any resize event — has a
@@ -712,6 +717,15 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     if (exact_match) {
         exact_match->callback(exact_match->action, event, exact_match->user_data);
+        /* Publish on the same bus as buffer/text events so plugins
+           can react to commands without patching workspace.c. */
+        if (ui->buffers) {
+            SolCommandInvokedPayload payload;
+            payload.action = exact_match->action;
+            sol_event_publish(sol_buffer_event_bus(ui->buffers),
+                               SOL_EVENT_COMMAND_INVOKED,
+                               &payload, sizeof(payload), ui);
+        }
         sol_ui_close_leader_popup(ui);
         return true;
     }

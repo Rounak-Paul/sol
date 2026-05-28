@@ -11,6 +11,12 @@
  * only via this typedef. */
 typedef struct Ca_Signal Ca_Signal;
 
+/* Forward-decl of the event bus — sol_buffer.h stays free of any
+ * sol_event.h dependency. When a bus is attached, the buffer system
+ * publishes sol.buffer.opened / closed / focused on the corresponding
+ * mutations. See sol_event.h for the payload contract. */
+typedef struct SolEventBus SolEventBus;
+
 typedef struct SolBufferSystem SolBufferSystem;
 typedef struct SolBuffer SolBuffer;
 
@@ -74,6 +80,17 @@ void sol_buffer_system_destroy(SolBufferSystem *system);
  * Builders that read this signal auto-subscribe and re-run on any
  * buffer-tree change without any explicit invalidate call. */
 void sol_buffer_attach_revision_signal(SolBufferSystem *system, Ca_Signal *sig);
+
+/* Attach an event bus so the buffer system publishes lifecycle events
+ * (sol.buffer.opened / closed / focused). Pass NULL to detach. The
+ * bus is borrowed; the caller retains ownership. Safe to call before
+ * or after buffers have been created. */
+void sol_buffer_attach_event_bus(SolBufferSystem *system, SolEventBus *bus);
+
+/* Returns the currently-attached event bus, or NULL. Used by other
+ * subsystems (e.g. SolTextBuffer) to publish on the same bus without
+ * having to plumb it through every call. */
+SolEventBus *sol_buffer_event_bus(SolBufferSystem *system);
 
 SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc);
 bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id);

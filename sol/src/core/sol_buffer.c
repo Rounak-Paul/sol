@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "sol_event.h"
+
 typedef enum SolLayoutNodeType {
     SOL_LAYOUT_NODE_LEAF = 0,
     SOL_LAYOUT_NODE_SPLIT,
@@ -56,16 +58,52 @@ struct SolBufferSystem {
     /* Optional caller-owned u32 revision signal. Bumped by bump_rev()
        on every successful state mutation. NULL until attached. */
     Ca_Signal *rev;
+
+    /* Optional caller-owned event bus. When attached, the system
+       publishes sol.buffer.opened / closed / focused on the
+       corresponding mutations. NULL until attached. */
+    SolEventBus *events;
+
+    /* Tracks which buffer was active at the end of the previous
+       focus-bumping mutation so we only publish sol.buffer.focused
+       on an actual change. */
+    SolBufferId  last_focused_buffer_id;
 };
+
+static const SolBuffer *sol_buffer_find_const(const SolBufferSystem *system, SolBufferId id);
+
+/* Publish sol.buffer.focused if the active buffer actually changed
+   since the last call. Safe to call from every focus-touching mutator. */
+static void maybe_publish_focus(SolBufferSystem *system)
+{
+    if (!system || !system->events) return;
+    const SolBufferId current = sol_buffer_active_buffer(system);
+    if (current == system->last_focused_buffer_id) return;
+    system->last_focused_buffer_id = current;
+    if (current == 0u) return;
+
+    const SolBuffer *buf = sol_buffer_find_const(system, current);
+    if (!buf) return;
+    SolBufferEventPayload payload;
+    payload.buffer_id   = current;
+    payload.kind        = buf->kind;
+    payload.name        = buf->name;
+    payload.source_path = NULL;   /* unknown at this layer */
+    sol_event_publish(system->events, SOL_EVENT_BUFFER_FOCUSED,
+                       &payload, sizeof(payload), system);
+}
 
 /* Single point of notification — every mutator that changes
    user-visible state calls this once on success. Cheap when no signal
-   is attached, idiomatic causality when one is. */
+   is attached, idiomatic causality when one is. Also forwards focus
+   changes to the event bus when one is attached. */
 static void bump_rev(SolBufferSystem *system)
 {
-    if (system && system->rev) {
+    if (!system) return;
+    if (system->rev) {
         ca_signal_set_u32(system->rev, ca_signal_get_u32(system->rev) + 1u);
     }
+    maybe_publish_focus(system);
 }
 
 static char *sol_strdup(const char *value)
@@ -336,6 +374,17 @@ void sol_buffer_attach_revision_signal(SolBufferSystem *system, Ca_Signal *sig)
     system->rev = sig;
 }
 
+void sol_buffer_attach_event_bus(SolBufferSystem *system, SolEventBus *bus)
+{
+    if (!system) return;
+    system->events = bus;
+}
+
+SolEventBus *sol_buffer_event_bus(SolBufferSystem *system)
+{
+    return system ? system->events : NULL;
+}
+
 SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc)
 {
     if (!system || !desc) {
@@ -379,7 +428,16 @@ SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc
         system->active_leaf_id = leaf->id;
     }
 
-    bump_rev(system);
+    if (system->events) {
+        SolBufferEventPayload payload;
+        payload.buffer_id   = buffer.id;
+        payload.kind        = buffer.kind;
+        payload.name        = buffer.name;
+        payload.source_path = NULL;
+        sol_event_publish(system->events, SOL_EVENT_BUFFER_OPENED,
+                           &payload, sizeof(payload), system);
+    }
+    bump_rev(system);   /* also publishes sol.buffer.focused if active changed */
     return buffer.id;
 }
 
@@ -388,6 +446,17 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
     SolBuffer *buffer = sol_buffer_find(system, buffer_id);
     if (!buffer) {
         return false;
+    }
+
+    /* Snapshot for the CLOSED event before we tear the buffer down. */
+    SolBufferEventPayload closed_payload;
+    closed_payload.buffer_id   = buffer->id;
+    closed_payload.kind        = buffer->kind;
+    closed_payload.name        = buffer->name;
+    closed_payload.source_path = NULL;
+    if (system->events) {
+        sol_event_publish(system->events, SOL_EVENT_BUFFER_CLOSED,
+                           &closed_payload, sizeof(closed_payload), system);
     }
 
     if (buffer->ops.destroy) {
@@ -402,7 +471,7 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
     const SolBufferId fallback = sol_first_live_buffer_id(system);
     sol_replace_buffer_in_layout(system, buffer_id, fallback);
 
-    bump_rev(system);
+    bump_rev(system);   /* also publishes sol.buffer.focused if active changed */
     return true;
 }
 
