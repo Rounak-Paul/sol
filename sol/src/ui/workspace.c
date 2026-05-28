@@ -9,14 +9,18 @@
  *   content_root
  *   └── app-root  (this is what ca_ui_begin attaches to)
  *       └── workspace-host
- *           └── workspace-content-host  (reactive)
- *               ├── workspace-main-content (buffer split tree, flex-grow)
- *               └── command-flow panel    (only when leader_active)
+ *           ├── workspace-content-host  (reactive; workspace builder)
+ *           │   └── workspace-main-content (file tree + buffer area)
+ *           └── popup-host              (reactive; absolute overlay)
+ *               └── cf-panel            (only when leader_active)
  *   <causality status bar>           (system-managed; sol installs builder)
  *
- * The reactive content host is wired via ca_div_set_builder, so any
- * sol_ui_mark_workspace_dirty() call invalidates the underlying effect
- * and the next reactive flush rebuilds the content tree.
+ * Each reactive host owns an independent effect installed via
+ * ca_div_set_builder. Toggling the leader popup or advancing the
+ * leader prefix invalidates ONLY popup_host \u2014 the workspace tree is
+ * untouched and never re-laid-out on Ctrl press. Likewise:
+ *   - sol_ui_mark_workspace_dirty \u2192 workspace_content_host
+ *   - sol_ui_mark_popup_dirty     \u2192 popup_host
  */
 
 #include "sol_ui_internal.h"
@@ -66,6 +70,14 @@ void sol_ui_mark_buffers_dirty(SolUISystem *ui)
        content is emitted inline by sol_ui_workspace_content_builder, so any
        buffer change needs to rebuild the whole workspace content tree. */
     sol_ui_mark_workspace_dirty(ui);
+}
+
+void sol_ui_mark_popup_dirty(SolUISystem *ui)
+{
+    if (!ui || !ui->popup_host) {
+        return;
+    }
+    ca_div_invalidate(ui->popup_host);
 }
 
 /* ------------------------------------------------------------------ */
@@ -346,12 +358,25 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
 
     ca_div_end();   /* workspace-main-content */
 
-    /* Command-flow panel renders inline above the (causality) status
-       bar when leader is active. As a regular flex sibling it pushes
-       the workspace tree up by exactly its height — no pixel math. */
-    if (ui->leader_active) {
-        sol_ui_render_command_flow_panel(ui);
+    /* Command-flow popup is rendered by its own reactive host
+       (ui->popup_host, mounted as a sibling of workspace_content_host).
+       Toggling the popup invalidates only that host — the workspace
+       tree (file tree + buffer split + tabs) is untouched. */
+}
+
+/* Builder installed on the popup host. The host is an absolute-positioned
+   overlay covering workspace_host; while the popup is inactive the builder
+   emits no children, so the host is an inert transparent rectangle —
+   causality only dispatches input to buttons / focusables, so an empty
+   absolute div with no background and no handlers blocks nothing. */
+static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
+{
+    (void)div;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->leader_active) {
+        return;
     }
+    sol_ui_render_command_flow_panel(ui);
 }
 
 /* Builder installed into the system-managed status bar via
@@ -409,6 +434,23 @@ static bool sol_ui_build_layout(SolUISystem *ui)
     ca_div_set_builder(ui->workspace_content_host, sol_ui_workspace_content_builder, ui);
 
     ca_div_end();   /* workspace-content-host */
+
+    /* Popup host — absolute overlay sibling of workspace_content_host.
+       Its own reactive builder reads leader_active and emits the
+       which-key card only when the popup is open. Because it lives
+       outside the content host's effect, toggling the popup or
+       advancing the leader prefix invalidates only this host. */
+    ui->popup_host = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .position  = CA_POSITION_ABSOLUTE,
+        .pos_x     = 0.0f,
+        .pos_y     = 0.0f,
+        .z_index   = 50,
+        .style     = "cf-overlay",
+    });
+    ca_div_set_builder(ui->popup_host, sol_ui_popup_builder, ui);
+    ca_div_end();   /* popup_host */
+
     ca_div_end();   /* workspace-host */
 
     ca_ui_end();
@@ -629,7 +671,7 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     if (has_deeper && ui->leader_prefix_length < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
         ui->leader_prefix[ui->leader_prefix_length++] = key;
-        sol_ui_mark_workspace_dirty(ui);
+        sol_ui_mark_popup_dirty(ui);
         return true;
     }
 
@@ -741,6 +783,7 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
     ui->workspace_content_host = NULL;
     ui->tree_panel_host        = NULL;
     ui->buffer_area_host       = NULL;
+    ui->popup_host             = NULL;
 }
 
 void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)

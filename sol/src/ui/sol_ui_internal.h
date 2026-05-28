@@ -106,6 +106,11 @@ struct SolUISystem {
        not the whole workspace. NULL until the workspace builder runs. */
     Ca_Div           *tree_panel_host;
     Ca_Div           *buffer_area_host;
+    /* Floating which-key popup host. Absolute-positioned overlay
+       sibling of workspace_content_host, so toggling the popup or
+       advancing the leader prefix invalidates ONLY this host — the
+       workspace tree (file tree + buffer split + tabs) stays put. */
+    Ca_Div           *popup_host;
 
     /* Leader / flow state. */
     SolModifierMask   leader_modifier;
@@ -171,13 +176,17 @@ struct SolUISystem {
    exists, otherwise sets a flag the on_frame hook acts on).
 
    - sol_ui_mark_workspace_dirty: invalidates the whole workspace
-     content tree. Use only for layout-shape changes (leader popup
-     toggle, file tree root attach/detach, window resize).
+     content tree. Use only for layout-shape changes (file tree root
+     attach/detach, window resize).
    - sol_ui_mark_tree_dirty:      invalidates only the file-tree panel.
-   - sol_ui_mark_buffers_dirty:   invalidates only the buffer area. */
+   - sol_ui_mark_buffers_dirty:   invalidates only the buffer area.
+   - sol_ui_mark_popup_dirty:     invalidates only the floating
+     which-key popup. Use for every leader-state change (open, close,
+     prefix extend, suggestion-set change). */
 void sol_ui_mark_workspace_dirty(SolUISystem *ui);
 void sol_ui_mark_tree_dirty(SolUISystem *ui);
 void sol_ui_mark_buffers_dirty(SolUISystem *ui);
+void sol_ui_mark_popup_dirty(SolUISystem *ui);
 
 /* Key utilities (command_flow.c) */
 bool        sol_ui_is_modifier_key(SolKeyCode key);

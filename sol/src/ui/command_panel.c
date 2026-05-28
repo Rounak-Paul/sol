@@ -4,12 +4,14 @@
 /* command_panel.c — Floating which-key popup for Sol command flows.
  *
  * The panel is a bottom-right anchored vertical card that lists the
- * available next-key suggestions while the leader popup is open. It
- * does NOT push the workspace layout: the implementation uses an
- * absolutely-positioned overlay covering the workspace_content_host's
- * client area, with end-alignment on both axes so the inner panel
- * naturally lands in the bottom-right corner regardless of window
- * size. There is no pixel math against the viewport.
+ * available next-key suggestions while the leader popup is open.
+ *
+ * This module only emits the panel card itself. Its container \u2014 an
+ * absolute-positioned overlay covering the workspace area with
+ * flex-end alignment on both axes \u2014 is the popup_host installed by
+ * workspace.c (see sol_ui_build_layout). That keeps popup toggles
+ * scoped to their own reactive effect: opening, closing, or advancing
+ * the leader prefix does not invalidate the workspace tree.
  */
 
 #include "sol_ui_internal.h"
@@ -87,22 +89,11 @@ void sol_ui_render_command_flow_panel(SolUISystem *ui)
         12.0f + (float)row_count * 22.0f
         + (row_count > 1u ? (float)(row_count - 1u) * 2.0f : 0.0f);
 
-    /* ---- Overlay: absolute, fills parent's content area. End-alignment
-       pushes the inner panel to the bottom-right corner. The overlay
-       has no background or input handlers so the underlying workspace
-       remains visible and interactive everywhere outside the panel. */
-    ca_div_begin(&(Ca_DivDesc){
-        .direction       = CA_VERTICAL,
-        .position        = CA_POSITION_ABSOLUTE,
-        .pos_x           = 0.0f,
-        .pos_y           = 0.0f,
-        .z_index         = 50,
-        .style           = "cf-overlay",
-    });
-
-    /* ---- Floating panel card. Explicit width+height keep it from
-       expanding to fill the overlay so flex-end can position it at
-       the bottom-right. */
+    /* ---- Floating panel card. The surrounding cf-overlay (absolute,
+       full-coverage, flex-end aligned) is provided by ui->popup_host,
+       so the panel naturally lands in the bottom-right corner without
+       any pixel math against the viewport. Explicit width+height keep
+       the card from stretching to fill the overlay. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .width     = panel_w,
@@ -138,5 +129,4 @@ void sol_ui_render_command_flow_panel(SolUISystem *ui)
     }
 
     ca_div_end(); /* cf-panel */
-    ca_div_end(); /* cf-overlay */
 }
