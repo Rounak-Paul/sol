@@ -104,6 +104,11 @@ SolBufferId sol_buffer_id(const SolBuffer *buffer);
 void *sol_buffer_state(SolBuffer *buffer);
 const void *sol_buffer_state_const(const SolBuffer *buffer);
 
+/* Split the active leaf. `new_buffer_id` controls the buffer assigned
+ * to the freshly-created leaf:
+ *   - 0u                       -> empty leaf (no buffer; renders blank)
+ *   - a live buffer id         -> that buffer is shown in the new pane
+ * Pass the active leaf's current buffer id to mirror it. */
 bool sol_buffer_split_active(
     SolBufferSystem *system,
     SolBufferSplitDirection direction,
@@ -112,7 +117,14 @@ bool sol_buffer_split_active(
     SolBufferNodeId *out_new_leaf_id
 );
 
-bool sol_buffer_focus_next_leaf(SolBufferSystem *system);
+/* Move focus to a neighbouring pane. `direction` > 0 advances to the
+ * next leaf in tree order, < 0 to the previous. Wraps. */
+bool sol_buffer_cycle_active_pane(SolBufferSystem *system, int direction);
+
+/* Show the previously-focused buffer in the active leaf. No-op when
+ * the current leaf already shows that buffer (matches "focus last
+ * used or do nothing" UX) or when no prior buffer has been focused. */
+bool sol_buffer_focus_previous_buffer(SolBufferSystem *system);
 bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buffer_id);
 
 /* Make `leaf_id` the active (focused) leaf. Used to implement

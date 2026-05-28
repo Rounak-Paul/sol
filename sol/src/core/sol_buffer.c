@@ -66,21 +66,36 @@ struct SolBufferSystem {
 
     /* Tracks which buffer was active at the end of the previous
        focus-bumping mutation so we only publish sol.buffer.focused
-       on an actual change. */
+       on an actual change. Updated unconditionally (not gated on the
+       event bus) so the focus-history is always consistent. */
     SolBufferId  last_focused_buffer_id;
+
+    /* The buffer that was active immediately BEFORE the current one.
+       Drives `sol_buffer_focus_previous_buffer` (Ctrl+B,B). 0 until
+       at least one focus change has occurred. */
+    SolBufferId  previous_focused_buffer_id;
 };
 
 static const SolBuffer *sol_buffer_find_const(const SolBufferSystem *system, SolBufferId id);
 
-/* Publish sol.buffer.focused if the active buffer actually changed
-   since the last call. Safe to call from every focus-touching mutator. */
+/* Track focus history and publish sol.buffer.focused when the active
+   buffer changes. Safe to call from every focus-touching mutator;
+   history is updated even when no event bus is attached. */
 static void maybe_publish_focus(SolBufferSystem *system)
 {
-    if (!system || !system->events) return;
+    if (!system) return;
     const SolBufferId current = sol_buffer_active_buffer(system);
     if (current == system->last_focused_buffer_id) return;
+
+    /* Slide the history window: previous <- last, last <- current.
+       Only record a non-zero prior as `previous` so transient empty
+       leaves (buffer_id == 0) do not poison the back-target. */
+    if (system->last_focused_buffer_id != 0u) {
+        system->previous_focused_buffer_id = system->last_focused_buffer_id;
+    }
     system->last_focused_buffer_id = current;
-    if (current == 0u) return;
+
+    if (!system->events || current == 0u) return;
 
     const SolBuffer *buf = sol_buffer_find_const(system, current);
     if (!buf) return;
@@ -527,16 +542,15 @@ bool sol_buffer_split_active(
         return false;
     }
 
-    SolBufferId split_buffer_id = new_buffer_id;
-    if (split_buffer_id == 0u) {
-        split_buffer_id = active_leaf->as.leaf.buffer_id;
-    }
-
-    if (split_buffer_id != 0u && !sol_buffer_find(system, split_buffer_id)) {
+    /* new_buffer_id == 0u creates an EMPTY leaf (no buffer assigned).
+       Callers that want to mirror the active leaf's buffer pass it
+       explicitly. The empty leaf renders as a blank pane until a
+       buffer is opened into it. */
+    if (new_buffer_id != 0u && !sol_buffer_find(system, new_buffer_id)) {
         return false;
     }
 
-    SolLayoutNode *new_leaf = sol_layout_create_leaf(system, split_buffer_id);
+    SolLayoutNode *new_leaf = sol_layout_create_leaf(system, new_buffer_id);
     if (!new_leaf) {
         return false;
     }
@@ -578,9 +592,9 @@ bool sol_buffer_split_active(
     return true;
 }
 
-bool sol_buffer_focus_next_leaf(SolBufferSystem *system)
+bool sol_buffer_cycle_active_pane(SolBufferSystem *system, int direction)
 {
-    if (!system || system->root_id == 0u) {
+    if (!system || system->root_id == 0u || direction == 0) {
         return false;
     }
 
@@ -609,7 +623,12 @@ bool sol_buffer_focus_next_leaf(SolBufferSystem *system)
             continue;
         }
 
-        const size_t next = (i + 1u) % cursor;
+        size_t next;
+        if (direction > 0) {
+            next = (i + 1u) % cursor;
+        } else {
+            next = (i + cursor - 1u) % cursor;
+        }
         system->active_leaf_id = leaf_ids[next];
         changed = true;
         break;
@@ -620,6 +639,36 @@ bool sol_buffer_focus_next_leaf(SolBufferSystem *system)
         bump_rev(system);
     }
     return changed;
+}
+
+bool sol_buffer_focus_previous_buffer(SolBufferSystem *system)
+{
+    if (!system) return false;
+
+    /* The target is the buffer that was active immediately before the
+       current one. Skip when there's no history yet or the historical
+       buffer no longer exists. */
+    const SolBufferId target = system->previous_focused_buffer_id;
+    if (target == 0u) return false;
+    if (!sol_buffer_find(system, target)) {
+        /* Stale history pointing at a closed buffer — clear it so a
+           subsequent call doesn't keep failing on the same dead id. */
+        system->previous_focused_buffer_id = 0u;
+        return false;
+    }
+
+    SolLayoutNode *leaf = sol_layout_find_node(system, system->active_leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return false;
+
+    if (leaf->as.leaf.buffer_id == target) {
+        /* Already showing it — no-op (matches user spec: "focus last
+           used buffer or if already focused do nothing"). */
+        return false;
+    }
+
+    leaf->as.leaf.buffer_id = target;
+    bump_rev(system);
+    return true;
 }
 
 bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buffer_id)

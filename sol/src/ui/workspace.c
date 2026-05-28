@@ -670,6 +670,11 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
         return true;
     }
 
+    /* Modifier mask the user is holding for THIS step, with the leader
+       modifier stripped (it's implicit while the popup is open). */
+    const SolModifierMask step_mods =
+        (SolModifierMask)(mods & ~ui->leader_modifier);
+
     /* Display the attempted sequence in the status bar before matching. */
     SolKeyCode attempted[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
     size_t attempted_len = ui->leader_prefix_length;
@@ -692,13 +697,19 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     for (size_t i = 0u; i < ui->command_flow_count; ++i) {
         SolCommandFlowBinding *flow = &ui->command_flows[i];
-        if (!sol_ui_flow_matches_prefix(flow, ui->leader_prefix, ui->leader_prefix_length)) {
+        if (!sol_ui_flow_matches_prefix(flow,
+                                        ui->leader_prefix,
+                                        ui->leader_prefix_modifiers,
+                                        ui->leader_prefix_length)) {
             continue;
         }
         if (flow->sequence_length <= ui->leader_prefix_length) {
             continue;
         }
         if (flow->sequence[ui->leader_prefix_length] != key) {
+            continue;
+        }
+        if (flow->step_modifiers[ui->leader_prefix_length] != step_mods) {
             continue;
         }
 
@@ -716,9 +727,13 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
     }
 
     if (exact_match) {
-        exact_match->callback(exact_match->action, event, exact_match->user_data);
+        if (exact_match->callback) {
+            exact_match->callback(exact_match->action, event, exact_match->user_data);
+        }
         /* Publish on the same bus as buffer/text events so plugins
-           can react to commands without patching workspace.c. */
+           can react to commands without patching workspace.c. This
+           is the primary dispatch path for config-loaded bindings
+           (whose callback is NULL by design). */
         if (ui->buffers) {
             SolCommandInvokedPayload payload;
             payload.action = exact_match->action;
@@ -731,7 +746,9 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
     }
 
     if (has_deeper && ui->leader_prefix_length < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
-        ui->leader_prefix[ui->leader_prefix_length++] = key;
+        ui->leader_prefix[ui->leader_prefix_length]           = key;
+        ui->leader_prefix_modifiers[ui->leader_prefix_length] = step_mods;
+        ui->leader_prefix_length++;
         /* Prefix grew: bump the leader-prefix revision so the popup
            builder re-runs and renders the deeper suggestion set. */
         sol_ui_bump_u32(ui->sig_leader_prefix_rev);
@@ -740,83 +757,6 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     sol_ui_close_leader_popup(ui);
     return true;
-}
-
-/* ------------------------------------------------------------------ */
-/* Built-in actions                                                    */
-/* ------------------------------------------------------------------ */
-
-bool sol_ui_system_on_save_action(const char *action, const SolInputEvent *event, void *user_data)
-{
-    (void)action;
-    (void)event;
-    return user_data != NULL;
-}
-
-bool sol_ui_system_on_split_vertical_action(const char *action,
-                                            const SolInputEvent *event, void *user_data)
-{
-    (void)action;
-    (void)event;
-
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui || !ui->buffers) {
-        return false;
-    }
-    /* sol_buffer_split_active self-notifies via sig_buffer_rev. */
-    return sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_VERTICAL,
-                                   0.5f, 0u, NULL);
-}
-
-bool sol_ui_system_on_split_horizontal_action(const char *action,
-                                              const SolInputEvent *event, void *user_data)
-{
-    (void)action;
-    (void)event;
-
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui || !ui->buffers) {
-        return false;
-    }
-    return sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_HORIZONTAL,
-                                   0.5f, 0u, NULL);
-}
-
-bool sol_ui_system_on_focus_next_action(const char *action,
-                                        const SolInputEvent *event, void *user_data)
-{
-    (void)action;
-    (void)event;
-
-    SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui || !ui->buffers) {
-        return false;
-    }
-    return sol_buffer_focus_next_leaf(ui->buffers);
-}
-
-static bool sol_ui_cycle_active_buffer(SolUISystem *ui, int direction)
-{
-    if (!ui || !ui->buffers) {
-        return false;
-    }
-    return sol_buffer_cycle_active_leaf(ui->buffers, direction);
-}
-
-bool sol_ui_system_on_buffer_next_action(const char *action,
-                                         const SolInputEvent *event, void *user_data)
-{
-    (void)action;
-    (void)event;
-    return sol_ui_cycle_active_buffer((SolUISystem *)user_data, +1);
-}
-
-bool sol_ui_system_on_buffer_prev_action(const char *action,
-                                         const SolInputEvent *event, void *user_data)
-{
-    (void)action;
-    (void)event;
-    return sol_ui_cycle_active_buffer((SolUISystem *)user_data, -1);
 }
 
 /* ------------------------------------------------------------------ */

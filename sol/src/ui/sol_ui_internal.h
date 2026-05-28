@@ -30,7 +30,8 @@
 #define SOL_UI_MAX_SPLIT_CALLBACKS    64u
 #define SOL_UI_MAX_ACTION_LEN         63u
 #define SOL_UI_MAX_LABEL_LEN          95u
-#define SOL_UI_MAX_FLOW_SEQUENCE_LEN  8u
+/* SOL_UI_MAX_FLOW_SEQUENCE_LEN is defined in sol_ui_system.h so the
+   config loader can use it without pulling this private header. */
 #define SOL_UI_MAX_SUGGESTIONS        32u
 #define SOL_UI_STATUS_TEXT_MAX_LEN    127u
 
@@ -52,15 +53,19 @@ typedef struct SolCommandFlowBinding {
     char                    action[SOL_UI_MAX_ACTION_LEN + 1u];
     char                    label[SOL_UI_MAX_LABEL_LEN + 1u];
     SolKeyCode              sequence[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    /* Per-step modifier mask (Shift/Alt/Super only — the leader
+       modifier is implicit and stripped before matching). */
+    SolModifierMask         step_modifiers[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
     size_t                  sequence_length;
     SolInputActionCallback  callback;
     void                   *user_data;
 } SolCommandFlowBinding;
 
 typedef struct SolFlowSuggestion {
-    SolKeyCode  key;
-    const char *label;
-    uint32_t    continuation_count;
+    SolKeyCode      key;
+    SolModifierMask modifiers;   /* Shift/Alt/Super only */
+    const char     *label;
+    uint32_t        continuation_count;
 } SolFlowSuggestion;
 
 /* Persistent context handed to causality split widgets so their drag
@@ -155,6 +160,8 @@ struct SolUISystem {
     bool              leader_no_match;
     SolKeyCode        leader_last_invalid_key;
     SolKeyCode        leader_prefix[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    /* Modifier mask the user held at each prefix step (leader stripped). */
+    SolModifierMask   leader_prefix_modifiers[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
     size_t            leader_prefix_length;
 
     SolCommandFlowBinding command_flows[SOL_UI_MAX_COMMAND_FLOWS];
@@ -232,9 +239,13 @@ void sol_ui_render_status_bar(SolUISystem *ui);
 void sol_ui_open_leader_popup(SolUISystem *ui);
 void sol_ui_close_leader_popup(SolUISystem *ui);
 
-/* Flow matching (command_flow.c) */
+/* Flow matching (command_flow.c). `prefix_modifiers` may be NULL to
+   match purely on key (legacy behaviour); when non-NULL, each prefix
+   step must agree with the flow's `step_modifiers[i]`. */
 bool   sol_ui_flow_matches_prefix(const SolCommandFlowBinding *flow,
-                                  const SolKeyCode *prefix, size_t prefix_length);
+                                  const SolKeyCode *prefix,
+                                  const SolModifierMask *prefix_modifiers,
+                                  size_t prefix_length);
 size_t sol_ui_collect_suggestions(SolUISystem *ui,
                                   SolFlowSuggestion *out, size_t capacity);
 

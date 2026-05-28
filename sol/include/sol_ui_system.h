@@ -11,6 +11,12 @@
 
 typedef struct SolUISystem SolUISystem;
 
+/* Maximum number of chord steps in a single command flow (including
+ * the leader). Surfaced publicly so callers (e.g. the bindings config
+ * loader) can size their per-flow buffers without depending on the
+ * private internal header. */
+#define SOL_UI_MAX_FLOW_SEQUENCE_LEN 8u
+
 /* Callback invoked when the user clicks a file row in the tree panel.
  * Sol's main wires this to a buffer-create + focus path. Return true on
  * success — the UI ignores the value today but will surface it later. */
@@ -20,6 +26,11 @@ typedef struct SolCommandFlowDesc {
 	const char *action;
 	const char *label;
 	const SolKeyCode *sequence;
+	/* Optional parallel array of per-step modifier masks. NULL means
+	 * every step has no modifier (the leader modifier is implicit and
+	 * MUST NOT be included here). Only Shift / Alt / Super are
+	 * meaningful — Ctrl is the leader and is consumed by the popup. */
+	const SolModifierMask *step_modifiers;
 	size_t sequence_length;
 	SolKeyCode key;
 	SolInputActionCallback callback;
@@ -33,13 +44,6 @@ Ca_Window *sol_ui_system_primary_window(SolUISystem *ui);
 
 bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDesc *desc);
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event);
-
-bool sol_ui_system_on_save_action(const char *action, const SolInputEvent *event, void *user_data);
-bool sol_ui_system_on_split_vertical_action(const char *action, const SolInputEvent *event, void *user_data);
-bool sol_ui_system_on_split_horizontal_action(const char *action, const SolInputEvent *event, void *user_data);
-bool sol_ui_system_on_focus_next_action(const char *action, const SolInputEvent *event, void *user_data);
-bool sol_ui_system_on_buffer_next_action(const char *action, const SolInputEvent *event, void *user_data);
-bool sol_ui_system_on_buffer_prev_action(const char *action, const SolInputEvent *event, void *user_data);
 
 void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window);
 void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height);

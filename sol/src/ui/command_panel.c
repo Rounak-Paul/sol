@@ -22,8 +22,12 @@
 
 static void render_suggestion_row(SolFlowSuggestion s)
 {
-    char key_name[24];
-    sol_ui_format_key_name(s.key, key_name, sizeof(key_name));
+    char key_name[32];
+    if (s.modifiers != SOL_MOD_NONE) {
+        sol_ui_format_modified_key(s.modifiers, s.key, key_name, sizeof(key_name));
+    } else {
+        sol_ui_format_key_name(s.key, key_name, sizeof(key_name));
+    }
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,

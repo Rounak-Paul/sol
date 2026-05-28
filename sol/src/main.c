@@ -9,13 +9,17 @@
  *      UI system → input router).
  *   2. Parse argv and open the CLI path (file or directory).
  *   3. Wire the title-bar File menu and file-tree click callback.
- *   4. Register the leader-key command flows (Save / Split / Cycle).
+ *   4. Load key bindings from $HOME/.sol/bindings.conf (auto-seeded
+ *      on first launch) and subscribe to the resulting command
+ *      events so Sol's built-in actions (split, cycle, focus-last)
+ *      respond to them.
  *   5. Drive the frame loop.
  *
  * Everything heavier — text storage, rendering, input dispatch — lives
  * in dedicated modules:
  *
  *   sol/src/core/sol_text_buffer.c   rope-backed editing primitives
+ *   sol/src/core/sol_config.c        ~/.sol/bindings.conf loader
  *   sol/src/ui/text_view.c            causality renderer + click/drag
  *   sol/src/ui/input_router.c         causality → Sol event glue
  */
@@ -31,6 +35,7 @@
 #include <sys/stat.h>
 
 #include "sol_buffer.h"
+#include "sol_config.h"
 #include "sol_event.h"
 #include "sol_file_picker.h"
 #include "sol_input.h"
@@ -41,7 +46,6 @@
 #include "sol_text_view.h"
 #include "sol_ui_constants.h"
 #include "sol_ui_system.h"
-#include "sol_event.h"
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -58,7 +62,8 @@ typedef struct SolAppContext {
     SolJobSystem         *jobs;
     SolInputSystem       *input;
     SolSubscriptionToken  startup_token;
-    bool                  command_flows_ready;
+    SolSubscriptionToken  command_token;
+    int                   command_flows_loaded;
     SolUISystem          *ui;
     Ca_Instance          *instance;
     SolInputRouter       *router;
@@ -168,48 +173,89 @@ static void sol_warmup_range(uint32_t begin, uint32_t end, void *user_data)
 }
 
 /* ------------------------------------------------------------------ */
-/* Command-flow registration (leader-key actions)                      */
+/* Built-in command actions (event-driven)                             */
 /* ------------------------------------------------------------------ */
 
-static bool sol_register_command_flows(SolUISystem *ui)
+/* Find the next/prev buffer in registration order, excluding `current`.
+   Returns 0u when there are fewer than 2 live buffers (caller should
+   treat that as "leave the new pane empty"). */
+static SolBufferId sol_next_buffer_in_cycle(SolBufferSystem *buffers,
+                                            SolBufferId current,
+                                            int direction)
 {
-    static const SolKeyCode flow_editor_save[]                = { 'F', 'S' };
-    static const SolKeyCode flow_workspace_split_vertical[]   = { 'W', 'V' };
-    static const SolKeyCode flow_workspace_split_horizontal[] = { 'W', 'H' };
-    static const SolKeyCode flow_workspace_focus_next[]       = { 'W', 'N' };
-    static const SolKeyCode flow_buffer_next[]                = { 'B', 'D' };
-    static const SolKeyCode flow_buffer_prev[]                = { 'B', 'A' };
+    if (!buffers) return 0u;
+    const size_t total = sol_buffer_count(buffers);
+    if (total < 2u) return 0u;
 
-    const struct {
-        const char        *action;
-        const char        *label;
-        const SolKeyCode  *seq;
-        SolKeyCode         key;
-        SolInputActionCallback cb;
-    } flows[] = {
-        { "editor.save",                "Save",                flow_editor_save,                'S', sol_ui_system_on_save_action },
-        { "workspace.split.vertical",   "Split Vertical",      flow_workspace_split_vertical,   'V', sol_ui_system_on_split_vertical_action },
-        { "workspace.split.horizontal", "Split Horizontal",    flow_workspace_split_horizontal, 'H', sol_ui_system_on_split_horizontal_action },
-        { "workspace.focus.next",       "Focus Next Pane",     flow_workspace_focus_next,       'N', sol_ui_system_on_focus_next_action },
-        { "buffer.next",                "Next Buffer",         flow_buffer_next,                'D', sol_ui_system_on_buffer_next_action },
-        { "buffer.prev",                "Previous Buffer",     flow_buffer_prev,                'A', sol_ui_system_on_buffer_prev_action },
-    };
-
-    bool all_ok = true;
-    for (size_t i = 0u; i < sizeof(flows) / sizeof(flows[0]); ++i) {
-        const bool ok = sol_ui_system_register_command_flow(ui,
-            &(SolCommandFlowDesc){
-                .action          = flows[i].action,
-                .label           = flows[i].label,
-                .sequence        = flows[i].seq,
-                .sequence_length = 2u,
-                .key             = flows[i].key,
-                .callback        = flows[i].cb,
-                .user_data       = ui,
-            });
-        all_ok = all_ok && ok;
+    size_t cur_idx = total;   /* sentinel: not found */
+    for (size_t i = 0u; i < total; ++i) {
+        if (sol_buffer_at(buffers, i) == current) {
+            cur_idx = i;
+            break;
+        }
     }
-    return all_ok;
+    size_t next_idx;
+    if (cur_idx == total) {
+        next_idx = 0u;
+    } else if (direction > 0) {
+        next_idx = (cur_idx + 1u) % total;
+    } else {
+        next_idx = (cur_idx + total - 1u) % total;
+    }
+    return sol_buffer_at(buffers, next_idx);
+}
+
+/* Action dispatcher subscribed to SOL_EVENT_COMMAND_INVOKED. The action
+   string carries the verb; user_data is the SolAppContext so handlers
+   can reach the buffer system. New actions can be added here OR by
+   plugins that subscribe to the same event with their own filtering. */
+static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
+{
+    if (!event || !event->payload ||
+        event->payload_size < sizeof(SolCommandInvokedPayload)) {
+        return false;
+    }
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !app->buffers) return false;
+
+    const SolCommandInvokedPayload *p =
+        (const SolCommandInvokedPayload *)event->payload;
+    if (!p->action) return false;
+
+    /* ---- pane.split.* : new pane shows the next buffer in cycle when
+       >=2 buffers exist; otherwise an empty leaf. */
+    if (strcmp(p->action, "pane.split.vertical") == 0 ||
+        strcmp(p->action, "pane.split.horizontal") == 0)
+    {
+        const SolBufferSplitDirection dir =
+            (p->action[11] == 'v') ? SOL_BUFFER_SPLIT_VERTICAL
+                                   : SOL_BUFFER_SPLIT_HORIZONTAL;
+        const SolBufferId current = sol_buffer_active_buffer(app->buffers);
+        const SolBufferId target  =
+            sol_next_buffer_in_cycle(app->buffers, current, +1);
+        return sol_buffer_split_active(app->buffers, dir, 0.5f, target, NULL);
+    }
+
+    if (strcmp(p->action, "pane.cycle.next") == 0) {
+        return sol_buffer_cycle_active_pane(app->buffers, +1);
+    }
+    if (strcmp(p->action, "pane.cycle.prev") == 0) {
+        return sol_buffer_cycle_active_pane(app->buffers, -1);
+    }
+
+    if (strcmp(p->action, "buffer.cycle.next") == 0) {
+        return sol_buffer_cycle_active_leaf(app->buffers, +1);
+    }
+    if (strcmp(p->action, "buffer.cycle.prev") == 0) {
+        return sol_buffer_cycle_active_leaf(app->buffers, -1);
+    }
+
+    if (strcmp(p->action, "buffer.focus.last") == 0) {
+        return sol_buffer_focus_previous_buffer(app->buffers);
+    }
+
+    /* Unknown action — let other subscribers (plugins) try. */
+    return false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -305,7 +351,24 @@ int main(int argc, char **argv)
                                sol_on_menu_open_folder,
                                &app);
 
-    app.command_flows_ready = sol_register_command_flows(app.ui);
+    /* Subscribe to command-invoked events BEFORE loading the bindings
+       file so any chord that happens to fire during early startup
+       (none today, but plugins might queue one) is observed. The
+       subscriber dispatches built-in actions; plugins may install
+       their own subscribers for additional actions. */
+    app.command_token = sol_event_bus_subscribe(app.events,
+        &(SolEventSubscriptionDesc){
+            .event_name = SOL_EVENT_COMMAND_INVOKED,
+            .priority   = 0,
+            .handler    = sol_on_command_invoked,
+            .user_data  = &app,
+        });
+
+    app.command_flows_loaded = sol_config_load_bindings(app.ui);
+    if (app.command_flows_loaded < 0) {
+        fprintf(stderr, "sol: failed to load key bindings from ~/.sol/bindings.conf\n");
+        app.command_flows_loaded = 0;
+    }
 
     app.router = sol_input_router_create(instance, app.ui, app.input, app.buffers);
     if (!app.router) {
@@ -346,7 +409,7 @@ int main(int argc, char **argv)
         .warmup_checksum = warmup_ok
             ? atomic_load_explicit(&warmup.checksum, memory_order_relaxed)
             : 0u,
-        .input_binding_active = app.command_flows_ready,
+        .input_binding_active = app.command_flows_loaded > 0,
     };
 
     sol_event_bus_post(app.events, &(SolEventDesc){
@@ -372,6 +435,9 @@ int main(int argc, char **argv)
 
     if (app.startup_token != 0u) {
         sol_event_bus_unsubscribe(app.events, app.startup_token);
+    }
+    if (app.command_token != 0u) {
+        sol_event_bus_unsubscribe(app.events, app.command_token);
     }
     sol_system_unregister_service(app.systems, "ca.window.primary");
     sol_system_unregister_service(app.systems, "ca.instance");

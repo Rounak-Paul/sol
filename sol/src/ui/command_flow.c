@@ -51,8 +51,10 @@ static void sol_ui_copy_text(char *dst, size_t dst_size, const char *src)
 static const char *
 sol_ui_flow_label_for_next(const SolUISystem *ui,
                            const SolKeyCode *prefix,
+                           const SolModifierMask *prefix_modifiers,
                            size_t prefix_length,
-                           SolKeyCode next_key)
+                           SolKeyCode next_key,
+                           SolModifierMask next_mods)
 {
     if (!ui) {
         return "More";
@@ -60,10 +62,12 @@ sol_ui_flow_label_for_next(const SolUISystem *ui,
 
     for (size_t i = 0u; i < ui->command_flow_count; ++i) {
         const SolCommandFlowBinding *flow = &ui->command_flows[i];
-        if (!sol_ui_flow_matches_prefix(flow, prefix, prefix_length)) {
+        if (!sol_ui_flow_matches_prefix(flow, prefix, prefix_modifiers, prefix_length)) {
             continue;
         }
-        if (flow->sequence_length <= prefix_length || flow->sequence[prefix_length] != next_key) {
+        if (flow->sequence_length <= prefix_length
+            || flow->sequence[prefix_length] != next_key
+            || flow->step_modifiers[prefix_length] != next_mods) {
             continue;
         }
         if (flow->sequence_length == prefix_length + 1u) {
@@ -76,38 +80,45 @@ sol_ui_flow_label_for_next(const SolUISystem *ui,
 static uint32_t
 sol_ui_flow_continuation_count(const SolUISystem *ui,
                                const SolKeyCode *prefix,
+                               const SolModifierMask *prefix_modifiers,
                                size_t prefix_length,
-                               SolKeyCode next_key)
+                               SolKeyCode next_key,
+                               SolModifierMask next_mods)
 {
     if (!ui || prefix_length + 1u >= SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
         return 0u;
     }
 
-    SolKeyCode unique[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    /* Count distinct (key,mods) pairs at the step AFTER `next`. */
+    struct { SolKeyCode k; SolModifierMask m; } unique[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
     size_t     unique_count = 0u;
 
     for (size_t i = 0u; i < ui->command_flow_count; ++i) {
         const SolCommandFlowBinding *flow = &ui->command_flows[i];
-        if (!sol_ui_flow_matches_prefix(flow, prefix, prefix_length)) {
+        if (!sol_ui_flow_matches_prefix(flow, prefix, prefix_modifiers, prefix_length)) {
             continue;
         }
         if (flow->sequence_length <= prefix_length + 1u) {
             continue;
         }
-        if (flow->sequence[prefix_length] != next_key) {
+        if (flow->sequence[prefix_length] != next_key
+            || flow->step_modifiers[prefix_length] != next_mods) {
             continue;
         }
 
-        const SolKeyCode child = flow->sequence[prefix_length + 1u];
+        const SolKeyCode      child_k = flow->sequence[prefix_length + 1u];
+        const SolModifierMask child_m = flow->step_modifiers[prefix_length + 1u];
         bool exists = false;
         for (size_t j = 0u; j < unique_count; ++j) {
-            if (unique[j] == child) {
+            if (unique[j].k == child_k && unique[j].m == child_m) {
                 exists = true;
                 break;
             }
         }
         if (!exists && unique_count < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
-            unique[unique_count++] = child;
+            unique[unique_count].k = child_k;
+            unique[unique_count].m = child_m;
+            ++unique_count;
         }
     }
     return (uint32_t)unique_count;
@@ -251,6 +262,10 @@ static void sol_ui_reset_leader_prefix(SolUISystem *ui)
     ui->leader_prefix_length    = 0u;
     ui->leader_no_match         = false;
     ui->leader_last_invalid_key = SOL_KEY_UNKNOWN;
+    for (size_t i = 0u; i < SOL_UI_MAX_FLOW_SEQUENCE_LEN; ++i) {
+        ui->leader_prefix[i]           = SOL_KEY_UNKNOWN;
+        ui->leader_prefix_modifiers[i] = SOL_MOD_NONE;
+    }
     /* The prefix changed shape — notify subscribers of the popup
        builder. Safe to bump even when the popup is closed: the popup
        builder won't be subscribed to this signal then. */
@@ -285,13 +300,18 @@ void sol_ui_close_leader_popup(SolUISystem *ui)
 /* ------------------------------------------------------------------ */
 
 bool sol_ui_flow_matches_prefix(const SolCommandFlowBinding *flow,
-                                const SolKeyCode *prefix, size_t prefix_length)
+                                const SolKeyCode *prefix,
+                                const SolModifierMask *prefix_modifiers,
+                                size_t prefix_length)
 {
     if (!flow || prefix_length > flow->sequence_length) {
         return false;
     }
     for (size_t i = 0u; i < prefix_length; ++i) {
         if (flow->sequence[i] != prefix[i]) {
+            return false;
+        }
+        if (prefix_modifiers && flow->step_modifiers[i] != prefix_modifiers[i]) {
             return false;
         }
     }
@@ -308,18 +328,22 @@ size_t sol_ui_collect_suggestions(SolUISystem *ui,
     size_t count = 0u;
     for (size_t i = 0u; i < ui->command_flow_count; ++i) {
         const SolCommandFlowBinding *flow = &ui->command_flows[i];
-        if (!sol_ui_flow_matches_prefix(flow, ui->leader_prefix, ui->leader_prefix_length)) {
+        if (!sol_ui_flow_matches_prefix(flow,
+                                        ui->leader_prefix,
+                                        ui->leader_prefix_modifiers,
+                                        ui->leader_prefix_length)) {
             continue;
         }
         if (flow->sequence_length <= ui->leader_prefix_length) {
             continue;
         }
 
-        const SolKeyCode next_key = flow->sequence[ui->leader_prefix_length];
+        const SolKeyCode      next_key  = flow->sequence[ui->leader_prefix_length];
+        const SolModifierMask next_mods = flow->step_modifiers[ui->leader_prefix_length];
 
         bool exists = false;
         for (size_t j = 0u; j < count; ++j) {
-            if (out[j].key == next_key) {
+            if (out[j].key == next_key && out[j].modifiers == next_mods) {
                 exists = true;
                 break;
             }
@@ -328,11 +352,18 @@ size_t sol_ui_collect_suggestions(SolUISystem *ui,
             continue;
         }
 
-        out[count].key   = next_key;
-        out[count].label = sol_ui_flow_label_for_next(
-            ui, ui->leader_prefix, ui->leader_prefix_length, next_key);
+        out[count].key       = next_key;
+        out[count].modifiers = next_mods;
+        out[count].label     = sol_ui_flow_label_for_next(
+            ui,
+            ui->leader_prefix, ui->leader_prefix_modifiers,
+            ui->leader_prefix_length,
+            next_key, next_mods);
         out[count].continuation_count = sol_ui_flow_continuation_count(
-            ui, ui->leader_prefix, ui->leader_prefix_length, next_key);
+            ui,
+            ui->leader_prefix, ui->leader_prefix_modifiers,
+            ui->leader_prefix_length,
+            next_key, next_mods);
         ++count;
     }
     return count;
@@ -345,9 +376,13 @@ size_t sol_ui_collect_suggestions(SolUISystem *ui,
 bool sol_ui_system_register_command_flow(SolUISystem *ui,
                                          const SolCommandFlowDesc *desc)
 {
-    if (!ui || !desc || !desc->action || !desc->callback) {
+    if (!ui || !desc || !desc->action) {
         return false;
     }
+    /* `callback` is optional. When NULL, matching the flow simply
+       publishes SOL_EVENT_COMMAND_INVOKED { action } and lets event
+       subscribers do the work — this is how config-loaded bindings
+       (which only know action names) wire up to behaviour. */
 
     size_t sequence_length = 0u;
     if (desc->sequence && desc->sequence_length > 0u) {
@@ -372,12 +407,27 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
     }
 
     flow->sequence_length = sequence_length;
+    /* Default step_modifiers to 0 (no modifier) before optional copy. */
+    for (size_t i = 0u; i < SOL_UI_MAX_FLOW_SEQUENCE_LEN; ++i) {
+        flow->step_modifiers[i] = SOL_MOD_NONE;
+    }
     if (desc->sequence && desc->sequence_length > 0u) {
         for (size_t i = 0u; i < sequence_length; ++i) {
             flow->sequence[i] = sol_ui_normalize_flow_key(desc->sequence[i]);
+            if (desc->step_modifiers) {
+                /* Strip leader modifier defensively — callers should
+                   never include it but a stray bit must not break
+                   matching. */
+                flow->step_modifiers[i] =
+                    (SolModifierMask)(desc->step_modifiers[i] & ~ui->leader_modifier);
+            }
         }
     } else {
         flow->sequence[0] = sol_ui_normalize_flow_key(desc->key);
+        if (desc->step_modifiers) {
+            flow->step_modifiers[0] =
+                (SolModifierMask)(desc->step_modifiers[0] & ~ui->leader_modifier);
+        }
     }
 
     flow->callback  = desc->callback;
