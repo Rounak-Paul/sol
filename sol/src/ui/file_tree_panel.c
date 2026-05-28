@@ -34,7 +34,7 @@ bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path)
     bool ok = sol_file_tree_set_root(ui->file_tree, path);
     /* Adding/removing a root toggles whether the tree column exists
        inside the workspace builder, so the parent host must rebuild. */
-    sol_ui_mark_workspace_dirty(ui);
+    sol_ui_invalidate_content(ui);
     return ok;
 }
 
@@ -84,7 +84,7 @@ static void on_row_click(Ca_Button *button, void *user_data)
         if (sol_file_tree_toggle(ctx->ui->file_tree, ctx->row_index)) {
             /* Only the tree panel needs to rebuild — buffers, splits,
                and the rest of the workspace are untouched. */
-            sol_ui_mark_tree_dirty(ctx->ui);
+            sol_ui_invalidate_content(ctx->ui);
         }
     } else if (ctx->ui->file_open_callback) {
         ctx->ui->file_open_callback(entry->full_path,
@@ -92,7 +92,7 @@ static void on_row_click(Ca_Button *button, void *user_data)
         /* The callback swapped the active buffer; force the buffer
            area to rebuild so the new contents show up immediately
            instead of waiting for the next unrelated UI update. */
-        sol_ui_mark_buffers_dirty(ctx->ui);
+        sol_ui_invalidate_content(ctx->ui);
     }
 }
 

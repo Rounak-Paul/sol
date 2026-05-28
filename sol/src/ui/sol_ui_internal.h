@@ -100,17 +100,38 @@ struct SolUISystem {
 
     Ca_Div           *workspace_host;
     Ca_Div           *workspace_content_host;
-    /* Sub-hosts inside workspace_content_host. Each owns its own
-       reactive builder so toggling the file tree only rebuilds the
-       tree panel, and opening a buffer only rebuilds the buffer area —
-       not the whole workspace. NULL until the workspace builder runs. */
+    /* These two are kept as struct fields purely for tooling/debug
+       inspection; sol no longer invalidates them directly. State
+       changes write to the signals below and the reactive runtime
+       re-runs the affected builder(s). NULL until build_layout runs. */
     Ca_Div           *tree_panel_host;
     Ca_Div           *buffer_area_host;
-    /* Floating which-key popup host. Absolute-positioned overlay
-       sibling of workspace_content_host, so toggling the popup or
-       advancing the leader prefix invalidates ONLY this host — the
-       workspace tree (file tree + buffer split + tabs) stays put. */
+    /* Floating which-key popup host — absolute-positioned overlay
+       sibling of workspace_content_host. Its builder subscribes to
+       sig_popup_version and re-runs in isolation; the workspace
+       content tree is never touched on Ctrl-press. */
     Ca_Div           *popup_host;
+
+    /* ---- Reactive state (causality fine-grained signals) ----
+     *
+     * All UI-driving state mutations go through these two version
+     * counters. Builders subscribe by calling ca_signal_get_u32 inside
+     * their body; the runtime re-runs only the affected builder(s) on
+     * the next reactive flush.
+     *
+     *   sig_content_version : bumped on workspace-content changes
+     *                         (file tree root attach/detach, file
+     *                         tree expand/collapse, active leaf,
+     *                         buffer split/swap, window resize).
+     *   sig_popup_version   : bumped on popup-affecting changes
+     *                         (open/close, leader prefix extend,
+     *                         flow registration).
+     *
+     * Use the helpers sol_ui_invalidate_content() and
+     * sol_ui_invalidate_popup() rather than poking the signals
+     * directly. */
+    Ca_Signal        *sig_content_version;
+    Ca_Signal        *sig_popup_version;
 
     /* Leader / flow state. */
     SolModifierMask   leader_modifier;
@@ -122,9 +143,6 @@ struct SolUISystem {
 
     SolCommandFlowBinding command_flows[SOL_UI_MAX_COMMAND_FLOWS];
     size_t                command_flow_count;
-
-    /* Pending workspace rebuild flag (deferred until content_host exists). */
-    bool   workspace_dirty;
 
     /* Last-known window size in logical px. Updated from the resize
        callback; consumed by the floating command panel for responsive
@@ -172,21 +190,19 @@ struct SolUISystem {
 /* Cross-module helpers                                                */
 /* ------------------------------------------------------------------ */
 
-/* Workspace dirty marking: reactivity-aware (invalidates effect when host
-   exists, otherwise sets a flag the on_frame hook acts on).
-
-   - sol_ui_mark_workspace_dirty: invalidates the whole workspace
-     content tree. Use only for layout-shape changes (file tree root
-     attach/detach, window resize).
-   - sol_ui_mark_tree_dirty:      invalidates only the file-tree panel.
-   - sol_ui_mark_buffers_dirty:   invalidates only the buffer area.
-   - sol_ui_mark_popup_dirty:     invalidates only the floating
-     which-key popup. Use for every leader-state change (open, close,
-     prefix extend, suggestion-set change). */
-void sol_ui_mark_workspace_dirty(SolUISystem *ui);
-void sol_ui_mark_tree_dirty(SolUISystem *ui);
-void sol_ui_mark_buffers_dirty(SolUISystem *ui);
-void sol_ui_mark_popup_dirty(SolUISystem *ui);
+/* Reactive invalidation. Bumps the matching version signal; the
+   reactive runtime re-runs every effect that read that signal during
+   its last evaluation (and only those effects).
+ *
+ *   sol_ui_invalidate_content : workspace tree (file tree column +
+ *                               buffer split tree + tab strip).
+ *   sol_ui_invalidate_popup   : floating which-key card.
+ *
+ * Safe to call before the corresponding host has been mounted: the
+ * signal still records the change; the builder picks up the latest
+ * state on its first run. */
+void sol_ui_invalidate_content(SolUISystem *ui);
+void sol_ui_invalidate_popup  (SolUISystem *ui);
 
 /* Key utilities (command_flow.c) */
 bool        sol_ui_is_modifier_key(SolKeyCode key);

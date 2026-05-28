@@ -16,11 +16,15 @@
  *   <causality status bar>           (system-managed; sol installs builder)
  *
  * Each reactive host owns an independent effect installed via
- * ca_div_set_builder. Toggling the leader popup or advancing the
- * leader prefix invalidates ONLY popup_host \u2014 the workspace tree is
- * untouched and never re-laid-out on Ctrl press. Likewise:
- *   - sol_ui_mark_workspace_dirty \u2192 workspace_content_host
- *   - sol_ui_mark_popup_dirty     \u2192 popup_host
+ * ca_div_set_builder. The builder body reads version signals and
+ * automatically subscribes; bumping a signal re-runs every effect
+ * that read it during its last evaluation — and nothing else:
+ *
+ *   - sol_ui_invalidate_content → sig_content_version → workspace builder
+ *   - sol_ui_invalidate_popup   → sig_popup_version   → popup builder
+ *
+ * There is no manual ca_div_invalidate in sol, no deferred dirty
+ * flag, and no on-frame dirty drain — the framework owns scheduling.
  */
 
 #include "sol_ui_internal.h"
@@ -41,44 +45,31 @@ typedef struct SolWorkspaceVisitorContext {
 } SolWorkspaceVisitorContext;
 
 /* ------------------------------------------------------------------ */
-/* Workspace dirty marking                                             */
+/* Reactive invalidation                                               */
 /* ------------------------------------------------------------------ */
 
-void sol_ui_mark_workspace_dirty(SolUISystem *ui)
+/* Bump a u32 version signal. Reading the current value here is a
+   plain read (no effect context on the call stack), so no spurious
+   subscriptions. Each bump notifies every effect that subscribed via
+   ca_signal_get_u32 during its last evaluation. */
+static void sol_ui_bump_signal(Ca_Signal *sig)
 {
-    if (!ui) {
+    if (!sig) {
         return;
     }
-    if (ui->workspace_content_host) {
-        ca_div_invalidate(ui->workspace_content_host);
-        ui->workspace_dirty = false;
-        return;
-    }
-    ui->workspace_dirty = true;
+    ca_signal_set_u32(sig, ca_signal_get_u32(sig) + 1u);
 }
 
-void sol_ui_mark_tree_dirty(SolUISystem *ui)
+void sol_ui_invalidate_content(SolUISystem *ui)
 {
-    /* tree_panel_host content is emitted inline by sol_ui_workspace_content_builder,
-       so tree changes rebuild the whole workspace content tree. */
-    sol_ui_mark_workspace_dirty(ui);
+    if (ui) sol_ui_bump_signal(ui->sig_content_version);
 }
 
-void sol_ui_mark_buffers_dirty(SolUISystem *ui)
+void sol_ui_invalidate_popup(SolUISystem *ui)
 {
-    /* buffer_area_host no longer has its own reactive sub-builder — its
-       content is emitted inline by sol_ui_workspace_content_builder, so any
-       buffer change needs to rebuild the whole workspace content tree. */
-    sol_ui_mark_workspace_dirty(ui);
+    if (ui) sol_ui_bump_signal(ui->sig_popup_version);
 }
 
-void sol_ui_mark_popup_dirty(SolUISystem *ui)
-{
-    if (!ui || !ui->popup_host) {
-        return;
-    }
-    ca_div_invalidate(ui->popup_host);
-}
 
 /* ------------------------------------------------------------------ */
 /* Buffer workspace visitor                                            */
@@ -162,7 +153,7 @@ static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
     if (sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id)) {
-        sol_ui_mark_buffers_dirty(cb->ui);
+        sol_ui_invalidate_content(cb->ui);
     }
 }
 
@@ -181,7 +172,7 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
         changed = true;
     }
     if (changed) {
-        sol_ui_mark_buffers_dirty(cb->ui);
+        sol_ui_invalidate_content(cb->ui);
     }
 }
 
@@ -327,6 +318,10 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         return;
     }
 
+    /* Subscribe this effect to the content version signal. Any
+       sol_ui_invalidate_content() call re-runs this builder. */
+    (void)ca_signal_get_u32(ui->sig_content_version);
+
     /* Top region: optional left tree panel + buffer area. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
@@ -373,7 +368,14 @@ static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
     SolUISystem *ui = (SolUISystem *)user_data;
-    if (!ui || !ui->leader_active) {
+    if (!ui) {
+        return;
+    }
+    /* Subscribe to the popup version signal. Open/close, prefix
+       advance, and flow registration all bump this and re-run us. */
+    (void)ca_signal_get_u32(ui->sig_popup_version);
+
+    if (!ui->leader_active) {
         return;
     }
     sol_ui_render_command_flow_panel(ui);
@@ -398,11 +400,10 @@ static void sol_ui_on_frame(void *user_data)
     if (!ui) {
         return;
     }
-    if (ui->workspace_dirty && ui->workspace_content_host) {
-        ca_div_invalidate(ui->workspace_content_host);
-        ui->workspace_dirty = false;
-    }
-    /* Reap closed file-picker windows. Safe even when none are open. */
+    /* Reap closed file-picker windows. Safe even when none are open.
+       Reactive scheduling is owned by causality — nothing else to
+       drive from here. */
+    (void)ui;
     sol_file_picker_tick();
 }
 
@@ -475,8 +476,19 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->instance        = instance;
     ui->buffers         = buffers;
     ui->leader_modifier = SOL_MOD_CTRL;
-    ui->workspace_dirty = true;
     ui->status_bar_kind = SOL_UI_STATUS_KIND_KEY;
+
+    /* Reactive state. Signals are owned by the instance and freed in
+       ca_instance_destroy; we never call ca_signal_destroy ourselves.
+       Initial value 0 is arbitrary \u2014 builders read the current value
+       only to subscribe. Created BEFORE the window so the layout
+       builder can safely call ca_signal_get_u32. */
+    ui->sig_content_version = ca_signal_u32(instance, 0u);
+    ui->sig_popup_version   = ca_signal_u32(instance, 0u);
+    if (!ui->sig_content_version || !ui->sig_popup_version) {
+        free(ui);
+        return NULL;
+    }
 
     /* Seed the cached window size with the configured initial size so
        the first render — which happens before any resize event — has a
@@ -671,7 +683,7 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 
     if (has_deeper && ui->leader_prefix_length < SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
         ui->leader_prefix[ui->leader_prefix_length++] = key;
-        sol_ui_mark_popup_dirty(ui);
+        sol_ui_invalidate_popup(ui);
         return true;
     }
 
@@ -703,7 +715,7 @@ bool sol_ui_system_on_split_vertical_action(const char *action,
     if (!sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_VERTICAL, 0.5f, 0u, NULL)) {
         return false;
     }
-    sol_ui_mark_workspace_dirty(ui);
+    sol_ui_invalidate_content(ui);
     return true;
 }
 
@@ -720,7 +732,7 @@ bool sol_ui_system_on_split_horizontal_action(const char *action,
     if (!sol_buffer_split_active(ui->buffers, SOL_BUFFER_SPLIT_HORIZONTAL, 0.5f, 0u, NULL)) {
         return false;
     }
-    sol_ui_mark_workspace_dirty(ui);
+    sol_ui_invalidate_content(ui);
     return true;
 }
 
@@ -737,7 +749,7 @@ bool sol_ui_system_on_focus_next_action(const char *action,
     if (!sol_buffer_focus_next_leaf(ui->buffers)) {
         return false;
     }
-    sol_ui_mark_workspace_dirty(ui);
+    sol_ui_invalidate_content(ui);
     return true;
 }
 
@@ -749,7 +761,7 @@ static bool sol_ui_cycle_active_buffer(SolUISystem *ui, int direction)
     if (!sol_buffer_cycle_active_leaf(ui->buffers, direction)) {
         return false;
     }
-    sol_ui_mark_buffers_dirty(ui);
+    sol_ui_invalidate_content(ui);
     return true;
 }
 
@@ -796,7 +808,7 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
     }
     ui->window_w = width;
     ui->window_h = height;
-    sol_ui_mark_workspace_dirty(ui);
+    sol_ui_invalidate_content(ui);
 }
 
 /* ------------------------------------------------------------------ */
@@ -871,7 +883,7 @@ void sol_ui_system_tick(SolUISystem *ui)
 
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
 {
-    sol_ui_mark_buffers_dirty(ui);
+    sol_ui_invalidate_content(ui);
 }
 
 void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h)
@@ -916,6 +928,6 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
     if (!sol_buffer_set_active_leaf(ui->buffers, leaf_id)) {
         return false;
     }
-    sol_ui_mark_buffers_dirty(ui);
+    sol_ui_invalidate_content(ui);
     return true;
 }

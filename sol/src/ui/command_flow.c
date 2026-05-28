@@ -260,7 +260,7 @@ void sol_ui_open_leader_popup(SolUISystem *ui)
     }
     ui->leader_active = true;
     sol_ui_reset_leader_prefix(ui);
-    sol_ui_mark_popup_dirty(ui);
+    sol_ui_invalidate_popup(ui);
 }
 
 void sol_ui_close_leader_popup(SolUISystem *ui)
@@ -270,7 +270,7 @@ void sol_ui_close_leader_popup(SolUISystem *ui)
     }
     ui->leader_active = false;
     sol_ui_reset_leader_prefix(ui);
-    sol_ui_mark_popup_dirty(ui);
+    sol_ui_invalidate_popup(ui);
 }
 
 /* ------------------------------------------------------------------ */
@@ -380,6 +380,6 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
 
     /* Registration only affects the which-key panel's suggestion set;
        no workspace shape change — invalidate only the popup host. */
-    sol_ui_mark_popup_dirty(ui);
+    sol_ui_invalidate_popup(ui);
     return true;
 }
