@@ -285,8 +285,15 @@ static void rebuild_visible_recursive(SolFileTree *t, size_t node_idx, size_t de
         load_children(t, node_idx);
         n = &t->nodes[node_idx];   /* pool may have moved */
     }
-    for (size_t i = 0; i < n->child_count; ++i) {
-        size_t ci = n->children[i];
+    /* Snapshot child list before recursing. Each recursive call may trigger
+       lazy loading which reallocs t->nodes, invalidating raw Node* pointers
+       held in parent frames. The children[] array is separately allocated and
+       not affected by a nodes realloc, so snapshotting count + pointer here
+       keeps this frame's iteration stable regardless of downstream reallocs. */
+    size_t  child_count = n->child_count;
+    size_t *children    = n->children;
+    for (size_t i = 0; i < child_count; ++i) {
+        size_t ci = children[i];
         emit_visible(t, ci, depth);
         if (t->nodes[ci].is_dir && t->nodes[ci].expanded) {
             rebuild_visible_recursive(t, ci, depth + 1u);
