@@ -71,6 +71,10 @@ static void on_row_click(Ca_Button *button, void *user_data)
     SolFileTreeClickCtx *ctx = (SolFileTreeClickCtx *)user_data;
     if (!ctx || !ctx->ui || !ctx->ui->file_tree) return;
 
+    if (ctx->ui->focus_region_callback) {
+        ctx->ui->focus_region_callback(true, ctx->ui->focus_region_user_data);
+    }
+
     const SolFileEntry *entry =
         sol_file_tree_visible(ctx->ui->file_tree, ctx->row_index);
     if (!entry) return;

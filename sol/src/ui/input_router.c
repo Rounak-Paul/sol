@@ -32,6 +32,7 @@ struct SolInputRouter {
     SolBufferSystem *buffers;
     double           mouse_x;
     double           mouse_y;
+    bool             suppress_next_text_input;
 };
 
 /* ------------------------------------------------------------------ */
@@ -124,6 +125,15 @@ static void on_key(const Ca_Event *ev, void *user_data)
     const bool ui_consumed = sol_ui_system_handle_input_event(r->ui, &ie);
     sol_input_system_process_event(r->input, &ie);
 
+    /* Exact-match command flows can close the leader popup during
+       KEY_DOWN; the corresponding CHAR event may still arrive after
+       that and would otherwise be inserted into the active buffer.
+       Latch a one-shot suppression for printable chord steps. */
+    if (ui_consumed && ie.type == SOL_INPUT_EVENT_KEY_DOWN &&
+        key_is_printable_alpha(ie.data.key.key)) {
+        r->suppress_next_text_input = true;
+    }
+
     if (ie.type != SOL_INPUT_EVENT_KEY_DOWN) return;
     if (ui_consumed) return;
     if (sol_ui_system_is_leader_active(r->ui)) return;
@@ -140,6 +150,11 @@ static void on_char(const Ca_Event *ev, void *user_data)
     ie.type = SOL_INPUT_EVENT_TEXT_INPUT;
     ie.data.text.codepoint = ev->character.codepoint;
     sol_input_system_process_event(r->input, &ie);
+
+    if (r->suppress_next_text_input) {
+        r->suppress_next_text_input = false;
+        return;
+    }
 
     if (sol_ui_system_is_leader_active(r->ui)) return;
     const uint32_t cp = ev->character.codepoint;

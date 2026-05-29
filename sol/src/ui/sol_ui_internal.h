@@ -200,6 +200,8 @@ struct SolUISystem {
 
     SolUIFileOpenFn  file_open_callback;
     void            *file_open_user_data;
+   SolUIFocusRegionFn focus_region_callback;
+   void              *focus_region_user_data;
 
     /* Title-bar menu callbacks. Installed via
        sol_ui_system_install_menu(); the trampolines defined in

@@ -21,6 +21,7 @@ typedef struct SolUISystem SolUISystem;
  * Sol's main wires this to a buffer-create + focus path. Return true on
  * success — the UI ignores the value today but will surface it later. */
 typedef bool (*SolUIFileOpenFn)(const char *path, void *user_data);
+typedef void (*SolUIFocusRegionFn)(bool in_explorer, void *user_data);
 
 typedef struct SolCommandFlowDesc {
 	const char *action;
@@ -54,6 +55,13 @@ bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path);
 void sol_ui_system_set_file_open_callback(SolUISystem *ui,
                                           SolUIFileOpenFn callback,
                                           void *user_data);
+
+/* Receive focus-region transitions from concrete UI interactions
+ * (tree rows / pane clicks). in_explorer=true means interaction inside
+ * explorer; false means interaction in buffer/workspace content. */
+void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
+											 SolUIFocusRegionFn callback,
+											 void *user_data);
 
 /* Force the buffer split-tree area to rebuild on the next reactive
  * flush. Call this after externally swapping the active buffer (e.g.

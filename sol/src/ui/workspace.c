@@ -155,6 +155,9 @@ static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
     (void)button;
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
+    if (cb->ui->focus_region_callback) {
+        cb->ui->focus_region_callback(false, cb->ui->focus_region_user_data);
+    }
     /* sol_buffer_set_active_leaf self-notifies via sig_buffer_rev when
        the leaf actually changes — no explicit invalidation needed. */
     (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
@@ -165,6 +168,9 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
     (void)button;
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
+    if (cb->ui->focus_region_callback) {
+        cb->ui->focus_region_callback(false, cb->ui->focus_region_user_data);
+    }
     /* Both sol_buffer_set_active_leaf and sol_buffer_set_leaf_buffer
        self-notify on success. */
     (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
@@ -337,16 +343,18 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         .style     = "workspace-main-content",
     });
 
-    if (ui->file_tree && sol_file_tree_root(ui->file_tree)) {
-        ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
-            .direction = CA_VERTICAL,
-            .style     = "tree-panel",
-        });
+    const bool has_tree_root =
+        (ui->file_tree && sol_file_tree_root(ui->file_tree) != NULL);
+
+    ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style     = "tree-panel",
+        .hidden    = !has_tree_root,
+    });
+    if (has_tree_root) {
         sol_ui_render_file_tree_panel_body(ui);
-        ca_div_end();   /* tree-panel-host */
-    } else {
-        ui->tree_panel_host = NULL;
     }
+    ca_div_end();   /* tree-panel-host */
 
     ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
@@ -908,6 +916,18 @@ bool sol_ui_system_is_leader_active(const SolUISystem *ui)
 bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
 {
     if (!ui || !ui->buffers || leaf_id == 0u) return false;
+    if (ui->focus_region_callback) {
+        ui->focus_region_callback(false, ui->focus_region_user_data);
+    }
     /* sol_buffer_set_active_leaf self-notifies. */
     return sol_buffer_set_active_leaf(ui->buffers, leaf_id);
+}
+
+void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
+                                             SolUIFocusRegionFn callback,
+                                             void *user_data)
+{
+    if (!ui) return;
+    ui->focus_region_callback = callback;
+    ui->focus_region_user_data = user_data;
 }

@@ -338,11 +338,24 @@ bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
     if (!tree) return false;
 
     free_all_nodes(tree);
+    tree->root_index = 0u;
     tree->visible_count = 0u;
     free(tree->root_path);
     tree->root_path = NULL;
 
-    if (!root_path) return false;
+    /* NULL root means "hide/clear explorer". This is a successful
+       state transition and must notify reactive subscribers so the
+       tree panel disappears immediately. */
+    if (!root_path) {
+        bump_rev(tree);
+        if (tree->events) {
+            SolFileTreeRootPayload payload;
+            payload.path = NULL;
+            sol_event_publish(tree->events, SOL_EVENT_FILE_TREE_ROOT,
+                              &payload, sizeof(payload), tree);
+        }
+        return true;
+    }
 
     struct stat st;
     if (stat(root_path, &st) != 0 || !S_ISDIR(st.st_mode)) return false;

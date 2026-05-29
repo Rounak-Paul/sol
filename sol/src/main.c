@@ -33,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "sol_buffer.h"
 #include "sol_config.h"
@@ -67,17 +68,49 @@ typedef struct SolAppContext {
     SolUISystem          *ui;
     Ca_Instance          *instance;
     SolInputRouter       *router;
+    char                 *explorer_root_path;
+    bool                  explorer_focused;
+    SolBufferNodeId       focus_before_explorer;
 } SolAppContext;
 
 /* ------------------------------------------------------------------ */
 /* Buffer-open glue                                                    */
 /* ------------------------------------------------------------------ */
 
+static char *sol_strdup_owned(const char *s)
+{
+    if (!s) return NULL;
+    const size_t n = strlen(s);
+    char *out = (char *)malloc(n + 1u);
+    if (!out) return NULL;
+    memcpy(out, s, n);
+    out[n] = '\0';
+    return out;
+}
+
+static bool sol_set_explorer_root(SolAppContext *app, const char *path)
+{
+    if (!app || !app->ui) return false;
+    if (!sol_ui_system_set_file_tree_root(app->ui, path)) {
+        return false;
+    }
+    if (path && path[0] != '\0') {
+        char *dup = sol_strdup_owned(path);
+        if (dup) {
+            free(app->explorer_root_path);
+            app->explorer_root_path = dup;
+        }
+    }
+    return true;
+}
+
 /* Open `path` into the active leaf, deduping against an existing
    buffer with the same source path. */
 static bool sol_open_path_in_active_leaf(SolAppContext *app, const char *path)
 {
     if (!app || !app->buffers || !path) return false;
+    app->explorer_focused = false;
+    app->focus_before_explorer = 0u;
 
     const SolBufferId existing = sol_text_buffer_find_by_path(app->buffers, path);
     if (existing != 0u) {
@@ -122,7 +155,7 @@ static void sol_on_picker_folder_chosen(const char *path, void *user_data)
     if (!path) return;
     SolAppContext *app = (SolAppContext *)user_data;
     if (!app || !app->ui) return;
-    if (!sol_ui_system_set_file_tree_root(app->ui, path)) {
+    if (!sol_set_explorer_root(app, path)) {
         fprintf(stderr, "sol: cannot open directory '%s'\n", path);
     }
 }
@@ -141,6 +174,34 @@ static void sol_on_menu_open_folder(void *user_data)
     if (!app || !app->instance) return;
     sol_file_picker_open(app->instance, SOL_FILE_PICKER_FOLDER, NULL,
                          sol_on_picker_folder_chosen, app);
+}
+
+/* UI focus bridge: keep explorer-focus state synced to actual widget
+    interactions emitted by the UI system (not geometry guesses). */
+static void sol_on_ui_focus_region(bool in_tree_panel, void *user_data)
+{
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !app->ui || !app->buffers) return;
+
+    if (sol_ui_system_tree_panel_width(app->ui) <= 0) {
+        app->explorer_focused = false;
+        app->focus_before_explorer = 0u;
+        return;
+    }
+
+    if (in_tree_panel) {
+        if (!app->explorer_focused) {
+            SolBufferNodeId leaf = sol_buffer_active_leaf(app->buffers);
+            if (leaf != 0u) {
+                app->focus_before_explorer = leaf;
+            }
+        }
+        app->explorer_focused = true;
+        return;
+    }
+
+    app->explorer_focused = false;
+    app->focus_before_explorer = 0u;
 }
 
 /* ------------------------------------------------------------------ */
@@ -205,6 +266,55 @@ static SolBufferId sol_next_buffer_in_cycle(SolBufferSystem *buffers,
     return sol_buffer_at(buffers, next_idx);
 }
 
+static bool sol_focus_buffer_by_index(SolBufferSystem *buffers, size_t index)
+{
+    if (!buffers) return false;
+    const SolBufferId id = sol_buffer_at(buffers, index);
+    if (id == 0u) return false;
+    return sol_buffer_set_active_leaf_buffer(buffers, id);
+}
+
+static bool sol_toggle_explorer_focus(SolAppContext *app)
+{
+    if (!app || !app->ui || !app->buffers) return false;
+
+    if (app->explorer_focused) {
+        app->explorer_focused = false;
+        (void)sol_set_explorer_root(app, NULL);
+        SolBufferNodeId restore = app->focus_before_explorer;
+        if (restore == 0u) {
+            /* First-time explorer toggle with no prior anchor: ensure
+               focus lands back in the active buffer pane. */
+            restore = sol_buffer_active_leaf(app->buffers);
+        }
+        if (restore != 0u) {
+            (void)sol_ui_system_focus_leaf(app->ui, restore);
+        }
+        app->focus_before_explorer = 0u;
+        return true;
+    }
+
+    if (sol_ui_system_tree_panel_width(app->ui) == 0) {
+        const char *root = app->explorer_root_path;
+        char cwd_buf[4096];
+        if (!root || root[0] == '\0') {
+            if (!getcwd(cwd_buf, sizeof(cwd_buf))) {
+                return false;
+            }
+            root = cwd_buf;
+        }
+        if (!sol_set_explorer_root(app, root)) {
+            return false;
+        }
+    }
+
+    /* Capture exactly once per explorer-focus session: the last thing
+       focused before entering explorer. */
+    app->focus_before_explorer = sol_buffer_active_leaf(app->buffers);
+    app->explorer_focused = true;
+    return true;
+}
+
 /* Action dispatcher subscribed to SOL_EVENT_COMMAND_INVOKED. The action
    string carries the verb; user_data is the SolAppContext so handlers
    can reach the buffer system. New actions can be added here OR by
@@ -222,24 +332,36 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         (const SolCommandInvokedPayload *)event->payload;
     if (!p->action) return false;
 
+    if (strcmp(p->action, "explorer.focus.toggle") == 0) {
+        return sol_toggle_explorer_focus(app);
+    }
+
+    app->explorer_focused = false;
+    app->focus_before_explorer = 0u;
+
     /* ---- pane.split.* : new pane shows the next buffer in cycle when
        >=2 buffers exist; otherwise an empty leaf. */
     if (strcmp(p->action, "pane.split.vertical") == 0 ||
-        strcmp(p->action, "pane.split.horizontal") == 0)
+        strcmp(p->action, "pane.split.horizontal") == 0 ||
+        strcmp(p->action, "split.vertical") == 0 ||
+        strcmp(p->action, "split.horizontal") == 0)
     {
         const SolBufferSplitDirection dir =
-            (p->action[11] == 'v') ? SOL_BUFFER_SPLIT_VERTICAL
-                                   : SOL_BUFFER_SPLIT_HORIZONTAL;
+            (strstr(p->action, "vertical") != NULL)
+                ? SOL_BUFFER_SPLIT_VERTICAL
+                : SOL_BUFFER_SPLIT_HORIZONTAL;
         const SolBufferId current = sol_buffer_active_buffer(app->buffers);
         const SolBufferId target  =
             sol_next_buffer_in_cycle(app->buffers, current, +1);
         return sol_buffer_split_active(app->buffers, dir, 0.5f, target, NULL);
     }
 
-    if (strcmp(p->action, "pane.cycle.next") == 0) {
+    if (strcmp(p->action, "pane.cycle.next") == 0 ||
+        strcmp(p->action, "split.focus.next") == 0) {
         return sol_buffer_cycle_active_pane(app->buffers, +1);
     }
-    if (strcmp(p->action, "pane.cycle.prev") == 0) {
+    if (strcmp(p->action, "pane.cycle.prev") == 0 ||
+        strcmp(p->action, "split.focus.prev") == 0) {
         return sol_buffer_cycle_active_pane(app->buffers, -1);
     }
 
@@ -250,7 +372,17 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return sol_buffer_cycle_active_leaf(app->buffers, -1);
     }
 
+    if (strcmp(p->action, "buffer.focus.first") == 0) {
+        return sol_focus_buffer_by_index(app->buffers, 0u);
+    }
     if (strcmp(p->action, "buffer.focus.last") == 0) {
+        const size_t total = sol_buffer_count(app->buffers);
+        return (total > 0u) ? sol_focus_buffer_by_index(app->buffers, total - 1u)
+                            : false;
+    }
+
+    if (strcmp(p->action, "buffer.focus.previous") == 0 ||
+        strcmp(p->action, "buffer.focus.last_used") == 0) {
         return sol_buffer_focus_previous_buffer(app->buffers);
     }
 
@@ -340,8 +472,9 @@ int main(int argc, char **argv)
     }
 
     sol_ui_system_set_file_open_callback(app.ui, sol_on_tree_file_open, &app);
+    sol_ui_system_set_focus_region_callback(app.ui, sol_on_ui_focus_region, &app);
     if (cli_is_dir && cli_path) {
-        if (!sol_ui_system_set_file_tree_root(app.ui, cli_path)) {
+        if (!sol_set_explorer_root(&app, cli_path)) {
             fprintf(stderr, "sol: cannot open directory '%s'\n", cli_path);
         }
     }
@@ -446,5 +579,6 @@ int main(int argc, char **argv)
     sol_ui_system_destroy(app.ui);
     ca_instance_destroy(instance);
     sol_system_manager_destroy(app.systems);
+    free(app.explorer_root_path);
     return 0;
 }
