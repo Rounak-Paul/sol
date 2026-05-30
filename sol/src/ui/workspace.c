@@ -189,6 +189,16 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
     }
 }
 
+static void sol_ui_on_tab_close(Ca_Button *button, void *user_data)
+{
+    (void)button;
+    SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
+    if (!cb || !cb->ui || !cb->ui->buffers) return;
+    if (cb->tab_buffer_id != 0u) {
+        sol_buffer_close(cb->ui->buffers, cb->tab_buffer_id);
+    }
+}
+
 /* Global tab strip rendered ONCE above the entire split tree (Neovim
    tabline style). Each tab is one live buffer; clicking a tab focuses
    the currently-active leaf and swaps in that buffer. The active tab
@@ -231,7 +241,27 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
             .style = tab_active ? "buffer-tab-text buffer-tab-text-active"
                                 : "buffer-tab-text",
         });
-        ca_btn_end();
+        /* Close button — separate ctx so its click doesn't fire the tab switch. */
+        SolPaneClickCtx *close_cb = sol_ui_acquire_pane_click_ctx(ui);
+        if (close_cb) {
+            close_cb->ui            = ui;
+            close_cb->leaf_id       = active_leaf;
+            close_cb->tab_buffer_id = tab_id;
+        }
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = "buffer-tab-close",
+            .direction  = CA_HORIZONTAL,
+            .background = 0u,
+            .on_click   = close_cb ? sol_ui_on_tab_close : NULL,
+            .click_data = close_cb,
+        });
+        ca_text(&(Ca_TextDesc){
+            .text  = "\xc3\x97",   /* U+00D7 × */
+            .style = tab_active ? "buffer-tab-close-icon buffer-tab-close-icon-active"
+                                : "buffer-tab-close-icon",
+        });
+        ca_btn_end();  /* buffer-tab-close */
+        ca_btn_end();  /* buffer-tab */
     }
     ca_div_end();   /* buffer-tabs-row */
 }

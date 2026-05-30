@@ -289,6 +289,32 @@ static SolBufferId sol_first_live_buffer_id(const SolBufferSystem *system)
     return 0u;
 }
 
+/* Returns the buffer that should receive focus when `closing_id` is
+   closed: the buffer immediately before it in tab order, or the one
+   immediately after it if it was the first tab, or 0 if it is the
+   only live buffer.  Must be called BEFORE the buffer is marked
+   in_use = false so it is still visible in the live list. */
+static SolBufferId sol_neighbor_buffer_id(const SolBufferSystem *system,
+                                          SolBufferId closing_id)
+{
+    if (!system) return 0u;
+
+    SolBufferId prev = 0u;
+    for (size_t i = 0u; i < system->buffer_count; ++i) {
+        if (!system->buffers[i].in_use) continue;
+        if (system->buffers[i].id == closing_id) {
+            if (prev != 0u) return prev;   /* prefer buffer before */
+            /* closing_id is the first live tab — return the next one */
+            for (size_t j = i + 1u; j < system->buffer_count; ++j) {
+                if (system->buffers[j].in_use) return system->buffers[j].id;
+            }
+            return 0u;   /* only buffer remaining */
+        }
+        prev = system->buffers[i].id;
+    }
+    return 0u;
+}
+
 static void sol_replace_buffer_in_layout(SolBufferSystem *system, SolBufferId old_id, SolBufferId new_id)
 {
     for (size_t i = 0u; i < system->node_count; ++i) {
@@ -474,6 +500,10 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
                            &closed_payload, sizeof(closed_payload), system);
     }
 
+    /* Compute the fallback BEFORE zeroing the slot so the neighbor
+       search still sees this buffer in the live list. */
+    const SolBufferId fallback = sol_neighbor_buffer_id(system, buffer_id);
+
     if (buffer->ops.destroy) {
         buffer->ops.destroy(buffer->state);
     }
@@ -483,7 +513,6 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
     buffer->state = NULL;
     buffer->in_use = false;
 
-    const SolBufferId fallback = sol_first_live_buffer_id(system);
     sol_replace_buffer_in_layout(system, buffer_id, fallback);
 
     bump_rev(system);   /* also publishes sol.buffer.focused if active changed */
