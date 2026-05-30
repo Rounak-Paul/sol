@@ -265,7 +265,9 @@ void        sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key
 void sol_ui_set_status_text(SolUISystem *ui, char kind, const char *text);
 void sol_ui_set_status_key(SolUISystem *ui, SolKeyCode key, SolModifierMask modifiers);
 void sol_ui_set_status_sequence(SolUISystem *ui, const SolKeyCode *sequence,
-                                size_t length, SolModifierMask modifiers);
+                                size_t length,
+                                const SolModifierMask *step_modifiers,
+                                SolModifierMask last_modifiers);
 void sol_ui_render_status_bar(SolUISystem *ui);
 
 /* Leader popup (command_flow.c) */

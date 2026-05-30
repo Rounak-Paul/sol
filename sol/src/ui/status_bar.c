@@ -43,7 +43,8 @@ void sol_ui_set_status_key(SolUISystem *ui, SolKeyCode key, SolModifierMask modi
 
 void sol_ui_set_status_sequence(SolUISystem *ui,
                                 const SolKeyCode *sequence, size_t length,
-                                SolModifierMask modifiers)
+                                const SolModifierMask *step_modifiers,
+                                SolModifierMask last_modifiers)
 {
     if (!ui || !sequence || length == 0u) {
         return;
@@ -56,7 +57,11 @@ void sol_ui_set_status_sequence(SolUISystem *ui,
     for (size_t i = 0u; i < length; ++i) {
         char part[48];
         if (i + 1u == length) {
-            sol_ui_format_modified_key(modifiers, sequence[i], part, sizeof(part));
+            /* Last step: use the live modifier mask (includes leader mod). */
+            sol_ui_format_modified_key(last_modifiers, sequence[i], part, sizeof(part));
+        } else if (step_modifiers && step_modifiers[i] != SOL_MOD_NONE) {
+            /* Intermediate step with stored per-step modifiers. */
+            sol_ui_format_modified_key(step_modifiers[i], sequence[i], part, sizeof(part));
         } else {
             sol_ui_format_key_name(sequence[i], part, sizeof(part));
         }

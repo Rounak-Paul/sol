@@ -191,8 +191,15 @@ void sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size)
     default: break;
     }
 
+    /* Normalized letter keys are stored as A-Z. Display them as lowercase
+       (unshifted). format_modified_key handles the shifted/uppercase case. */
+    if (key >= 'A' && key <= 'Z') {
+        out[0] = (char)tolower((unsigned char)key);
+        out[1] = '\0';
+        return;
+    }
     if (key >= 'a' && key <= 'z') {
-        out[0] = (char)toupper((unsigned char)key);
+        out[0] = (char)key;
         out[1] = '\0';
         return;
     }
@@ -214,21 +221,28 @@ void sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key,
     out[0] = '\0';
     size_t used = 0u;
 
-    /* Skip the leader-modifier prefix when the key itself IS that modifier. */
+    /* When Shift is held with a letter key, the letter becomes uppercase and
+       "Shift+" is not emitted as a separate prefix — it is absorbed into the
+       capitalisation.  This applies even when other modifiers (Ctrl, Alt) are
+       also held, so Ctrl+Shift+n renders as "Ctrl+N" not "Ctrl+Shift+n". */
+    const bool is_letter      = (key >= 'A' && key <= 'Z');
+    const bool shift_held     = (modifiers & SOL_MOD_SHIFT) != 0u;
+    const bool shift_absorbed = is_letter && shift_held;
+
     const bool skip_ctrl  = key == SOL_KEY_LEFT_CTRL  || key == SOL_KEY_RIGHT_CTRL;
-    const bool skip_shift = key == SOL_KEY_LEFT_SHIFT || key == SOL_KEY_RIGHT_SHIFT;
+    const bool skip_shift = key == SOL_KEY_LEFT_SHIFT || key == SOL_KEY_RIGHT_SHIFT
+                            || shift_absorbed;
     const bool skip_alt   = key == SOL_KEY_LEFT_ALT   || key == SOL_KEY_RIGHT_ALT;
     const bool skip_super = key == SOL_KEY_LEFT_SUPER || key == SOL_KEY_RIGHT_SUPER;
 
     static const struct {
         SolModifierMask mask;
         const char     *prefix;
-        bool            skipped;
     } prefixes[] = {
-        { SOL_MOD_CTRL,  "Ctrl+",  false },
-        { SOL_MOD_SHIFT, "Shift+", false },
-        { SOL_MOD_ALT,   "Alt+",   false },
-        { SOL_MOD_SUPER, "Super+", false },
+        { SOL_MOD_CTRL,  "Ctrl+"  },
+        { SOL_MOD_SHIFT, "Shift+" },
+        { SOL_MOD_ALT,   "Alt+"   },
+        { SOL_MOD_SUPER, "Super+" },
     };
 
     const bool skips[4] = { skip_ctrl, skip_shift, skip_alt, skip_super };
@@ -247,7 +261,16 @@ void sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key,
         out[out_size - 1u] = '\0';
         return;
     }
-    sol_ui_format_key_name(key, out + used, out_size - used);
+
+    /* Shift-absorbed letters: emit the uppercase key directly. */
+    if (shift_absorbed) {
+        if (used < out_size - 1u) {
+            out[used]     = (char)key;  /* key is stored as uppercase A-Z */
+            out[used + 1] = '\0';
+        }
+    } else {
+        sol_ui_format_key_name(key, out + used, out_size - used);
+    }
 }
 
 /* ------------------------------------------------------------------ */

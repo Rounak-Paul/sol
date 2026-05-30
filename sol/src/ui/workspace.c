@@ -827,7 +827,15 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
         attempted[i] = ui->leader_prefix[i];
     }
     attempted[attempted_len++] = key;
-    sol_ui_set_status_sequence(ui, attempted, attempted_len, mods);
+    /* Build matching per-step modifier array for the status bar display.
+       Intermediate steps come from leader_prefix_modifiers; the last
+       step uses the raw `mods` from the current event. */
+    SolModifierMask attempted_step_mods[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    for (size_t i = 0u; i + 1u < attempted_len; ++i) {
+        attempted_step_mods[i] = ui->leader_prefix_modifiers[i];
+    }
+    sol_ui_set_status_sequence(ui, attempted, attempted_len,
+                               attempted_step_mods, mods);
 
     ui->leader_no_match         = false;
     ui->leader_last_invalid_key = SOL_KEY_UNKNOWN;
