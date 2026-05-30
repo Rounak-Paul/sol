@@ -20,10 +20,10 @@
  * prefixed by `shift+`, `alt+`, `super+` (case-insensitive). The first
  * token MUST be `ctrl` (the leader). Examples:
  *
- *     bind ctrl b b            buffer.focus.last
+ *     bind ctrl b b            buffer.focus.previous
  *     bind ctrl b n            buffer.cycle.next
- *     bind ctrl b shift+n      buffer.cycle.prev
- *     bind ctrl w v            pane.split.vertical
+ *     bind ctrl b c            buffer.new
+ *     bind ctrl p v            pane.split.vertical
  *
  * <action> is a dotted string published as the payload of
  * SOL_EVENT_COMMAND_INVOKED when the chord fires. Any subscriber on

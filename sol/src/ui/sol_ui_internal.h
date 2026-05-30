@@ -236,6 +236,7 @@ struct SolUISystem {
     /* Title-bar menu callbacks. Installed via
        sol_ui_system_install_menu(); the trampolines defined in
        workspace.c look these up to dispatch to main.c. */
+    SolUIMenuActionFn menu_on_new_buffer;
     SolUIMenuActionFn menu_on_open_file;
     SolUIMenuActionFn menu_on_open_folder;
     void             *menu_user_data;

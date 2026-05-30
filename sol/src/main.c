@@ -160,6 +160,16 @@ static void sol_on_picker_folder_chosen(const char *path, void *user_data)
     }
 }
 
+static void sol_on_menu_new_buffer(void *user_data)
+{
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !app->buffers) return;
+    const SolBufferId id = sol_text_buffer_open_empty(
+        app->buffers, "untitled", sol_text_view_render);
+    if (id == 0u) return;
+    sol_buffer_set_active_leaf_buffer(app->buffers, id);
+}
+
 static void sol_on_menu_open_file(void *user_data)
 {
     SolAppContext *app = (SolAppContext *)user_data;
@@ -336,39 +346,57 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return sol_toggle_explorer_focus(app);
     }
 
-    /* ---- file.new : open a fresh empty text buffer in the active leaf. */
-    if (strcmp(p->action, "file.new") == 0) {
+    /* All non-explorer actions implicitly dismiss explorer focus state. */
+    app->explorer_focused = false;
+    app->focus_before_explorer = 0u;
+
+    /* ---- buffer.new : open a fresh empty buffer in the active leaf. */
+    if (strcmp(p->action, "buffer.new") == 0) {
         const SolBufferId id = sol_text_buffer_open_empty(
             app->buffers, "untitled", sol_text_view_render);
         if (id == 0u) return false;
         return sol_buffer_set_active_leaf_buffer(app->buffers, id);
     }
 
-    /* ---- file.close : close the buffer shown in the active leaf. */
-    if (strcmp(p->action, "file.close") == 0) {
-        if (!app->buffers) return false;
-        const SolBufferId id = sol_buffer_active_buffer(app->buffers);
-        if (id == 0u) return false;
-        return sol_buffer_close(app->buffers, id);
+    /* ---- buffer.open : open a file from disk via the file picker. */
+    if (strcmp(p->action, "buffer.open") == 0) {
+        sol_file_picker_open(app->instance, SOL_FILE_PICKER_FILE, NULL,
+                             sol_on_picker_file_chosen, app);
+        return true;
     }
 
-    /* ---- buffer.close : alias for file.close (closes active buffer). */
+    /* ---- buffer.close : close the active buffer. */
     if (strcmp(p->action, "buffer.close") == 0) {
-        if (!app->buffers) return false;
         const SolBufferId id = sol_buffer_active_buffer(app->buffers);
         if (id == 0u) return false;
         return sol_buffer_close(app->buffers, id);
     }
 
-    app->explorer_focused = false;
-    app->focus_before_explorer = 0u;
+    /* ---- buffer.focus.* */
+    if (strcmp(p->action, "buffer.focus.previous") == 0) {
+        return sol_buffer_focus_previous_buffer(app->buffers);
+    }
+    if (strcmp(p->action, "buffer.focus.first") == 0) {
+        return sol_focus_buffer_by_index(app->buffers, 0u);
+    }
+    if (strcmp(p->action, "buffer.focus.last") == 0) {
+        const size_t total = sol_buffer_count(app->buffers);
+        return (total > 0u) ? sol_focus_buffer_by_index(app->buffers, total - 1u)
+                            : false;
+    }
+
+    /* ---- buffer.cycle.* */
+    if (strcmp(p->action, "buffer.cycle.next") == 0) {
+        return sol_buffer_cycle_active_leaf(app->buffers, +1);
+    }
+    if (strcmp(p->action, "buffer.cycle.prev") == 0) {
+        return sol_buffer_cycle_active_leaf(app->buffers, -1);
+    }
 
     /* ---- pane.split.* : new pane shows the next buffer in cycle when
        >=2 buffers exist; otherwise an empty leaf. */
     if (strcmp(p->action, "pane.split.vertical") == 0 ||
-        strcmp(p->action, "pane.split.horizontal") == 0 ||
-        strcmp(p->action, "split.vertical") == 0 ||
-        strcmp(p->action, "split.horizontal") == 0)
+        strcmp(p->action, "pane.split.horizontal") == 0)
     {
         const SolBufferSplitDirection dir =
             (strstr(p->action, "vertical") != NULL)
@@ -380,34 +408,19 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return sol_buffer_split_active(app->buffers, dir, 0.5f, target, NULL);
     }
 
-    if (strcmp(p->action, "pane.cycle.next") == 0 ||
-        strcmp(p->action, "split.focus.next") == 0) {
+    /* ---- pane.focus.* */
+    if (strcmp(p->action, "pane.focus.next") == 0) {
         return sol_buffer_cycle_active_pane(app->buffers, +1);
     }
-    if (strcmp(p->action, "pane.cycle.prev") == 0 ||
-        strcmp(p->action, "split.focus.prev") == 0) {
+    if (strcmp(p->action, "pane.focus.prev") == 0) {
         return sol_buffer_cycle_active_pane(app->buffers, -1);
     }
 
-    if (strcmp(p->action, "buffer.cycle.next") == 0) {
-        return sol_buffer_cycle_active_leaf(app->buffers, +1);
-    }
-    if (strcmp(p->action, "buffer.cycle.prev") == 0) {
-        return sol_buffer_cycle_active_leaf(app->buffers, -1);
-    }
-
-    if (strcmp(p->action, "buffer.focus.first") == 0) {
-        return sol_focus_buffer_by_index(app->buffers, 0u);
-    }
-    if (strcmp(p->action, "buffer.focus.last") == 0) {
-        const size_t total = sol_buffer_count(app->buffers);
-        return (total > 0u) ? sol_focus_buffer_by_index(app->buffers, total - 1u)
-                            : false;
-    }
-
-    if (strcmp(p->action, "buffer.focus.previous") == 0 ||
-        strcmp(p->action, "buffer.focus.last_used") == 0) {
-        return sol_buffer_focus_previous_buffer(app->buffers);
+    /* ---- explorer.open : open a folder in the explorer panel via picker. */
+    if (strcmp(p->action, "explorer.open") == 0) {
+        sol_file_picker_open(app->instance, SOL_FILE_PICKER_FOLDER, NULL,
+                             sol_on_picker_folder_chosen, app);
+        return true;
     }
 
     /* Unknown action — let other subscribers (plugins) try. */
@@ -512,6 +525,7 @@ int main(int argc, char **argv)
     }
 
     sol_ui_system_install_menu(app.ui,
+                               sol_on_menu_new_buffer,
                                sol_on_menu_open_file,
                                sol_on_menu_open_folder,
                                &app);

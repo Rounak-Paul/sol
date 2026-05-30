@@ -49,6 +49,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Forward declarations for title-bar trampolines (Ca_MenuActionFn) */
+static void sol_ui_menu_new_buffer_action(void *user_data);
+static void sol_ui_menu_open_file_action(void *user_data);
+static void sol_ui_menu_open_folder_action(void *user_data);
+/* Forward declarations for welcome-screen button clicks (Ca_ClickFn) */
+static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data);
+static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data);
+static void sol_ui_welcome_click_open_folder(Ca_Button *btn, void *user_data);
+
 /* ------------------------------------------------------------------ */
 /* Internal context types                                              */
 /* ------------------------------------------------------------------ */
@@ -287,59 +296,101 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
         });
 
         ca_text(&(Ca_TextDesc){ .text = "Sol Editor", .style = "welcome-title" });
-        ca_text(&(Ca_TextDesc){ .text = "A minimal, fast text editor.", .style = "welcome-subtitle" });
+        ca_text(&(Ca_TextDesc){ .text = "A fast, minimal text editor.", .style = "welcome-subtitle" });
 
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
-        ca_text(&(Ca_TextDesc){ .text = "FILE", .style = "welcome-section-label" });
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L f f", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Open / new file", .style = "welcome-desc" });
-        ca_div_end();
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L f x", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Close current file", .style = "welcome-desc" });
-        ca_div_end();
-        ca_div_end(); /* welcome-section */
+        /* Action buttons */
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-actions" });
+        ca_btn_begin(&(Ca_BtnDesc){
+            .text       = "New Buffer",
+            .style      = "welcome-btn-primary",
+            .on_click   = sol_ui_welcome_click_new_buffer,
+            .click_data = ui,
+        });
+        ca_btn_end();
+        ca_btn_begin(&(Ca_BtnDesc){
+            .text       = "Open File\xe2\x80\xa6",
+            .style      = "welcome-btn",
+            .on_click   = sol_ui_welcome_click_open_file,
+            .click_data = ui,
+        });
+        ca_btn_end();
+        ca_btn_begin(&(Ca_BtnDesc){
+            .text       = "Open Folder\xe2\x80\xa6",
+            .style      = "welcome-btn",
+            .on_click   = sol_ui_welcome_click_open_folder,
+            .click_data = ui,
+        });
+        ca_btn_end();
+        ca_div_end(); /* welcome-actions */
+
+        ca_hr(&(Ca_HrDesc){ .style = "welcome-hr" });
+
+        /* Two-column shortcut reference */
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-cols" });
+
+        /* Left column: BUFFER + EXPLORER */
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-col" });
 
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
         ca_text(&(Ca_TextDesc){ .text = "BUFFER", .style = "welcome-section-label" });
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L b x", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl b c", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "New buffer", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl b o", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Open file", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl b x", .style = "welcome-key" });
         ca_text(&(Ca_TextDesc){ .text = "Close buffer", .style = "welcome-desc" });
         ca_div_end();
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L b n", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Next buffer", .style = "welcome-desc" });
-        ca_div_end();
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L b p", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl b b", .style = "welcome-key" });
         ca_text(&(Ca_TextDesc){ .text = "Previous buffer", .style = "welcome-desc" });
         ca_div_end();
-        ca_div_end(); /* welcome-section */
-
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
-        ca_text(&(Ca_TextDesc){ .text = "SPLITS", .style = "welcome-section-label" });
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L s v", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Split vertical", .style = "welcome-desc" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl b n / p", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Next / prev buffer", .style = "welcome-desc" });
         ca_div_end();
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L s h", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Split horizontal", .style = "welcome-desc" });
-        ca_div_end();
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L s n / L s p", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Focus next / prev split", .style = "welcome-desc" });
-        ca_div_end();
-        ca_div_end(); /* welcome-section */
+        ca_div_end(); /* welcome-section BUFFER */
 
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
         ca_text(&(Ca_TextDesc){ .text = "EXPLORER", .style = "welcome-section-label" });
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
-        ca_text(&(Ca_TextDesc){ .text = "L e e", .style = "welcome-key" });
-        ca_text(&(Ca_TextDesc){ .text = "Toggle explorer", .style = "welcome-desc" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl e e", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Toggle panel", .style = "welcome-desc" });
         ca_div_end();
-        ca_div_end(); /* welcome-section */
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl e o", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Open folder", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_end(); /* welcome-section EXPLORER */
+
+        ca_div_end(); /* welcome-col left */
+
+        /* Right column: PANE */
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-col" });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
+        ca_text(&(Ca_TextDesc){ .text = "PANE", .style = "welcome-section-label" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl p v", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Split vertical", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl p h", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Split horizontal", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "ctrl p n / p", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Focus next / prev pane", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_end(); /* welcome-section PANE */
+
+        ca_div_end(); /* welcome-col right */
+
+        ca_div_end(); /* welcome-cols */
 
         ca_div_end(); /* welcome-pane */
         return;
@@ -884,6 +935,14 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
 /* Title-bar menu                                                      */
 /* ------------------------------------------------------------------ */
 
+static void sol_ui_menu_new_buffer_action(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (ui && ui->menu_on_new_buffer) {
+        ui->menu_on_new_buffer(ui->menu_user_data);
+    }
+}
+
 static void sol_ui_menu_open_file_action(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -900,7 +959,27 @@ static void sol_ui_menu_open_folder_action(void *user_data)
     }
 }
 
+/* Ca_ClickFn-compatible wrappers for welcome-screen buttons */
+static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    sol_ui_menu_new_buffer_action(user_data);
+}
+
+static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    sol_ui_menu_open_file_action(user_data);
+}
+
+static void sol_ui_welcome_click_open_folder(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    sol_ui_menu_open_folder_action(user_data);
+}
+
 void sol_ui_system_install_menu(SolUISystem      *ui,
+                                SolUIMenuActionFn on_new_buffer,
                                 SolUIMenuActionFn on_open_file,
                                 SolUIMenuActionFn on_open_folder,
                                 void             *user_data)
@@ -909,6 +988,7 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
         return;
     }
 
+    ui->menu_on_new_buffer  = on_new_buffer;
     ui->menu_on_open_file   = on_open_file;
     ui->menu_on_open_folder = on_open_folder;
     ui->menu_user_data      = user_data;

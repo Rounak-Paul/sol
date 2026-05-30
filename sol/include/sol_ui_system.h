@@ -99,12 +99,13 @@ int  sol_ui_system_tree_panel_width(const SolUISystem *ui);
  * Ctrl+W,V doesn't also insert characters into the active buffer. */
 bool sol_ui_system_is_leader_active(const SolUISystem *ui);
 
-/* Title-bar menu integration. The two callbacks fire when the user
- * picks "File → Open File…" or "File → Open Folder…" respectively.
- * Pass NULL for either to leave that item disabled. The menu is
+/* Title-bar menu integration. The callbacks fire when the user
+ * picks items from the "File" menu or clicks welcome-screen buttons.
+ * Pass NULL for any to leave that item disabled. The menu is
  * (re)installed on the primary window's title bar each call. */
 typedef void (*SolUIMenuActionFn)(void *user_data);
 void sol_ui_system_install_menu(SolUISystem      *ui,
+                                SolUIMenuActionFn on_new_buffer,
                                 SolUIMenuActionFn on_open_file,
                                 SolUIMenuActionFn on_open_folder,
                                 void             *user_data);
