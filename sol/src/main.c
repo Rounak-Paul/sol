@@ -336,6 +336,30 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return sol_toggle_explorer_focus(app);
     }
 
+    /* ---- file.new : open a fresh empty text buffer in the active leaf. */
+    if (strcmp(p->action, "file.new") == 0) {
+        const SolBufferId id = sol_text_buffer_open_empty(
+            app->buffers, "untitled", sol_text_view_render);
+        if (id == 0u) return false;
+        return sol_buffer_set_active_leaf_buffer(app->buffers, id);
+    }
+
+    /* ---- file.close : close the buffer shown in the active leaf. */
+    if (strcmp(p->action, "file.close") == 0) {
+        if (!app->buffers) return false;
+        const SolBufferId id = sol_buffer_active_buffer(app->buffers);
+        if (id == 0u) return false;
+        return sol_buffer_close(app->buffers, id);
+    }
+
+    /* ---- buffer.close : alias for file.close (closes active buffer). */
+    if (strcmp(p->action, "buffer.close") == 0) {
+        if (!app->buffers) return false;
+        const SolBufferId id = sol_buffer_active_buffer(app->buffers);
+        if (id == 0u) return false;
+        return sol_buffer_close(app->buffers, id);
+    }
+
     app->explorer_focused = false;
     app->focus_before_explorer = 0u;
 
@@ -476,6 +500,15 @@ int main(int argc, char **argv)
     if (cli_is_dir && cli_path) {
         if (!sol_set_explorer_root(&app, cli_path)) {
             fprintf(stderr, "sol: cannot open directory '%s'\n", cli_path);
+        }
+    } else if (!cli_path) {
+        /* No CLI argument: open the working directory in the explorer so
+           the panel is visible on first launch. */
+        char cwd_buf[4096];
+        if (getcwd(cwd_buf, sizeof(cwd_buf))) {
+            if (!sol_set_explorer_root(&app, cwd_buf)) {
+                fprintf(stderr, "sol: cannot open cwd as explorer root\n");
+            }
         }
     }
 

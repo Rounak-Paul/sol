@@ -280,16 +280,68 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     }
 
     if (sol_buffer_count(ui->buffers) == 0u) {
+        /* Welcome screen — shown whenever no buffers are open. */
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
-            .style     = "buffer-pane",
+            .style     = "welcome-pane",
         });
-        ca_div_begin(&(Ca_DivDesc){
-            .direction = CA_VERTICAL,
-            .style     = "buffer-body",
-        });
+
+        ca_text(&(Ca_TextDesc){ .text = "Sol Editor", .style = "welcome-title" });
+        ca_text(&(Ca_TextDesc){ .text = "A minimal, fast text editor.", .style = "welcome-subtitle" });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
+        ca_text(&(Ca_TextDesc){ .text = "FILE", .style = "welcome-section-label" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L f f", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Open / new file", .style = "welcome-desc" });
         ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L f x", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Close current file", .style = "welcome-desc" });
         ca_div_end();
+        ca_div_end(); /* welcome-section */
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
+        ca_text(&(Ca_TextDesc){ .text = "BUFFER", .style = "welcome-section-label" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L b x", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Close buffer", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L b n", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Next buffer", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L b p", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Previous buffer", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_end(); /* welcome-section */
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
+        ca_text(&(Ca_TextDesc){ .text = "SPLITS", .style = "welcome-section-label" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L s v", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Split vertical", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L s h", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Split horizontal", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L s n / L s p", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Focus next / prev split", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_end(); /* welcome-section */
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section" });
+        ca_text(&(Ca_TextDesc){ .text = "EXPLORER", .style = "welcome-section-label" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-row" });
+        ca_text(&(Ca_TextDesc){ .text = "L e e", .style = "welcome-key" });
+        ca_text(&(Ca_TextDesc){ .text = "Toggle explorer", .style = "welcome-desc" });
+        ca_div_end();
+        ca_div_end(); /* welcome-section */
+
+        ca_div_end(); /* welcome-pane */
         return;
     }
 
