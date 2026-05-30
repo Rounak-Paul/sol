@@ -208,17 +208,19 @@ void sol_text_view_render(const SolBuffer *buffer,
     });
     for (int i = 0; i < rendered; ++i) {
         const int line_idx = scroll_top + i;
-        if (line_idx >= total) {
-            ca_div_begin(&(Ca_DivDesc){ .style = "buffer-gutter-line-empty" });
-            ca_div_end();
-            continue;
+        /* Always emit a div wrapper so the node type stays consistent
+           across frames (avoids stale-paint artifacts when positions
+           transition between valid and past-end on scroll). */
+        ca_div_begin(&(Ca_DivDesc){ .style = "buffer-gutter-line-empty" });
+        if (line_idx < total) {
+            char *slot = acquire_num_slot();
+            snprintf(slot, 16, "%d", line_idx + 1);
+            ca_text(&(Ca_TextDesc){
+                .text  = slot,
+                .style = "buffer-gutter-line",
+            });
         }
-        char *slot = acquire_num_slot();
-        snprintf(slot, 16, "%d", line_idx + 1);
-        ca_text(&(Ca_TextDesc){
-            .text  = slot,
-            .style = "buffer-gutter-line",
-        });
+        ca_div_end();
     }
     ca_div_end();   /* buffer-gutter-col */
 
