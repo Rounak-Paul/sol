@@ -10,8 +10,10 @@ target_link_libraries(sol PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
 # The rope is self-contained (libc + POSIX mmap) and is the highest-risk
 # piece of new code, so it gets a dedicated unit-test executable wired
 # into CTest. Run with `ctest --test-dir build` from the build directory.
-if(BUILD_TESTING OR PROJECT_IS_TOP_LEVEL)
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_LEVEL))
     enable_testing()
+
+    # ---- Rope tests (existing, minimal deps) ----------------------------
     add_executable(sol_rope_tests
         tests/test_rope.c
         src/core/sol_rope.c
@@ -20,4 +22,102 @@ if(BUILD_TESTING OR PROJECT_IS_TOP_LEVEL)
     target_include_directories(sol_rope_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_test(NAME sol_rope_tests COMMAND sol_rope_tests)
+
+    # ---- Shared settings for harness-based tests -----------------------
+    set(SOL_TEST_DEFS SOL_TESTS_ENABLED=1 SOL_VALIDATION_ENABLED=1)
+
+    # Core sources needed by most test targets (no causality dep).
+    set(SOL_CORE_TEST_SRC
+        src/core/sol_event.c
+        src/core/sol_rope.c
+        src/core/sol_platform.c
+    )
+
+    # Sources that pull in causality symbols (sol_buffer, sol_text_buffer).
+    set(SOL_BUFFER_TEST_SRC
+        src/core/sol_buffer.c
+        src/core/sol_text_buffer.c
+    )
+
+    # Include path for causality headers (sol_buffer.c includes causality.h).
+    # Tests use a signal stub instead of the full causality dylib.
+    set(CAUSALITY_INCLUDE ${CMAKE_SOURCE_DIR}/vendors/causality/causality/include)
+
+    # ---- Event-bus unit tests -------------------------------------------
+    add_executable(sol_event_tests
+        tests/test_event.c
+        tests/stubs/sol_causality_signals_stub.c
+        ${SOL_CORE_TEST_SRC}
+    )
+    target_include_directories(sol_event_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(sol_event_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_event_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_event_tests COMMAND sol_event_tests)
+
+    # ---- Buffer-system unit tests ---------------------------------------
+    add_executable(sol_buffer_tests
+        tests/test_buffer.c
+        tests/stubs/sol_causality_signals_stub.c
+        ${SOL_CORE_TEST_SRC}
+        ${SOL_BUFFER_TEST_SRC}
+    )
+    target_include_directories(sol_buffer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_INCLUDE}
+    )
+    target_compile_definitions(sol_buffer_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_buffer_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_buffer_tests COMMAND sol_buffer_tests)
+
+    # ---- Text-buffer unit tests -----------------------------------------
+    add_executable(sol_text_buffer_tests
+        tests/test_text_buffer.c
+        tests/stubs/sol_causality_signals_stub.c
+        ${SOL_CORE_TEST_SRC}
+        ${SOL_BUFFER_TEST_SRC}
+    )
+    target_include_directories(sol_text_buffer_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_INCLUDE}
+    )
+    target_compile_definitions(sol_text_buffer_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_text_buffer_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_text_buffer_tests COMMAND sol_text_buffer_tests)
+
+    # ---- Command-flow unit tests ----------------------------------------
+    add_executable(sol_command_flow_tests
+        tests/test_command_flow.c
+        tests/stubs/sol_ui_bump_stub.c
+        src/ui/command_flow.c
+        ${SOL_CORE_TEST_SRC}
+    )
+    target_include_directories(sol_command_flow_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(sol_command_flow_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_command_flow_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_command_flow_tests COMMAND sol_command_flow_tests)
+
+    # ---- Integration tests (event+buffer+text-buffer end-to-end) -------
+    add_executable(sol_integration_tests
+        tests/test_integration.c
+        tests/stubs/sol_causality_signals_stub.c
+        ${SOL_CORE_TEST_SRC}
+        ${SOL_BUFFER_TEST_SRC}
+    )
+    target_include_directories(sol_integration_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_INCLUDE}
+    )
+    target_compile_definitions(sol_integration_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_integration_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_integration_tests COMMAND sol_integration_tests)
 endif()

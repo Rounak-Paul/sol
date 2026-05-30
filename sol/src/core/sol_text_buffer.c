@@ -508,7 +508,9 @@ bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
         return false;
     }
     tb->cursor_byte += (size_t)n;
-    tb_update_preferred_col(tb);
+    /* O(1) preferred_col update: inserting one codepoint on the current line
+       advances the column by exactly 1. No full-line scan needed. */
+    tb->preferred_col_cp += 1u;
     tb_publish_edit(tb, at, 0u, (size_t)n);
     return true;
 }
@@ -532,9 +534,18 @@ bool sol_text_buffer_backspace(SolTextBuffer *tb)
     const size_t step = tb_cp_len_before(tb->rope, tb->cursor_byte);
     if (step == 0u) return false;
     const size_t at = tb->cursor_byte - step;
+    /* Peek at the byte being removed to decide how to update preferred_col.
+       If it is a newline the cursor is crossing a line boundary — fall back
+       to the full recompute. For any other codepoint just decrement. */
+    uint8_t removed_lead = 0;
+    tb_rope_read_at(tb->rope, at, &removed_lead, 1u);
     if (!sol_rope_remove(tb->rope, at, step)) return false;
     tb->cursor_byte = at;
-    tb_update_preferred_col(tb);
+    if (removed_lead == (uint8_t)'\n') {
+        tb_update_preferred_col(tb); /* crossing line boundary */
+    } else if (tb->preferred_col_cp > 0u) {
+        tb->preferred_col_cp -= 1u;
+    }
     tb_publish_edit(tb, at, step, 0u);
     return true;
 }
@@ -545,9 +556,15 @@ bool sol_text_buffer_delete_forward(SolTextBuffer *tb)
     const size_t step = tb_cp_len_at(tb->rope, tb->cursor_byte);
     if (step == 0u) return false;
     const size_t at = tb->cursor_byte;
+    /* Cursor stays in place; preferred_col is unchanged unless the deleted
+       char is a newline (merging the next line). In that case recompute. */
+    uint8_t deleted_lead = 0;
+    tb_rope_read_at(tb->rope, at, &deleted_lead, 1u);
     if (!sol_rope_remove(tb->rope, at, step)) return false;
-    /* Cursor unchanged in absolute byte offset terms. */
-    tb_update_preferred_col(tb);
+    if (deleted_lead == (uint8_t)'\n') {
+        tb_update_preferred_col(tb);
+    }
+    /* else: cursor byte unchanged, still on same line — preferred_col unchanged */
     tb_publish_edit(tb, at, step, 0u);
     return true;
 }
