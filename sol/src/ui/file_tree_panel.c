@@ -13,10 +13,25 @@
 
 #include "sol_ui_internal.h"
 
+#include "sol_platform.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>  /* strcasecmp */
+
+static int sol_ascii_casecmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        int ca = *a;
+        int cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return ca - cb;
+        ++a;
+        ++b;
+    }
+    return (int)(unsigned char)*a - (int)(unsigned char)*b;
+}
 
 /* Width of each indent level in px — matches .tree-indent flex-shrink:0 width
    set programmatically via Ca_DivDesc.width. */
@@ -41,12 +56,12 @@ static const char *tree_file_icon(const char *name, const char **out_style)
     }
     const char *dot = name ? strrchr(name, '.') : NULL;
     if (dot) {
-        if (strcasecmp(dot, ".c")     == 0) { *out_style = "tree-icon tree-icon-c";     return TREE_FILE_CODE;    }
-        if (strcasecmp(dot, ".h")     == 0) { *out_style = "tree-icon tree-icon-h";     return TREE_FILE_CODE;    }
-        if (strcasecmp(dot, ".cpp")   == 0 ||
-            strcasecmp(dot, ".cc")    == 0) { *out_style = "tree-icon tree-icon-c";     return TREE_FILE_CODE;    }
-        if (strcasecmp(dot, ".md")    == 0) { *out_style = "tree-icon tree-icon-md";    return TREE_FILE_TEXT;    }
-        if (strcasecmp(dot, ".cmake") == 0) { *out_style = "tree-icon tree-icon-cmake"; return TREE_FILE_COG;     }
+        if (sol_ascii_casecmp(dot, ".c")     == 0) { *out_style = "tree-icon tree-icon-c";     return TREE_FILE_CODE;    }
+        if (sol_ascii_casecmp(dot, ".h")     == 0) { *out_style = "tree-icon tree-icon-h";     return TREE_FILE_CODE;    }
+        if (sol_ascii_casecmp(dot, ".cpp")   == 0 ||
+            sol_ascii_casecmp(dot, ".cc")    == 0) { *out_style = "tree-icon tree-icon-c";     return TREE_FILE_CODE;    }
+        if (sol_ascii_casecmp(dot, ".md")    == 0) { *out_style = "tree-icon tree-icon-md";    return TREE_FILE_TEXT;    }
+        if (sol_ascii_casecmp(dot, ".cmake") == 0) { *out_style = "tree-icon tree-icon-cmake"; return TREE_FILE_COG;     }
     }
     *out_style = "tree-icon tree-icon-file";
     return TREE_FILE_GENERIC;
@@ -196,8 +211,10 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
 
     /* Root basename for the header */
     const char *root = sol_file_tree_root(ui->file_tree);
-    const char *slash = strrchr(root, '/');
-    const char *basename = (slash && slash[1] != '\0') ? slash + 1 : root;
+    const char *basename = sol_platform_basename(root);
+    if (!basename || basename[0] == '\0') {
+        basename = root;
+    }
     (void)basename; /* used in header label below */
 
     /* ---- Sticky section header ---- */

@@ -9,12 +9,10 @@
 #include "sol_rope.h"
 
 #include <assert.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 static int g_failures = 0;
 
@@ -222,10 +220,9 @@ static void test_from_file(void)
 {
     /* Write a temp file with a known multi-MB payload, mmap it through
        the rope, and verify metrics + reads. */
-    char path[] = "/tmp/sol_rope_test_XXXXXX";
-    int fd = mkstemp(path);
-    CHECK(fd >= 0);
-    if (fd < 0) return;
+    char path[L_tmpnam];
+    CHECK(tmpnam(path) != NULL);
+    if (path[0] == '\0') return;
 
     size_t n = 1u << 18;   /* 256 KiB */
     char *src = (char *)malloc(n);
@@ -234,8 +231,14 @@ static void test_from_file(void)
         if ((i % 80) == 79) { src[i] = '\n'; lines++; }
         else                  src[i] = (char)('a' + (i % 26));
     }
-    write(fd, src, n);
-    close(fd);
+    FILE *fp = fopen(path, "wb");
+    CHECK(fp != NULL);
+    if (!fp) {
+        free(src);
+        return;
+    }
+    CHECK(fwrite(src, 1u, n, fp) == n);
+    fclose(fp);
 
     const char *err = NULL;
     SolRope *r = sol_rope_from_file(path, &err);
@@ -256,7 +259,7 @@ static void test_from_file(void)
         }
         sol_rope_destroy(r);
     }
-    unlink(path);
+    remove(path);
     free(src);
 }
 

@@ -19,24 +19,14 @@
 
 #include "sol_config.h"
 
+#include "sol_platform.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-
-#if defined(_WIN32)
-#include <direct.h>
-#include <windows.h>
-#define SOL_PATH_SEP '\\'
-#define SOL_MKDIR(path) _mkdir(path)
-#else
-#include <unistd.h>
-#define SOL_PATH_SEP '/'
-#define SOL_MKDIR(path) mkdir((path), 0755)
-#endif
 
 #include "sol_input.h"
 #include "sol_ui_system.h"
@@ -101,62 +91,17 @@ static const char *const SOL_DEFAULT_BINDINGS_CONF =
 
 static char *sol_path_join(const char *a, const char *b)
 {
-    if (!a || !b) return NULL;
-    const size_t la = strlen(a);
-    const size_t lb = strlen(b);
-    const bool need_sep = (la > 0u && a[la - 1u] != SOL_PATH_SEP);
-    char *out = (char *)malloc(la + (need_sep ? 1u : 0u) + lb + 1u);
-    if (!out) return NULL;
-    memcpy(out, a, la);
-    size_t off = la;
-    if (need_sep) {
-        out[off++] = SOL_PATH_SEP;
-    }
-    memcpy(out + off, b, lb);
-    out[off + lb] = '\0';
-    return out;
+    return sol_platform_path_join(a, b);
 }
 
 static bool sol_mkdir_p(const char *path)
 {
-    /* Try once outright; only fall back to walking on ENOENT to keep
-       the common path cheap. */
-    if (SOL_MKDIR(path) == 0 || errno == EEXIST) {
-        return true;
-    }
-    if (errno != ENOENT) {
-        return false;
-    }
-
-    /* Walk the path creating parents as needed. */
-    char *copy = strdup(path);
-    if (!copy) return false;
-    for (char *p = copy + 1; *p; ++p) {
-        if (*p == SOL_PATH_SEP) {
-            *p = '\0';
-            if (SOL_MKDIR(copy) != 0 && errno != EEXIST) {
-                free(copy);
-                return false;
-            }
-            *p = SOL_PATH_SEP;
-        }
-    }
-    const bool ok = (SOL_MKDIR(copy) == 0 || errno == EEXIST);
-    free(copy);
-    return ok;
+    return sol_platform_mkdir_p(path);
 }
 
 char *sol_config_dir(void)
 {
-#if defined(_WIN32)
-    const char *home = getenv("APPDATA");
-    const char *name = "sol";
-#else
-    const char *home = getenv("HOME");
-    const char *name = ".sol";
-#endif
-    if (!home || home[0] == '\0') return NULL;
-    char *dir = sol_path_join(home, name);
+    char *dir = sol_platform_config_home_dir();
     if (!dir) return NULL;
     if (!sol_mkdir_p(dir)) {
         fprintf(stderr, "sol: cannot create config dir '%s': %s\n",

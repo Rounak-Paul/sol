@@ -19,15 +19,12 @@
 
 #include "sol_rope.h"
 
+#include "sol_platform.h"
+
 #include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /* ---- Tunables ----------------------------------------------------- */
 
@@ -40,10 +37,9 @@
 
 typedef struct SolRopeChunk {
     int      ref_count;
-    bool     is_mmap;
-    size_t   mmap_size;   /* size of the mapping (for munmap)         */
-    uint8_t *base;        /* heap base for owned chunks; mapping base
-                             for mmap'd chunks                        */
+    bool     is_mapped;
+    SolMappedFile mapped;
+    uint8_t *base;        /* heap base for owned chunks; map base for mapped chunks */
 } SolRopeChunk;
 
 typedef struct SolRopeNode {
@@ -76,22 +72,22 @@ static SolRopeChunk *chunk_new_owned(const uint8_t *data, size_t len)
     SolRopeChunk *c = (SolRopeChunk *)malloc(sizeof(*c));
     if (!c) return NULL;
     c->ref_count = 0;
-    c->is_mmap   = false;
-    c->mmap_size = 0;
+    c->is_mapped = false;
+    memset(&c->mapped, 0, sizeof(c->mapped));
     c->base = (uint8_t *)malloc(len ? len : 1);
     if (!c->base) { free(c); return NULL; }
     if (data && len) memcpy(c->base, data, len);
     return c;
 }
 
-static SolRopeChunk *chunk_new_mmap(uint8_t *base, size_t mmap_size)
+static SolRopeChunk *chunk_new_mapped(const SolMappedFile *mapped)
 {
     SolRopeChunk *c = (SolRopeChunk *)malloc(sizeof(*c));
     if (!c) return NULL;
     c->ref_count = 0;
-    c->is_mmap   = true;
-    c->mmap_size = mmap_size;
-    c->base      = base;
+    c->is_mapped = true;
+    c->mapped = *mapped;
+    c->base = (uint8_t *)mapped->data;
     return c;
 }
 
@@ -105,8 +101,8 @@ static void chunk_release(SolRopeChunk *c)
     if (!c) return;
     assert(c->ref_count > 0);
     if (--c->ref_count > 0) return;
-    if (c->is_mmap) {
-        if (c->base && c->mmap_size) munmap(c->base, c->mmap_size);
+    if (c->is_mapped) {
+        sol_platform_unmap_file(&c->mapped);
     } else {
         free(c->base);
     }
@@ -324,50 +320,41 @@ SolRope *sol_rope_from_bytes(const uint8_t *data, size_t len)
 
 SolRope *sol_rope_from_file(const char *path, const char **out_error)
 {
-    if (!path) { if (out_error) *out_error = "null path"; return NULL; }
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) { if (out_error) *out_error = "open() failed"; return NULL; }
-
-    struct stat st;
-    if (fstat(fd, &st) != 0) {
-        if (out_error) *out_error = "fstat() failed";
-        close(fd);
+    if (!path) {
+        if (out_error) *out_error = "null path";
         return NULL;
     }
-    size_t size = (size_t)st.st_size;
 
-    if (size == 0) {
-        close(fd);
+    SolMappedFile mapped;
+    if (!sol_platform_map_file_readonly(path, &mapped, out_error)) {
+        return NULL;
+    }
+
+    if (mapped.size_bytes == 0u) {
+        sol_platform_unmap_file(&mapped);
         return sol_rope_create();
     }
 
-    void *map = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-    if (map == MAP_FAILED) {
-        if (out_error) *out_error = "mmap() failed";
-        return NULL;
-    }
-
-    SolRopeChunk *chunk = chunk_new_mmap((uint8_t *)map, size);
+    SolRopeChunk *chunk = chunk_new_mapped(&mapped);
     if (!chunk) {
-        munmap(map, size);
+        sol_platform_unmap_file(&mapped);
         if (out_error) *out_error = "out of memory";
         return NULL;
     }
 
     SolRope *r = sol_rope_create();
     if (!r) {
-        munmap(map, size);
+        sol_platform_unmap_file(&mapped);
         free(chunk);
         if (out_error) *out_error = "out of memory";
         return NULL;
     }
 
     size_t leaf_count = 0;
-    SolRopeNode **leaves = leaves_from_chunk(chunk, size, &leaf_count);
+    SolRopeNode **leaves = leaves_from_chunk(chunk, mapped.size_bytes, &leaf_count);
     if (!leaves) {
         /* No leaves retained the chunk yet. */
-        munmap(map, size);
+        sol_platform_unmap_file(&mapped);
         free(chunk);
         sol_rope_destroy(r);
         if (out_error) *out_error = "out of memory";

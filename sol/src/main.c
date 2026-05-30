@@ -32,8 +32,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include "sol_buffer.h"
 #include "sol_config.h"
@@ -42,6 +40,7 @@
 #include "sol_input.h"
 #include "sol_input_router.h"
 #include "sol_job.h"
+#include "sol_platform.h"
 #include "sol_system_manager.h"
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
@@ -308,7 +307,7 @@ static bool sol_toggle_explorer_focus(SolAppContext *app)
         const char *root = app->explorer_root_path;
         char cwd_buf[4096];
         if (!root || root[0] == '\0') {
-            if (!getcwd(cwd_buf, sizeof(cwd_buf))) {
+            if (!sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) {
                 return false;
             }
             root = cwd_buf;
@@ -453,13 +452,13 @@ int main(int argc, char **argv)
         (argc >= 2 && argv[1] && argv[1][0] != '\0') ? argv[1] : NULL;
     bool cli_is_dir = false;
     if (cli_path) {
-        struct stat st;
-        if (stat(cli_path, &st) != 0) {
+        SolPathInfo info;
+        if (!sol_platform_get_path_info(cli_path, &info)) {
             fprintf(stderr, "sol: cannot stat '%s'\n", cli_path);
             sol_system_manager_destroy(app.systems);
             return 1;
         }
-        cli_is_dir = S_ISDIR(st.st_mode);
+        cli_is_dir = info.is_directory;
         /* Defer file opens until after the UI system exists so the
            render callback has somewhere to invalidate. */
     }
@@ -517,7 +516,7 @@ int main(int argc, char **argv)
         /* No CLI argument: open the working directory in the explorer so
            the panel is visible on first launch. */
         char cwd_buf[4096];
-        if (getcwd(cwd_buf, sizeof(cwd_buf))) {
+        if (sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) {
             if (!sol_set_explorer_root(&app, cwd_buf)) {
                 fprintf(stderr, "sol: cannot open cwd as explorer root\n");
             }

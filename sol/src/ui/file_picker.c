@@ -23,12 +23,11 @@
 
 #include "sol_file_picker.h"
 
-#include <dirent.h>
+#include "sol_platform.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 /* ---------------------------------------------------------------- */
 /* Tunables                                                          */
@@ -117,29 +116,47 @@ static int fp_entry_cmp(const void *a, const void *b)
 
 static char *fp_path_join(const char *parent, const char *name)
 {
-    size_t pn = strlen(parent);
-    size_t nn = strlen(name);
-    bool need_sep = (pn > 0u && parent[pn - 1u] != '/');
-    char *out = (char *)malloc(pn + (need_sep ? 1u : 0u) + nn + 1u);
-    if (!out) return NULL;
-    memcpy(out, parent, pn);
-    size_t off = pn;
-    if (need_sep) out[off++] = '/';
-    memcpy(out + off, name, nn + 1u);
-    return out;
+    return sol_platform_path_join(parent, name);
 }
 
 static char *fp_parent_dir(const char *path)
 {
-    if (!path || !*path) return fp_strdup("/");
+    if (!path || !*path) {
+        return fp_strdup(".");
+    }
+
     size_t n = strlen(path);
-    /* Strip trailing slashes (but keep root "/" intact). */
-    while (n > 1u && path[n - 1u] == '/') --n;
-    /* Find last slash in [0, n). */
+    while (n > 1u && sol_platform_is_path_separator(path[n - 1u])) {
+        --n;
+    }
+
     size_t last = (size_t)-1;
-    for (size_t i = 0; i < n; ++i) if (path[i] == '/') last = i;
-    if (last == (size_t)-1) return fp_strdup("/");
-    if (last == 0u)         return fp_strdup("/");
+    for (size_t i = 0; i < n; ++i) {
+        if (sol_platform_is_path_separator(path[i])) {
+            last = i;
+        }
+    }
+
+    if (last == (size_t)-1) {
+        return fp_strdup(".");
+    }
+
+    if (last == 2u && path[1] == ':' && sol_platform_is_path_separator(path[2])) {
+        char *out = (char *)malloc(4u);
+        if (!out) {
+            return NULL;
+        }
+        out[0] = path[0];
+        out[1] = path[1];
+        out[2] = path[2];
+        out[3] = '\0';
+        return out;
+    }
+
+    if (last == 0u) {
+        return fp_strdup(path[0] == '\\' ? "\\" : "/");
+    }
+
     char *out = (char *)malloc(last + 1u);
     if (!out) return NULL;
     memcpy(out, path, last);
@@ -181,20 +198,20 @@ static void fp_load_directory(SolFilePicker *p)
     fp_entries_clear(p);
     if (!p->current_dir) return;
 
-    DIR *d = opendir(p->current_dir);
-    if (!d) return;
+    SolDirectoryIter iter;
+    if (!sol_platform_dir_open(&iter, p->current_dir)) {
+        return;
+    }
 
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        const char *name = ent->d_name;
+    SolDirectoryEntry entry;
+    while (sol_platform_dir_next(&iter, &entry)) {
+        const char *name = entry.name;
         if (name[0] == '.') continue;     /* hide dotfiles + . / .. */
 
         char *full = fp_path_join(p->current_dir, name);
         if (!full) continue;
 
-        struct stat st;
-        bool is_dir = false;
-        if (lstat(full, &st) == 0 && S_ISDIR(st.st_mode)) is_dir = true;
+        const bool is_dir = entry.is_directory;
 
         char *dup_name = fp_strdup(name);
         if (!dup_name) { free(full); continue; }
@@ -204,14 +221,14 @@ static void fp_load_directory(SolFilePicker *p)
             break;
         }
     }
-    closedir(d);
+    sol_platform_dir_close(&iter);
 
     qsort(p->entries, p->entry_count, sizeof(SolFpEntry), fp_entry_cmp);
 }
 
 static bool fp_set_current_dir(SolFilePicker *p, const char *path)
 {
-    char *dup = fp_strdup(path && *path ? path : "/");
+    char *dup = fp_strdup(path && *path ? path : ".");
     if (!dup) return false;
     free(p->current_dir);
     p->current_dir = dup;
@@ -509,13 +526,13 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
     char        cwd_buf[4096];
     const char *start = initial_dir;
     if (!start || !*start) {
-        if (getcwd(cwd_buf, sizeof(cwd_buf))) start = cwd_buf;
-        else                                   start = "/";
+        if (sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) start = cwd_buf;
+        else                                   start = ".";
     }
     /* If the path is a regular file, fall back to its parent. */
     {
-        struct stat st;
-        if (stat(start, &st) == 0 && !S_ISDIR(st.st_mode)) {
+        SolPathInfo info;
+        if (sol_platform_get_path_info(start, &info) && !info.is_directory) {
             char *parent = fp_parent_dir(start);
             if (parent) {
                 if (!fp_set_current_dir(p, parent)) {

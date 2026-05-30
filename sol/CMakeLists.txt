@@ -15,6 +15,7 @@ if(BUILD_TESTING OR PROJECT_IS_TOP_LEVEL)
     add_executable(sol_rope_tests
         tests/test_rope.c
         src/core/sol_rope.c
+        src/core/sol_platform.c
     )
     target_include_directories(sol_rope_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include)

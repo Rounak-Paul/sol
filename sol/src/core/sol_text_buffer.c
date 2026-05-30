@@ -17,6 +17,8 @@
 
 #include "sol_text_buffer.h"
 
+#include "sol_platform.h"
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,8 +81,8 @@ static char *tb_strdup(const char *s)
 static const char *tb_basename(const char *path)
 {
     if (!path || !*path) return "untitled";
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
+    const char *base = sol_platform_basename(path);
+    return (base && *base) ? base : path;
 }
 
 /* ---- UTF-8 codec -------------------------------------------------- */

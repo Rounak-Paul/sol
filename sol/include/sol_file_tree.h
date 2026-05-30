@@ -12,7 +12,7 @@
  *
  * Boundaries:
  *   - No causality, no buffer-system, no UI dependencies. Pure state +
- *     POSIX directory scan.
+ *     platform-abstracted directory scan.
  *   - Reusable: the same module can back a tree in the editor's left
  *     pane today and a future file-picker window tomorrow.
  */

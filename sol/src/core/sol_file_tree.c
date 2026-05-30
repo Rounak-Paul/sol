@@ -19,15 +19,15 @@
 
 #include "sol_file_tree.h"
 
+#include "sol_platform.h"
+
 #include <causality.h>   /* Ca_Signal, ca_signal_set_u32, ca_signal_get_u32 */
 
 #include "sol_event.h"
 
 #include <ctype.h>
-#include <dirent.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 
 /* ---------------------------------------------------------------- */
 /* Internal types                                                    */
@@ -86,16 +86,7 @@ static char *xstrdup(const char *s)
 
 static char *path_join(const char *parent, const char *name)
 {
-    size_t pn = strlen(parent);
-    size_t nn = strlen(name);
-    bool need_sep = (pn > 0u && parent[pn - 1u] != '/');
-    char *out = (char *)malloc(pn + (need_sep ? 1u : 0u) + nn + 1u);
-    if (!out) return NULL;
-    memcpy(out, parent, pn);
-    size_t off = pn;
-    if (need_sep) out[off++] = '/';
-    memcpy(out + off, name, nn + 1u);
-    return out;
+    return sol_platform_path_join(parent, name);
 }
 
 static int casecmp(const char *a, const char *b)
@@ -181,40 +172,38 @@ static bool load_children(SolFileTree *t, size_t dir_idx)
     if (dir->loaded) return true;
     dir->loaded = true;     /* set up-front so partial failures aren't retried in a loop */
 
-    DIR *d = opendir(dir->full_path);
-    if (!d) return false;
+    SolDirectoryIter iter;
+    if (!sol_platform_dir_open(&iter, dir->full_path)) {
+        return false;
+    }
 
     /* Collect raw names first, then sort, then realize as nodes. */
     ScanItem *items = NULL;
     size_t    item_count = 0u;
     size_t    item_cap = 0u;
 
-    struct dirent *ent;
-    while ((ent = readdir(d)) != NULL) {
-        const char *name = ent->d_name;
+    SolDirectoryEntry entry;
+    while (sol_platform_dir_next(&iter, &entry)) {
+        const char *name = entry.name;
         if (name[0] == '.') continue;     /* skip hidden + . / .. */
 
-        char *full = path_join(dir->full_path, name);
-        if (!full) continue;
-
-        struct stat st;
-        bool is_dir = false;
-        if (lstat(full, &st) == 0 && S_ISDIR(st.st_mode)) is_dir = true;
+        bool is_dir = entry.is_directory;
 
         if (item_count == item_cap) {
             size_t nc = item_cap ? item_cap * 2u : 16u;
             ScanItem *ni = (ScanItem *)realloc(items, nc * sizeof(ScanItem));
-            if (!ni) { free(full); break; }
+            if (!ni) {
+                break;
+            }
             items = ni;
             item_cap = nc;
         }
         items[item_count].name   = xstrdup(name);
         items[item_count].is_dir = is_dir;
-        free(full);
         if (!items[item_count].name) break;
         item_count++;
     }
-    closedir(d);
+    sol_platform_dir_close(&iter);
 
     qsort(items, item_count, sizeof(ScanItem), scan_compare);
 
@@ -364,8 +353,10 @@ bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
         return true;
     }
 
-    struct stat st;
-    if (stat(root_path, &st) != 0 || !S_ISDIR(st.st_mode)) return false;
+    SolPathInfo info;
+    if (!sol_platform_get_path_info(root_path, &info) || !info.is_directory) {
+        return false;
+    }
 
     tree->root_path = xstrdup(root_path);
     if (!tree->root_path) return false;

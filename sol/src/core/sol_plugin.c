@@ -1,96 +1,13 @@
 #include "sol_plugin.h"
 
+#include "sol_platform.h"
 #include "sol_threading.h"
-
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#else
-#include <dirent.h>
-#include <dlfcn.h>
-#endif
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#if defined(_WIN32)
-
-static char sol_dl_error_message[512];
-
-static void sol_dl_set_error_from_system(void)
-{
-    const DWORD err = GetLastError();
-    if (err == 0u) {
-        sol_dl_error_message[0] = '\0';
-        return;
-    }
-
-    DWORD size = FormatMessageA(
-        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-        NULL,
-        err,
-        0,
-        sol_dl_error_message,
-        (DWORD)sizeof(sol_dl_error_message),
-        NULL
-    );
-
-    if (size == 0u) {
-        snprintf(sol_dl_error_message, sizeof(sol_dl_error_message), "Windows error %lu", (unsigned long)err);
-    }
-}
-
-static void *sol_dlopen(const char *path, int flags)
-{
-    (void)flags;
-    HMODULE module = LoadLibraryA(path);
-    if (!module) {
-        sol_dl_set_error_from_system();
-    } else {
-        sol_dl_error_message[0] = '\0';
-    }
-    return (void *)module;
-}
-
-static void *sol_dlsym(void *handle, const char *symbol)
-{
-    FARPROC proc = GetProcAddress((HMODULE)handle, symbol);
-    if (!proc) {
-        sol_dl_set_error_from_system();
-    } else {
-        sol_dl_error_message[0] = '\0';
-    }
-    return (void *)proc;
-}
-
-static int sol_dlclose(void *handle)
-{
-    if (FreeLibrary((HMODULE)handle)) {
-        return 0;
-    }
-
-    sol_dl_set_error_from_system();
-    return -1;
-}
-
-static const char *sol_dlerror(void)
-{
-    return sol_dl_error_message[0] != '\0' ? sol_dl_error_message : NULL;
-}
-
-#define dlopen(path, flags) sol_dlopen(path, flags)
-#define dlsym(handle, symbol) sol_dlsym(handle, symbol)
-#define dlclose(handle) sol_dlclose(handle)
-#define dlerror() sol_dlerror()
-#define RTLD_NOW 0
-#define RTLD_LOCAL 0
-
-#endif
 
 typedef struct SolPluginRecord {
     SolPluginAPI api;
@@ -113,12 +30,6 @@ struct SolPluginManager {
 
     char *default_directory;
 };
-
-#if defined(_WIN32)
-static const char SOL_PATH_SEPARATOR = '\\';
-#else
-static const char SOL_PATH_SEPARATOR = '/';
-#endif
 
 static char *sol_strdup(const char *value)
 {
@@ -197,44 +108,12 @@ static bool sol_plugin_extension_matches(const char *name)
         return false;
     }
 
-#if defined(__APPLE__)
-    return strcmp(dot, ".dylib") == 0;
-#elif defined(_WIN32)
-    return strcmp(dot, ".dll") == 0;
-#else
-    return strcmp(dot, ".so") == 0;
-#endif
+    return strcmp(dot, sol_platform_dynamic_library_extension()) == 0;
 }
 
 static char *sol_plugin_join_path(const char *directory, const char *file_name)
 {
-    if (!directory || !file_name) {
-        return NULL;
-    }
-
-    const size_t dir_len = strlen(directory);
-    const size_t file_len = strlen(file_name);
-    const bool has_separator =
-        dir_len > 0u &&
-        (directory[dir_len - 1u] == '/' || directory[dir_len - 1u] == '\\');
-    const bool needs_separator = dir_len > 0u && !has_separator;
-
-    const size_t out_len = dir_len + (needs_separator ? 1u : 0u) + file_len;
-    char *path = (char *)malloc(out_len + 1u);
-    if (!path) {
-        return NULL;
-    }
-
-    memcpy(path, directory, dir_len);
-    size_t cursor = dir_len;
-
-    if (needs_separator) {
-        path[cursor++] = SOL_PATH_SEPARATOR;
-    }
-
-    memcpy(path + cursor, file_name, file_len);
-    path[out_len] = '\0';
-    return path;
+    return sol_platform_path_join(directory, file_name);
 }
 
 static void sol_plugin_record_deinit(SolPluginManager *manager, SolPluginRecord *record)
@@ -248,7 +127,7 @@ static void sol_plugin_record_deinit(SolPluginManager *manager, SolPluginRecord 
     }
 
     if (record->is_dynamic && record->library_handle) {
-        dlclose(record->library_handle);
+        sol_platform_library_close(record->library_handle);
     }
 
     free(record->id_owned);
@@ -371,18 +250,18 @@ bool sol_plugin_manager_load(SolPluginManager *manager, const char *path)
         return false;
     }
 
-    void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    void *library = sol_platform_library_open(path);
     if (!library) {
-        fprintf(stderr, "sol_plugin: failed to load %s: %s\n", path, dlerror());
+        fprintf(stderr, "sol_plugin: failed to load %s: %s\n",
+                path,
+                sol_platform_library_last_error());
         return false;
     }
 
-    dlerror();
-    SolPluginQueryFn query = (SolPluginQueryFn)dlsym(library, "sol_plugin_query");
-    const char *symbol_error = dlerror();
-    if (symbol_error != NULL || !query) {
+    SolPluginQueryFn query = (SolPluginQueryFn)sol_platform_library_symbol(library, "sol_plugin_query");
+    if (!query) {
         fprintf(stderr, "sol_plugin: missing sol_plugin_query in %s\n", path);
-        dlclose(library);
+        sol_platform_library_close(library);
         return false;
     }
 
@@ -391,13 +270,13 @@ bool sol_plugin_manager_load(SolPluginManager *manager, const char *path)
 
     if (!query(SOL_PLUGIN_API_VERSION, &api)) {
         fprintf(stderr, "sol_plugin: %s rejected API version %u\n", path, SOL_PLUGIN_API_VERSION);
-        dlclose(library);
+        sol_platform_library_close(library);
         return false;
     }
 
     if (api.api_version != SOL_PLUGIN_API_VERSION || !api.id) {
         fprintf(stderr, "sol_plugin: %s returned invalid API descriptor\n", path);
-        dlclose(library);
+        sol_platform_library_close(library);
         return false;
     }
 
@@ -416,7 +295,7 @@ bool sol_plugin_manager_load(SolPluginManager *manager, const char *path)
         free(record.display_name_owned);
         free(record.version_owned);
         free(record.path);
-        dlclose(library);
+        sol_platform_library_close(library);
         return false;
     }
 
@@ -431,7 +310,7 @@ bool sol_plugin_manager_load(SolPluginManager *manager, const char *path)
         free(record.display_name_owned);
         free(record.version_owned);
         free(record.path);
-        dlclose(library);
+        sol_platform_library_close(library);
         return false;
     }
 
@@ -445,7 +324,7 @@ bool sol_plugin_manager_load(SolPluginManager *manager, const char *path)
         free(record.display_name_owned);
         free(record.version_owned);
         free(record.path);
-        dlclose(library);
+        sol_platform_library_close(library);
         return false;
     }
 
@@ -465,64 +344,24 @@ size_t sol_plugin_manager_load_directory(SolPluginManager *manager, const char *
 
     size_t loaded = 0u;
 
-#if defined(_WIN32)
-    char *pattern = sol_plugin_join_path(directory, "*");
-    if (!pattern) {
+    SolDirectoryIter iter;
+    if (!sol_platform_dir_open(&iter, directory)) {
         return 0u;
     }
 
-    WIN32_FIND_DATAA find_data;
-    HANDLE find_handle = FindFirstFileA(pattern, &find_data);
-    free(pattern);
-
-    if (find_handle == INVALID_HANDLE_VALUE) {
-        return 0u;
-    }
-
-    do {
-        if (find_data.cFileName[0] == '.') {
+    SolDirectoryEntry entry;
+    while (sol_platform_dir_next(&iter, &entry)) {
+        if (!entry.name || entry.name[0] == '.') {
+            continue;
+        }
+        if (entry.is_directory) {
+            continue;
+        }
+        if (!sol_plugin_extension_matches(entry.name)) {
             continue;
         }
 
-        if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0u) {
-            continue;
-        }
-
-        if (!sol_plugin_extension_matches(find_data.cFileName)) {
-            continue;
-        }
-
-        char *full_path = sol_plugin_join_path(directory, find_data.cFileName);
-        if (!full_path) {
-            continue;
-        }
-
-        if (sol_plugin_manager_load(manager, full_path)) {
-            ++loaded;
-        }
-
-        free(full_path);
-    } while (FindNextFileA(find_handle, &find_data) != 0);
-
-    FindClose(find_handle);
-#else
-    DIR *dir = opendir(directory);
-    if (!dir) {
-        return 0u;
-    }
-
-    struct dirent *entry = NULL;
-
-    while ((entry = readdir(dir)) != NULL) {
-        if (entry->d_name[0] == '.') {
-            continue;
-        }
-
-        if (!sol_plugin_extension_matches(entry->d_name)) {
-            continue;
-        }
-
-        char *full_path = sol_plugin_join_path(directory, entry->d_name);
+        char *full_path = sol_plugin_join_path(directory, entry.name);
         if (!full_path) {
             continue;
         }
@@ -534,8 +373,7 @@ size_t sol_plugin_manager_load_directory(SolPluginManager *manager, const char *
         free(full_path);
     }
 
-    closedir(dir);
-#endif
+    sol_platform_dir_close(&iter);
 
     return loaded;
 }
