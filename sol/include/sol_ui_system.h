@@ -41,6 +41,12 @@ typedef struct SolCommandFlowDesc {
 SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffers);
 void sol_ui_system_destroy(SolUISystem *ui);
 
+/* Called once per frame BEFORE ca_instance_tick. Polls the file-tree
+ * scroll offset and pushes it into sig_tree_scroll so the sticky-ancestor
+ * overlay updates in sync with native scroll without rebuilding the
+ * workspace content tree. */
+void sol_ui_system_pre_tick(SolUISystem *ui);
+
 Ca_Window *sol_ui_system_primary_window(SolUISystem *ui);
 
 bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDesc *desc);

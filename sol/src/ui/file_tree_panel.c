@@ -218,7 +218,11 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
     ca_div_end();
 
     /* ---- Scrollable file list ---- */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "tree-scroll-area" });
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style     = "tree-scroll-area",
+        .id        = "tree-list",
+    });
 
     size_t count = sol_file_tree_visible_count(ui->file_tree);
     for (size_t i = 0; i < count; ++i) {
@@ -243,4 +247,114 @@ void sol_ui_render_file_tree_panel(SolUISystem *ui)
     });
     sol_ui_render_file_tree_panel_body(ui);
     ca_div_end();
+}
+
+/* ---------------------------------------------------------------- */
+/* Sticky ancestor headers                                          */
+/* ---------------------------------------------------------------- */
+
+/* Walk the visible list backward from first_row to collect the ancestor
+   directory of each depth level.  Returns the count of ancestors found
+   in top-down order (shallowest first).  Writes at most max_out entries
+   into *out_entries[] and the corresponding visible-list index into
+   *out_indices[]. */
+static int find_sticky_ancestors(SolFileTree *tree, float scroll_y,
+                                 const SolFileEntry **out_entries,
+                                 size_t *out_indices,
+                                 int max_out)
+{
+    size_t count = sol_file_tree_visible_count(tree);
+    if (count == 0 || max_out <= 0) return 0;
+
+    int first_row = (int)(scroll_y / SOL_UI_TREE_ROW_H);
+    if (first_row <= 0) return 0;                      /* at top, nothing sticky */
+    if (first_row >= (int)count) first_row = (int)count - 1;
+
+    int target_depth = (int)sol_file_tree_visible(tree, (size_t)first_row)->depth - 1;
+    if (target_depth < 0) return 0;                    /* depth-0 row, no parents */
+
+    /* Walk backward collecting one ancestor per depth level. */
+    const SolFileEntry *ancestors[32];
+    size_t              ancestor_idx[32];
+    int found = 0;
+    for (int i = first_row - 1; i >= 0 && target_depth >= 0; i--) {
+        const SolFileEntry *e = sol_file_tree_visible(tree, (size_t)i);
+        if (!e) continue;
+        if (e->is_dir && (int)e->depth == target_depth) {
+            ancestors[found]    = e;
+            ancestor_idx[found] = (size_t)i;
+            ++found;
+            --target_depth;
+            if (found >= max_out || found >= 32) break;
+        }
+    }
+
+    /* ancestors[] is collected bottom-up; reverse to top-down order. */
+    for (int i = 0; i < found; i++) {
+        out_entries[i] = ancestors[found - 1 - i];
+        out_indices[i] = ancestor_idx[found - 1 - i];
+    }
+    return found;
+}
+
+static void on_sticky_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolStickyClickCtx *ctx = (SolStickyClickCtx *)user_data;
+    if (!ctx) return;
+    ca_set_scroll_y(ctx->window, "tree-list", ctx->target_scroll_y);
+}
+
+/* Render one sticky-header row — same four-child structure as render_row
+   (indent + arrow + icon + name) using a button for click-to-scroll. */
+static void render_sticky_row(const SolFileEntry *entry, SolStickyClickCtx *ctx)
+{
+    ca_btn_begin(&(Ca_BtnDesc){
+        .direction  = CA_HORIZONTAL,
+        .style      = "tree-sticky-row",
+        .on_click   = on_sticky_click,
+        .click_data = ctx,
+    });
+    /* 1. depth indent */
+    ca_div_begin(&(Ca_DivDesc){
+        .style = "tree-indent",
+        .width = (float)entry->depth * SOL_UI_TREE_INDENT_PX,
+    });
+    ca_div_end();
+    /* 2. arrow — always "down" since ancestor is expanded */
+    ca_text(&(Ca_TextDesc){ .text = TREE_ARROW_DOWN, .style = "tree-arrow tree-arrow-open" });
+    /* 3. icon — open folder */
+    ca_text(&(Ca_TextDesc){ .text = TREE_DIR_OPEN, .style = "tree-icon tree-icon-dir-open" });
+    /* 4. name */
+    ca_text(&(Ca_TextDesc){ .text = entry->name, .style = "tree-name tree-name-dir" });
+    ca_btn_end();
+}
+
+/* Reactive builder installed on tree_sticky_host.
+   Subscribes to sig_tree_scroll (fires on every scroll tick) and
+   sig_file_tree_rev (fires on tree structure change).  Only the sticky
+   overlay re-runs on scroll — the main workspace content is unaffected. */
+void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data)
+{
+    (void)div;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->file_tree || !ui->sig_tree_scroll || !ui->sig_file_tree_rev) return;
+
+    float scroll_y = ca_signal_get_float(ui->sig_tree_scroll);
+    (void)ca_signal_get_u32(ui->sig_file_tree_rev);
+
+    if (!sol_file_tree_root(ui->file_tree)) return;
+
+    ui->sticky_click_ctx_count = 0;
+
+    const SolFileEntry *ancestors[SOL_UI_TREE_STICKY_MAX];
+    size_t              indices[SOL_UI_TREE_STICKY_MAX];
+    int n = find_sticky_ancestors(ui->file_tree, scroll_y,
+                                  ancestors, indices, SOL_UI_TREE_STICKY_MAX);
+    for (int i = 0; i < n; i++) {
+        SolStickyClickCtx *ctx = &ui->sticky_click_ctxs[ui->sticky_click_ctx_count++];
+        ctx->window          = ui->primary_window;
+        ctx->target_scroll_y = (float)indices[i] * SOL_UI_TREE_ROW_H;
+        render_sticky_row(ancestors[i], ctx);
+    }
 }

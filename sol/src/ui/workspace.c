@@ -429,6 +429,18 @@ static void sol_ui_on_frame(void *user_data)
     sol_file_picker_tick();
 }
 
+void sol_ui_system_pre_tick(SolUISystem *ui)
+{
+    if (!ui || !ui->primary_window || !ui->sig_tree_scroll) return;
+    /* Poll the tree scroll container's current offset and update the signal.
+       ca_signal_set_float is a no-op when the value is unchanged (memcmp),
+       so the sticky-builder effect only re-runs on frames where the scroll
+       actually moved.  Called before ca_instance_tick so the effect fires
+       within the same frame's reactive flush. */
+    float sy = ca_get_scroll_y(ui->primary_window, "tree-list");
+    ca_signal_set_float(ui->sig_tree_scroll, sy);
+}
+
 static bool sol_ui_build_layout(SolUISystem *ui)
 {
     if (!ui || !ui->primary_window) {
@@ -470,9 +482,26 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .pos_y     = 0.0f,
         .z_index   = 50,
         .style     = "cf-overlay",
+        .no_hover  = true,   /* transparent to hover — children (popup panels) still hit-test */
     });
     ca_div_set_builder(ui->popup_host, sol_ui_popup_builder, ui);
     ca_div_end();   /* popup_host */
+
+    /* Sticky-ancestor overlay — absolute-positioned sibling of
+       workspace_content_host.  Starts just below the static section header
+       (28 px) and root row (24 px), so its first row lands exactly at the
+       top of the tree-scroll-area.  z_index 5 places it above the list
+       content but well below the popup overlay (z 50). */
+    ui->tree_sticky_host = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .position  = CA_POSITION_ABSOLUTE,
+        .pos_x     = 0.0f,
+        .pos_y     = SOL_UI_TREE_STICKY_TOP,
+        .z_index   = 5,
+        .style     = "tree-sticky-host",
+    });
+    ca_div_set_builder(ui->tree_sticky_host, sol_ui_sticky_tree_builder, ui);
+    ca_div_end();   /* tree_sticky_host */
 
     ca_div_end();   /* workspace-host */
 
@@ -513,15 +542,17 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
        for the UI system's lifetime) and its revision signal attached;
        the builder always reads sig_file_tree_rev so it stays
        subscribed across set_root attach/detach. */
-    ui->sig_buffer_rev        = ca_signal_u32 (instance, 0u);
-    ui->sig_file_tree_rev     = ca_signal_u32 (instance, 0u);
-    ui->sig_leader_active     = ca_signal_bool(instance, false);
-    ui->sig_leader_prefix_rev = ca_signal_u32 (instance, 0u);
-    ui->sig_flow_registry_rev = ca_signal_u32 (instance, 0u);
-    ui->sig_window_rev        = ca_signal_u32 (instance, 0u);
+    ui->sig_buffer_rev        = ca_signal_u32  (instance, 0u);
+    ui->sig_file_tree_rev     = ca_signal_u32  (instance, 0u);
+    ui->sig_leader_active     = ca_signal_bool (instance, false);
+    ui->sig_leader_prefix_rev = ca_signal_u32  (instance, 0u);
+    ui->sig_flow_registry_rev = ca_signal_u32  (instance, 0u);
+    ui->sig_window_rev        = ca_signal_u32  (instance, 0u);
+    ui->sig_tree_scroll       = ca_signal_float(instance, 0.0f);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
-        !ui->sig_flow_registry_rev || !ui->sig_window_rev) {
+        !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
+        !ui->sig_tree_scroll) {
         free(ui);
         return NULL;
     }

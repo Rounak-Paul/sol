@@ -561,6 +561,7 @@ int main(int argc, char **argv)
 
     for (;;) {
         sol_system_begin_frame(app.systems);
+        sol_ui_system_pre_tick(app.ui);
         if (!ca_instance_tick(instance)) break;
         sol_system_pump_events(app.systems, 128u);
         sol_system_end_frame(app.systems);

@@ -40,6 +40,14 @@
    causality itself and not visible from sol's layout code. */
 #define SOL_UI_STATUS_BAR_HEIGHT      22.0f
 
+/* File-tree panel layout constants — kept in sync with the CSS in style.h
+   so C code can compute geometry without re-parsing the stylesheet. */
+#define SOL_UI_TREE_SECTION_H         28.0f   /* .tree-section-header height */
+#define SOL_UI_TREE_ROOT_ROW_H        24.0f   /* .tree-root-row height        */
+#define SOL_UI_TREE_ROW_H             22.0f   /* .tree-row height             */
+#define SOL_UI_TREE_STICKY_TOP        (SOL_UI_TREE_SECTION_H + SOL_UI_TREE_ROOT_ROW_H)
+#define SOL_UI_TREE_STICKY_MAX        8
+
 /* Status badge kinds — single byte to keep the struct compact. */
 #define SOL_UI_STATUS_KIND_KEY        'K'
 #define SOL_UI_STATUS_KIND_COMMAND    'C'
@@ -85,6 +93,15 @@ typedef struct SolFileTreeClickCtx {
     size_t              row_index;
 } SolFileTreeClickCtx;
 
+/* Persistent context for sticky-ancestor header buttons.  The array is
+   fixed-size (SOL_UI_TREE_STICKY_MAX) and reset at the start of every
+   sticky builder run — safe because the builder only runs on scroll
+   changes and the button nodes are rebuilt each time. */
+typedef struct SolStickyClickCtx {
+    Ca_Window  *window;
+    float       target_scroll_y;   /* pre-computed: row_index * ROW_H */
+} SolStickyClickCtx;
+
 /* Persistent context handed to clickable elements inside a buffer pane
    (the pane body, and per-tab buttons). When `tab_buffer_id` is 0 the
    click means "focus this pane"; when nonzero it means "switch this
@@ -116,6 +133,11 @@ struct SolUISystem {
        sig_popup_version and re-runs in isolation; the workspace
        content tree is never touched on Ctrl-press. */
     Ca_Div           *popup_host;
+    /* Sticky-scroll ancestor overlay host — absolute-positioned sibling
+       of workspace_content_host. Its builder subscribes only to
+       sig_tree_scroll + sig_file_tree_rev and renders the ancestor-directory
+       headers that "pin" at the top of the tree panel while scrolling. */
+    Ca_Div           *tree_sticky_host;
 
     /* ---- Reactive state (causality fine-grained signals) ----
      *
@@ -153,6 +175,10 @@ struct SolUISystem {
     Ca_Signal        *sig_leader_prefix_rev;
     Ca_Signal        *sig_flow_registry_rev;
     Ca_Signal        *sig_window_rev;
+    /* Float mirror of the tree-scroll-area's scroll_y, polled each frame
+       by sol_ui_system_pre_tick. Builders subscribe via ca_signal_get_float
+       to rebuild sticky ancestor headers without rebuilding the buffer area. */
+    Ca_Signal        *sig_tree_scroll;
 
     /* Leader / flow state. */
     SolModifierMask   leader_modifier;
@@ -190,6 +216,10 @@ struct SolUISystem {
     SolFileTreeClickCtx        *file_tree_click_ctxs;
     size_t                      file_tree_click_ctx_count;
     size_t                      file_tree_click_ctx_capacity;
+
+    /* Sticky-ancestor click context pool.  Fixed-size; reset each frame. */
+    SolStickyClickCtx           sticky_click_ctxs[SOL_UI_TREE_STICKY_MAX];
+    int                         sticky_click_ctx_count;
 
     /* Click-context pool for buffer-pane elements (per-pane focus
        click + per-tab buttons). Reset at the start of every buffer
@@ -256,5 +286,9 @@ void sol_ui_render_command_flow_panel(SolUISystem *ui);
 void sol_ui_render_workspace_tree(SolUISystem *ui);
 void sol_ui_render_file_tree_panel(SolUISystem *ui);
 void sol_ui_render_file_tree_panel_body(SolUISystem *ui);
+
+/* Sticky-scroll ancestor builder — registered as the reactive builder
+   on tree_sticky_host in workspace.c; defined in file_tree_panel.c. */
+void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data);
 
 #endif /* SOL_UI_INTERNAL_H */
