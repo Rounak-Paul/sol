@@ -41,7 +41,26 @@ bool sol_system_register_service(
     void *destroy_user_data
 );
 
+/* Versioned variant — `version` is stored alongside the service.
+ * Use sol_system_get_service_v with a min_version to get it back;
+ * returns NULL when the registered version is below min_version.
+ * sol_system_register_service is a wrapper with version=0.           */
+bool sol_system_register_service_v(
+    SolSystemManager   *manager,
+    const char         *name,
+    uint32_t            version,
+    void               *service,
+    SolServiceDestroyFn destroy_fn,
+    void               *destroy_user_data
+);
+
 void *sol_system_get_service(SolSystemManager *manager, const char *name);
+
+/* Returns the service only when its registered version >= min_version. */
+void *sol_system_get_service_v(SolSystemManager *manager,
+                                const char       *name,
+                                uint32_t          min_version);
+
 bool sol_system_unregister_service(SolSystemManager *manager, const char *name);
 
 void sol_system_begin_frame(SolSystemManager *manager);

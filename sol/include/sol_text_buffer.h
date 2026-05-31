@@ -112,6 +112,20 @@ bool sol_text_buffer_insert_newline  (SolTextBuffer *tb);
 bool sol_text_buffer_backspace       (SolTextBuffer *tb);
 bool sol_text_buffer_delete_forward  (SolTextBuffer *tb);
 
+/* Raw byte-offset mutations.  These bypass cursor tracking but fire
+ * SOL_EVENT_TEXT_EDITED so plugins and the UI stay in sync.
+ * `sol_text_buffer_insert_bytes` inserts `len` bytes at `byte_offset`.
+ * `sol_text_buffer_delete_bytes` removes `byte_count` bytes starting at
+ * `byte_offset`.  Both return false on OOM or invalid range.           */
+bool sol_text_buffer_insert_bytes(SolTextBuffer *tb,
+                                   size_t byte_offset,
+                                   const char *text, size_t len);
+bool sol_text_buffer_delete_bytes(SolTextBuffer *tb,
+                                   size_t byte_offset, size_t byte_count);
+
+/* Set cursor to the given byte offset.  Clamps to rope length.        */
+void sol_text_buffer_set_cursor_byte(SolTextBuffer *tb, size_t byte_offset);
+
 /* Cursor motion. `dx` is codepoints (wraps across lines); `dy` is
    lines. `sticky_col` preserves the visual column across vertical
    motion (set true for Up/Down, false for Left/Right). */

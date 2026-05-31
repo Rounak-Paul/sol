@@ -131,5 +131,91 @@ void sol_ui_render_status_bar(SolUISystem *ui)
     }
 
     ca_div_end();  /* status-bar-left */
+
+    /* Right side: plugin status segments */
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .style     = "status-bar-right",
+    });
+    for (uint32_t i = 0u; i < SOL_UI_MAX_STATUS_SEGMENTS; ++i) {
+        if (!ui->plugin_status_segs[i].in_use) continue;
+        const char *cls = ui->plugin_status_segs[i].style_class[0]
+            ? ui->plugin_status_segs[i].style_class
+            : "status-plugin-segment";
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style     = cls,
+        });
+        ca_text(&(Ca_TextDesc){ .text = ui->plugin_status_segs[i].text });
+        ca_div_end();
+    }
+    ca_div_end();  /* status-bar-right */
+
     ca_div_end();  /* status-bar */
+}
+
+/* ================================================================== */
+/* Plugin status segment API                                           */
+/* ================================================================== */
+
+SolUIStatusToken sol_ui_system_add_status_segment(SolUISystem *ui,
+                                                   const char  *text,
+                                                   const char  *style_class)
+{
+    if (!ui) return SOL_UI_STATUS_TOKEN_INVALID;
+
+    for (uint32_t i = 0u; i < SOL_UI_MAX_STATUS_SEGMENTS; ++i) {
+        if (ui->plugin_status_segs[i].in_use) continue;
+
+        SolUIStatusSegment *seg = &ui->plugin_status_segs[i];
+        if (ui->plugin_status_next_token == 0u)
+            ui->plugin_status_next_token = 1u;
+        seg->token  = ui->plugin_status_next_token++;
+        seg->in_use = true;
+        snprintf(seg->text,        sizeof(seg->text),
+                 "%s", text        ? text        : "");
+        snprintf(seg->style_class, sizeof(seg->style_class),
+                 "%s", style_class ? style_class : "");
+
+        if (ui->primary_window)
+            ca_window_invalidate_status_bar(ui->primary_window);
+        return seg->token;
+    }
+
+    return SOL_UI_STATUS_TOKEN_INVALID;
+}
+
+void sol_ui_system_update_status_segment(SolUISystem     *ui,
+                                          SolUIStatusToken token,
+                                          const char      *text)
+{
+    if (!ui || token == SOL_UI_STATUS_TOKEN_INVALID) return;
+
+    for (uint32_t i = 0u; i < SOL_UI_MAX_STATUS_SEGMENTS; ++i) {
+        if (!ui->plugin_status_segs[i].in_use) continue;
+        if (ui->plugin_status_segs[i].token != token) continue;
+
+        snprintf(ui->plugin_status_segs[i].text,
+                 sizeof(ui->plugin_status_segs[i].text),
+                 "%s", text ? text : "");
+        if (ui->primary_window)
+            ca_window_invalidate_status_bar(ui->primary_window);
+        return;
+    }
+}
+
+void sol_ui_system_remove_status_segment(SolUISystem     *ui,
+                                          SolUIStatusToken token)
+{
+    if (!ui || token == SOL_UI_STATUS_TOKEN_INVALID) return;
+
+    for (uint32_t i = 0u; i < SOL_UI_MAX_STATUS_SEGMENTS; ++i) {
+        if (!ui->plugin_status_segs[i].in_use) continue;
+        if (ui->plugin_status_segs[i].token != token) continue;
+
+        memset(&ui->plugin_status_segs[i], 0, sizeof(ui->plugin_status_segs[i]));
+        if (ui->primary_window)
+            ca_window_invalidate_status_bar(ui->primary_window);
+        return;
+    }
 }

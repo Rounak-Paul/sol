@@ -34,6 +34,7 @@
    config loader can use it without pulling this private header. */
 #define SOL_UI_MAX_SUGGESTIONS        32u
 #define SOL_UI_STATUS_TEXT_MAX_LEN    127u
+#define SOL_UI_MAX_STATUS_SEGMENTS    16u
 
 /* Causality manages the title and status strips; sol only declares the
    status-bar height it wants reserved. The title bar height is fixed by
@@ -56,6 +57,14 @@
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
+
+/* Per-plugin status bar segment contributed via sol_plugin_add_status_segment. */
+typedef struct SolUIStatusSegment {
+    uint32_t token;                 /* assigned handle                  */
+    char     text[64];              /* displayed text                   */
+    char     style_class[48];       /* CSS class (empty = default)      */
+    bool     in_use;
+} SolUIStatusSegment;
 
 typedef struct SolCommandFlowBinding {
     char                    action[SOL_UI_MAX_ACTION_LEN + 1u];
@@ -245,6 +254,10 @@ struct SolUISystem {
        Persisted here so ca_split_begin re-reads it each build and the
        panel keeps its width across reactive rebuilds. Default 0.20. */
     float tree_panel_ratio;
+
+    /* Plugin-contributed status bar segments (right side). */
+    SolUIStatusSegment plugin_status_segs[SOL_UI_MAX_STATUS_SEGMENTS];
+    uint32_t           plugin_status_next_token;   /* monotonic counter, starts at 1 */
 };
 
 /* ------------------------------------------------------------------ */

@@ -2,11 +2,13 @@
 
 #include "sol_threading.h"
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef struct SolServiceEntry {
     char *name;
+    uint32_t version;        /* 0 when registered via the non-versioned API */
     void *service;
     SolServiceDestroyFn destroy_fn;
     void *destroy_user_data;
@@ -226,6 +228,19 @@ bool sol_system_register_service(
     void *destroy_user_data
 )
 {
+    return sol_system_register_service_v(manager, name, 0u,
+                                          service, destroy_fn, destroy_user_data);
+}
+
+bool sol_system_register_service_v(
+    SolSystemManager   *manager,
+    const char         *name,
+    uint32_t            version,
+    void               *service,
+    SolServiceDestroyFn destroy_fn,
+    void               *destroy_user_data
+)
+{
     if (!manager || !name || *name == '\0') {
         return false;
     }
@@ -252,9 +267,10 @@ bool sol_system_register_service(
     }
 
     SolServiceEntry entry;
-    entry.name = name_copy;
-    entry.service = service;
-    entry.destroy_fn = destroy_fn;
+    entry.name             = name_copy;
+    entry.version          = version;
+    entry.service          = service;
+    entry.destroy_fn       = destroy_fn;
     entry.destroy_user_data = destroy_user_data;
 
     manager->services[manager->service_count++] = entry;
@@ -265,6 +281,13 @@ bool sol_system_register_service(
 
 void *sol_system_get_service(SolSystemManager *manager, const char *name)
 {
+    return sol_system_get_service_v(manager, name, 0u);
+}
+
+void *sol_system_get_service_v(SolSystemManager *manager,
+                                const char       *name,
+                                uint32_t          min_version)
+{
     if (!manager || !name || *name == '\0') {
         return NULL;
     }
@@ -274,7 +297,8 @@ void *sol_system_get_service(SolSystemManager *manager, const char *name)
     void *service = NULL;
     for (size_t i = 0u; i < manager->service_count; ++i) {
         if (strcmp(manager->services[i].name, name) == 0) {
-            service = manager->services[i].service;
+            if (manager->services[i].version >= min_version)
+                service = manager->services[i].service;
             break;
         }
     }

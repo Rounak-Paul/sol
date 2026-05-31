@@ -50,6 +50,10 @@ void sol_ui_system_pre_tick(SolUISystem *ui);
 Ca_Window *sol_ui_system_primary_window(SolUISystem *ui);
 
 bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDesc *desc);
+
+/* Unregister a previously-registered command flow by action string.
+ * Returns true if found and removed, false if not found.              */
+bool sol_ui_system_unregister_command_flow(SolUISystem *ui, const char *action);
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event);
 
 void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window);
@@ -114,5 +118,31 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
  * (currently: reaping closed file-picker windows). Safe to call
  * even when nothing async is in flight. */
 void sol_ui_system_tick(SolUISystem *ui);
+
+/* ================================================================== */
+/* Plugin status bar segments                                          */
+/*                                                                     */
+/* Plugins contribute text segments shown on the RIGHT side of the     */
+/* status bar.  Use sol_plugin_add/update/remove_status_segment from   */
+/* sol_plugin_ctx.h; these lower-level functions are for the plugin    */
+/* context implementation.                                             */
+/* ================================================================== */
+
+typedef uint32_t SolUIStatusToken;
+#define SOL_UI_STATUS_TOKEN_INVALID 0u
+
+SolUIStatusToken sol_ui_system_add_status_segment(
+    SolUISystem *ui,
+    const char  *text,
+    const char  *style_class);   /* CSS class, or NULL for default */
+
+void sol_ui_system_update_status_segment(
+    SolUISystem      *ui,
+    SolUIStatusToken  token,
+    const char       *text);
+
+void sol_ui_system_remove_status_segment(
+    SolUISystem      *ui,
+    SolUIStatusToken  token);
 
 #endif

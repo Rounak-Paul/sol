@@ -463,3 +463,23 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
     sol_ui_bump_u32(ui->sig_flow_registry_rev);
     return true;
 }
+
+bool sol_ui_system_unregister_command_flow(SolUISystem *ui, const char *action)
+{
+    if (!ui || !action) {
+        return false;
+    }
+
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        if (strcmp(ui->command_flows[i].action, action) != 0) {
+            continue;
+        }
+        for (size_t j = i + 1u; j < ui->command_flow_count; ++j) {
+            ui->command_flows[j - 1u] = ui->command_flows[j];
+        }
+        --ui->command_flow_count;
+        sol_ui_bump_u32(ui->sig_flow_registry_rev);
+        return true;
+    }
+    return false;
+}

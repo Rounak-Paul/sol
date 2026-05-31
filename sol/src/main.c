@@ -573,6 +573,10 @@ int main(int argc, char **argv)
     if (!sol_system_register_service(app.systems, "ca.window.primary", window, NULL, NULL)) {
         fprintf(stderr, "[sol] warning: failed to register ca.window.primary service\n");
     }
+    if (!sol_system_register_service(app.systems, "sol.ui", app.ui, NULL, NULL)) {
+        fprintf(stderr, "[sol] warning: failed to register sol.ui service\n");
+    }
+    sol_plugin_manager_attach_ui(sol_system_plugins(app.systems), app.ui);
 
     SolWarmupContext warmup = {0};
     const bool warmup_ok = sol_job_system_parallel_for(

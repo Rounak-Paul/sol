@@ -635,3 +635,55 @@ void sol_text_buffer_set_cursor_to(SolTextBuffer *tb, size_t line, size_t cp_col
     tb_set_cursor_byte(tb, line_start + col_bytes);
     tb->preferred_col_cp = cp_col;
 }
+
+/* ------------------------------------------------------------------ */
+/* Raw byte-offset mutations (plugin / scripting use)                  */
+/* ------------------------------------------------------------------ */
+
+bool sol_text_buffer_insert_bytes(SolTextBuffer *tb,
+                                   size_t byte_offset,
+                                   const char *text, size_t len)
+{
+    if (!tb || !tb->rope || !text || len == 0u) return false;
+    const size_t total = sol_rope_byte_len(tb->rope);
+    if (byte_offset > total) return false;
+    if (!sol_rope_insert(tb->rope, byte_offset,
+                         (const uint8_t *)text, len)) {
+        return false;
+    }
+    /* Adjust cursor if it sits at or after the insertion point. */
+    if (tb->cursor_byte >= byte_offset) {
+        tb->cursor_byte += len;
+    }
+    tb_publish_edit(tb, byte_offset, 0u, len);
+    return true;
+}
+
+bool sol_text_buffer_delete_bytes(SolTextBuffer *tb,
+                                   size_t byte_offset, size_t byte_count)
+{
+    if (!tb || !tb->rope || byte_count == 0u) return false;
+    const size_t total = sol_rope_byte_len(tb->rope);
+    if (byte_offset >= total) return false;
+    if (byte_offset + byte_count > total)
+        byte_count = total - byte_offset;
+    if (!sol_rope_remove(tb->rope, byte_offset, byte_count)) return false;
+    /* Clamp cursor into the shortened rope. */
+    if (tb->cursor_byte > byte_offset) {
+        if (tb->cursor_byte >= byte_offset + byte_count)
+            tb->cursor_byte -= byte_count;
+        else
+            tb->cursor_byte = byte_offset;
+    }
+    tb_publish_edit(tb, byte_offset, byte_count, 0u);
+    return true;
+}
+
+void sol_text_buffer_set_cursor_byte(SolTextBuffer *tb, size_t byte_offset)
+{
+    if (!tb || !tb->rope) return;
+    const size_t total = sol_rope_byte_len(tb->rope);
+    if (byte_offset > total) byte_offset = total;
+    tb_set_cursor_byte(tb, byte_offset);
+    tb_update_preferred_col(tb);
+}
