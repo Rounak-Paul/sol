@@ -41,6 +41,7 @@
 #include "sol_input_router.h"
 #include "sol_job.h"
 #include "sol_platform.h"
+#include "sol_settings.h"
 #include "sol_system_manager.h"
 #include "sol_syntax.h"
 #include "sol_text_buffer.h"
@@ -72,6 +73,7 @@ typedef struct SolAppContext {
     char                 *explorer_root_path;
     bool                  explorer_focused;
     SolBufferNodeId       focus_before_explorer;
+    SolSettings           settings;
 } SolAppContext;
 
 /* ------------------------------------------------------------------ */
@@ -484,6 +486,10 @@ int main(int argc, char **argv)
     }
     app.instance = instance;
 
+    /* Load user settings and apply initial scale. */
+    sol_settings_load(&app.settings);
+    ca_instance_set_scale(instance, app.settings.ui_scale);
+
     /* Wire the buffer system to the bus BEFORE the UI is built so the
        UI system can in turn share the bus with the file tree. After
        this call, every buffer create/close/focus and every text edit
@@ -580,6 +586,7 @@ int main(int argc, char **argv)
     }
     sol_plugin_manager_attach_ui(sol_system_plugins(app.systems), app.ui);
     sol_ui_system_set_plugin_manager(app.ui, sol_system_plugins(app.systems));
+    sol_ui_system_set_settings(app.ui, &app.settings);
 
     app.syntax_registry = sol_syntax_registry_create();
     sol_syntax_set_global_registry(app.syntax_registry);

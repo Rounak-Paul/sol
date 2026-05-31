@@ -135,6 +135,20 @@ void sol_ui_system_set_plugin_manager(SolUISystem    *ui,
 void sol_ui_system_open_plugin_window(SolUISystem *ui);
 
 /* ================================================================== */
+/* Settings                                                            */
+/* ================================================================== */
+
+/* Forward declaration — include sol_settings.h for the full struct. */
+typedef struct SolSettings SolSettings;
+
+/* Attach a SolSettings instance.  The pointer must outlive the UI
+ * system (typically it lives in the application's stack frame). */
+void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
+
+/* Open the settings window. No-op if one is already open. */
+void sol_ui_system_open_settings_window(SolUISystem *ui);
+
+/* ================================================================== */
 /* Plugin status bar segments                                          */
 /*                                                                     */
 /* Plugins contribute text segments shown on the RIGHT side of the     */

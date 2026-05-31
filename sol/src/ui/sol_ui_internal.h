@@ -20,6 +20,7 @@
 #include <causality.h>
 
 #include "sol_file_tree.h"
+#include "sol_settings.h"
 #include "sol_ui_system.h"
 
 /* ------------------------------------------------------------------ */
@@ -262,6 +263,10 @@ struct SolUISystem {
     /* Back-pointer to the plugin manager, set via
        sol_ui_system_set_plugin_manager().  NULL until attached. */
     struct SolPluginManager *plugin_manager;
+
+    /* Pointer to the application's SolSettings, set via
+       sol_ui_system_set_settings().  NULL until attached. */
+    SolSettings *settings;
 };
 
 /* ------------------------------------------------------------------ */
@@ -320,5 +325,10 @@ void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data);
    defined in plugin_window.c.                                        */
 void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm);
 void sol_ui_plugin_window_tick(void);
+
+/* Settings window — open/tick called from workspace.c;
+   defined in settings_window.c.                                      */
+void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings);
+void sol_ui_settings_window_tick(void);
 
 #endif /* SOL_UI_INTERNAL_H */

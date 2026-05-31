@@ -54,6 +54,7 @@ static void sol_ui_menu_new_buffer_action(void *user_data);
 static void sol_ui_menu_open_file_action(void *user_data);
 static void sol_ui_menu_open_folder_action(void *user_data);
 static void sol_ui_menu_open_plugin_manager_action(void *user_data);
+static void sol_ui_menu_open_settings_action(void *user_data);
 /* Forward declarations for welcome-screen button clicks (Ca_ClickFn) */
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data);
 static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data);
@@ -592,6 +593,7 @@ static void sol_ui_on_frame(void *user_data)
        drive from here. */
     (void)ui;
     sol_file_picker_tick();
+    sol_ui_settings_window_tick();
 
     /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
      * so the workspace-content builder re-runs every tick and evaluates
@@ -1049,6 +1051,11 @@ static void sol_ui_menu_open_plugin_manager_action(void *user_data)
     sol_ui_system_open_plugin_window((SolUISystem *)user_data);
 }
 
+static void sol_ui_menu_open_settings_action(void *user_data)
+{
+    sol_ui_system_open_settings_window((SolUISystem *)user_data);
+}
+
 /* Ca_ClickFn-compatible wrappers for welcome-screen buttons */
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data)
 {
@@ -1085,6 +1092,14 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
 
     /* Build the File menu. ca_window_set_title_bar_menus deep-copies
        these structs, so stack storage is fine. */
+    Ca_MenuItemDesc sol_items[] = {
+        {
+            .label       = "Settings\xe2\x80\xa6",
+            .action      = sol_ui_menu_open_settings_action,
+            .action_data = ui,
+        },
+    };
+
     Ca_MenuItemDesc file_items[] = {
         {
             .label       = "Open File...",
@@ -1107,6 +1122,11 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
     };
 
     Ca_MenuDesc menus[] = {
+        {
+            .label      = "Sol",
+            .items      = sol_items,
+            .item_count = (int)(sizeof(sol_items) / sizeof(sol_items[0])),
+        },
         {
             .label      = "File",
             .items      = file_items,
@@ -1132,6 +1152,7 @@ void sol_ui_system_tick(SolUISystem *ui)
        on_frame callback. */
     sol_file_picker_tick();
     sol_ui_plugin_window_tick();
+    sol_ui_settings_window_tick();
 }
 
 void sol_ui_system_set_plugin_manager(SolUISystem *ui, SolPluginManager *pm)
@@ -1143,6 +1164,17 @@ void sol_ui_system_open_plugin_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance) return;
     sol_ui_plugin_window_open(ui->instance, ui->plugin_manager);
+}
+
+void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
+{
+    if (ui) ui->settings = settings;
+}
+
+void sol_ui_system_open_settings_window(SolUISystem *ui)
+{
+    if (!ui || !ui->instance || !ui->settings) return;
+    sol_ui_settings_window_open(ui->instance, ui->settings);
 }
 
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
