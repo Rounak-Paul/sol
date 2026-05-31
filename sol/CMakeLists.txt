@@ -2,9 +2,17 @@ file(GLOB_RECURSE SOL_SOURCES CONFIGURE_DEPENDS src/*.c)
 
 add_executable(sol ${SOL_SOURCES})
 
-target_include_directories(sol PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Export symbols so plugin modules can resolve sol symbols at load time.
+set_target_properties(sol PROPERTIES ENABLE_EXPORTS ON)
 
-target_link_libraries(sol PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
+target_include_directories(sol PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/vendors/tree-sitter/lib/include
+)
+
+target_link_libraries(sol PRIVATE
+    causality Threads::Threads ${CMAKE_DL_LIBS} tree_sitter_runtime
+)
 
 # ---- Tests --------------------------------------------------------------
 # The rope is self-contained (libc + POSIX mmap) and is the highest-risk
@@ -129,6 +137,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         tests/test_plugin.c
         tests/stubs/sol_ui_bump_stub.c
         src/core/sol_plugin.c
+        src/core/sol_syntax.c
         src/core/sol_system_manager.c
         src/core/sol_event.c
         src/core/sol_rope.c

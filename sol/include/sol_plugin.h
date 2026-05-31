@@ -83,6 +83,13 @@ void sol_plugin_manager_destroy(SolPluginManager *manager);
 void sol_plugin_manager_attach_ui(SolPluginManager *manager,
                                    SolUISystem      *ui);
 
+/* Attach the syntax registry so plugins can register tree-sitter
+ * languages.  Call this before loading plugins.                       */
+typedef struct SolSyntaxRegistry SolSyntaxRegistry;
+void sol_plugin_manager_attach_syntax_registry(
+    SolPluginManager  *manager,
+    SolSyntaxRegistry *registry);
+
 /* ================================================================== */
 /* Loading                                                             */
 /* ================================================================== */

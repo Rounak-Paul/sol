@@ -33,7 +33,9 @@
 #include "sol_event.h"
 #include "sol_input.h"
 #include "sol_job.h"
-#include "sol_ui_system.h"
+
+/* Forward-declare so plugins don't need causality.h in their include path. */
+typedef struct SolUISystem SolUISystem;
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,6 +72,24 @@ const char *sol_plugin_version(const SolPluginCtx *ctx);
  * "[plugin:<id>] " for easy grep.  No trailing newline needed. */
 void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+
+/* ================================================================== */
+/* Syntax / Language registration                                      */
+/*                                                                     */
+/* Register a tree-sitter language with the syntax registry so Sol    */
+/* can use it for syntax highlighting.                                 */
+/*                                                                     */
+/* `language`   — const TSLanguage* cast to const void* (keeps this   */
+/*                header free of the tree-sitter dependency).          */
+/* `extensions` — NULL-terminated array, e.g. { ".c", ".h", NULL }.  */
+/*                                                                     */
+/* Returns false when the syntax registry was not attached or the     */
+/* registry is full.                                                   */
+/* ================================================================== */
+
+bool sol_plugin_register_language(SolPluginCtx      *ctx,
+                                   const void        *language,
+                                   const char *const *extensions);
 
 /* ================================================================== */
 /* Event subscriptions                                                 */

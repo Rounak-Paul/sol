@@ -42,6 +42,7 @@
 #include "sol_job.h"
 #include "sol_platform.h"
 #include "sol_system_manager.h"
+#include "sol_syntax.h"
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
 #include "sol_ui_constants.h"
@@ -65,6 +66,7 @@ typedef struct SolAppContext {
     SolSubscriptionToken  command_token;
     int                   command_flows_loaded;
     SolUISystem          *ui;
+    SolSyntaxRegistry    *syntax_registry;
     Ca_Instance          *instance;
     SolInputRouter       *router;
     char                 *explorer_root_path;
@@ -579,12 +581,30 @@ int main(int argc, char **argv)
     sol_plugin_manager_attach_ui(sol_system_plugins(app.systems), app.ui);
     sol_ui_system_set_plugin_manager(app.ui, sol_system_plugins(app.systems));
 
+    app.syntax_registry = sol_syntax_registry_create();
+    sol_plugin_manager_attach_syntax_registry(
+        sol_system_plugins(app.systems), app.syntax_registry);
+
     SolWarmupContext warmup = {0};
     const bool warmup_ok = sol_job_system_parallel_for(
         app.jobs, 100000u, 256u, sol_warmup_range, &warmup);
 
+    /* Resolve plugin directory relative to the executable so the app works
+     * regardless of the current working directory.
+     * argv[0] = ".../bin/sol"  → plugin dir = ".../bin/plugins"          */
+    char plugin_dir[1024] = "bin/plugins";  /* fallback if argv[0] unusable */
+    if (argv[0] && argv[0][0] != '\0') {
+        const char *sep = strrchr(argv[0], '/');
+        if (sep) {
+            size_t dir_len = (size_t)(sep - argv[0]);
+            if (dir_len + sizeof("/plugins") < sizeof(plugin_dir)) {
+                memcpy(plugin_dir, argv[0], dir_len);
+                memcpy(plugin_dir + dir_len, "/plugins", sizeof("/plugins"));
+            }
+        }
+    }
     const uint32_t loaded_plugins =
-        (uint32_t)sol_system_load_plugins_from_directory(app.systems, NULL);
+        (uint32_t)sol_system_load_plugins_from_directory(app.systems, plugin_dir);
 
     const SolAppStartupPayload startup = {
         .worker_count = sol_job_system_worker_count(app.jobs),
@@ -628,6 +648,7 @@ int main(int argc, char **argv)
 
     sol_input_router_destroy(app.router);
     sol_ui_system_destroy(app.ui);
+    sol_syntax_registry_destroy(app.syntax_registry);
     ca_instance_destroy(instance);
     sol_system_manager_destroy(app.systems);
     free(app.explorer_root_path);

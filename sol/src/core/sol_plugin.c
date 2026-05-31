@@ -25,6 +25,7 @@
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
 #include "sol_platform.h"
+#include "sol_syntax.h"
 #include "sol_system_manager.h"
 #include "sol_threading.h"
 #include "sol_text_buffer.h"
@@ -101,15 +102,16 @@ typedef struct SolPluginRecord {
 /* ================================================================== */
 
 struct SolPluginManager {
-    pthread_mutex_t   lock;
-    SolSystemManager *systems;
-    SolUISystem      *ui;             /* set via sol_plugin_manager_attach_ui */
+    pthread_mutex_t    lock;
+    SolSystemManager  *systems;
+    SolUISystem       *ui;               /* set via sol_plugin_manager_attach_ui */
+    SolSyntaxRegistry *syntax_registry;  /* set via sol_plugin_manager_attach_syntax_registry */
 
-    SolPluginRecord  *plugins;
-    size_t            plugin_count;
-    size_t            plugin_capacity;
+    SolPluginRecord   *plugins;
+    size_t             plugin_count;
+    size_t             plugin_capacity;
 
-    char             *default_directory;
+    char              *default_directory;
 };
 
 /* ================================================================== */
@@ -382,6 +384,12 @@ void sol_plugin_manager_destroy(SolPluginManager *manager)
 void sol_plugin_manager_attach_ui(SolPluginManager *manager, SolUISystem *ui)
 {
     if (manager) manager->ui = ui;
+}
+
+void sol_plugin_manager_attach_syntax_registry(SolPluginManager  *manager,
+                                                SolSyntaxRegistry *registry)
+{
+    if (manager) manager->syntax_registry = registry;
 }
 
 /* ================================================================== */
@@ -1208,5 +1216,23 @@ void *sol_plugin_get_service(SolPluginCtx *ctx,
 {
     if (!ctx || !name) return NULL;
     return sol_system_get_service_v(ctx->manager->systems, name, min_version);
+}
+
+/* ================================================================== */
+/* SolPluginCtx — language registration                                */
+/* ================================================================== */
+
+bool sol_plugin_register_language(SolPluginCtx      *ctx,
+                                   const void        *language,
+                                   const char *const *extensions)
+{
+    if (!ctx || !language || !extensions) return false;
+    SolSyntaxRegistry *reg = ctx->manager->syntax_registry;
+    if (!reg) {
+        sol_plugin_log(ctx, "syntax registry not attached — "
+                       "language registration skipped");
+        return false;
+    }
+    return sol_syntax_registry_register(reg, ctx->id, language, extensions);
 }
 

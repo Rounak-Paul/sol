@@ -47,5 +47,21 @@ set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(vendors/causality)
 
+# ---- tree-sitter runtime -------------------------------------------
+# A single static library built from tree-sitter's unity-build entry
+# point.  Linked into sol so it can invoke the parser at runtime.
+add_library(tree_sitter_runtime STATIC
+    ${CMAKE_SOURCE_DIR}/vendors/tree-sitter/lib/src/lib.c
+)
+target_include_directories(tree_sitter_runtime
+    PUBLIC  ${CMAKE_SOURCE_DIR}/vendors/tree-sitter/lib/include
+    PRIVATE ${CMAKE_SOURCE_DIR}/vendors/tree-sitter/lib/src
+)
+set_target_properties(tree_sitter_runtime PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+
 # Application
-add_subdirectory(sol) 
+add_subdirectory(sol)
+
+# Plugins (tree-sitter language plugins, built as .dylib/.so MODULEs)
+add_subdirectory(Plugins)
