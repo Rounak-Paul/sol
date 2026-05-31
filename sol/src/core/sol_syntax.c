@@ -74,11 +74,22 @@ bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
                                    const char *const  *extensions)
 {
     if (!reg || !lang_id || !language || !extensions) return false;
-    if (reg->count >= SOL_SYNTAX_MAX_LANGS)           return false;
 
-    SolSyntaxEntry *e = &reg->entries[reg->count];
-    e->language   = language;
-    e->ext_count  = 0u;
+    /* Update-in-place when the same lang_id is registered again (reload). */
+    SolSyntaxEntry *e = NULL;
+    for (size_t i = 0u; i < reg->count; i++) {
+        if (strcmp(reg->entries[i].lang_id, lang_id) == 0) {
+            e = &reg->entries[i];
+            break;
+        }
+    }
+    if (!e) {
+        if (reg->count >= SOL_SYNTAX_MAX_LANGS) return false;
+        e = &reg->entries[reg->count++];
+    }
+
+    e->language  = language;
+    e->ext_count = 0u;
 
     strncpy(e->lang_id, lang_id, sizeof(e->lang_id) - 1u);
     e->lang_id[sizeof(e->lang_id) - 1u] = '\0';
@@ -91,8 +102,21 @@ bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
         e->ext_count++;
     }
 
-    reg->count++;
     return true;
+}
+
+void sol_syntax_registry_unregister(SolSyntaxRegistry *reg, const char *lang_id)
+{
+    if (!reg || !lang_id) return;
+    for (size_t i = 0u; i < reg->count; i++) {
+        if (strcmp(reg->entries[i].lang_id, lang_id) != 0) continue;
+        /* Compact the array by shifting entries down. */
+        for (size_t j = i + 1u; j < reg->count; j++)
+            reg->entries[j - 1u] = reg->entries[j];
+        reg->count--;
+        /* A given lang_id should appear at most once; done. */
+        return;
+    }
 }
 
 /* ------------------------------------------------------------------ */

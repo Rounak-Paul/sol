@@ -359,6 +359,42 @@ SolSyntaxHighlighter *sol_text_buffer_highlighter(const SolTextBuffer *tb)
     return tb ? tb->highlighter : NULL;
 }
 
+void sol_text_buffer_invalidate_language(SolBufferSystem *system,
+                                          const void      *language)
+{
+    if (!system || !language) return;
+    const size_t total = sol_buffer_count(system);
+    for (size_t i = 0u; i < total; ++i) {
+        SolBuffer *buf = sol_buffer_get(system, sol_buffer_at(system, i));
+        if (!buf || sol_buffer_kind(buf) != SOL_BUFFER_KIND_TEXT) continue;
+        SolTextBuffer *tb = (SolTextBuffer *)sol_buffer_state(buf);
+        if (!tb || !tb->highlighter) continue;
+        if (sol_syntax_highlight_get_language(tb->highlighter) == language) {
+            sol_syntax_highlight_destroy(tb->highlighter);
+            tb->highlighter = NULL;
+        }
+    }
+}
+
+void sol_text_buffer_refresh_highlighters(SolBufferSystem *system)
+{
+    if (!system) return;
+    SolSyntaxRegistry *reg = sol_syntax_get_global_registry();
+    if (!reg) return;
+    const size_t total = sol_buffer_count(system);
+    for (size_t i = 0u; i < total; ++i) {
+        SolBuffer *buf = sol_buffer_get(system, sol_buffer_at(system, i));
+        if (!buf || sol_buffer_kind(buf) != SOL_BUFFER_KIND_TEXT) continue;
+        SolTextBuffer *tb = (SolTextBuffer *)sol_buffer_state(buf);
+        if (!tb || tb->highlighter || !tb->source_path) continue;
+        const void *lang = sol_syntax_get_for_path(reg, tb->source_path);
+        if (!lang) continue;
+        tb->highlighter = sol_syntax_highlight_create(lang);
+        if (tb->highlighter && tb->rope)
+            sol_syntax_highlight_reparse(tb->highlighter, tb->rope);
+    }
+}
+
 SolBufferId sol_text_buffer_find_by_path(SolBufferSystem *system, const char *path)
 {
     if (!system || !path) return 0u;

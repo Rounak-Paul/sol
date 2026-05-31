@@ -67,6 +67,11 @@ size_t sol_syntax_highlight_spans_for_range(
 /* True if the last reparse succeeded and the span table is valid. */
 bool sol_syntax_highlight_is_valid(const SolSyntaxHighlighter *h);
 
+/* Return the TSLanguage* (as void*) this highlighter was created with.
+ * Used by the plugin system to find buffers that must be invalidated
+ * when the language's owning plugin is unloaded.                     */
+const void *sol_syntax_highlight_get_language(const SolSyntaxHighlighter *h);
+
 #ifdef __cplusplus
 }
 #endif

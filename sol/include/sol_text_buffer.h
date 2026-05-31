@@ -83,6 +83,21 @@ const char *sol_text_buffer_source_path(const SolTextBuffer *tb);
 typedef struct SolSyntaxHighlighter SolSyntaxHighlighter;
 SolSyntaxHighlighter *sol_text_buffer_highlighter(const SolTextBuffer *tb);
 
+/* Destroy and NULL-out the highlighter for every TEXT buffer whose
+ * highlighter was created from `language`.  Must be called before
+ * the library that owns `language` is unloaded (i.e. during plugin
+ * cleanup while the pointer is still valid).  No-op when language
+ * is NULL.                                                           */
+void sol_text_buffer_invalidate_language(SolBufferSystem *system,
+                                          const void      *language);
+
+/* Walk all TEXT buffers; for any buffer whose source_path has a
+ * registered language in the global syntax registry and no current
+ * highlighter, create and attach a fresh one.  Call this after a
+ * language plugin finishes loading so already-open files gain
+ * highlighting without requiring a close-reopen cycle.              */
+void sol_text_buffer_refresh_highlighters(SolBufferSystem *system);
+
 /* ---- Cursor / scroll metrics ------------------------------------- */
 
 size_t sol_text_buffer_cursor_byte (const SolTextBuffer *tb);

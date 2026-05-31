@@ -50,6 +50,12 @@ bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
                                    const void         *language,
                                    const char *const  *extensions);
 
+/* Remove all entries whose lang_id matches.  No-op when not found.
+ * Must be called BEFORE the library that owns the TSLanguage* is
+ * unloaded, while the pointer is still valid.                        */
+void sol_syntax_registry_unregister(SolSyntaxRegistry *reg,
+                                     const char        *lang_id);
+
 /* ================================================================== */
 /* Query                                                               */
 /* ================================================================== */

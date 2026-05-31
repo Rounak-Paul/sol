@@ -47,6 +47,7 @@
 #define SOL_PLUGIN_CTX_MAX_COMMANDS       64u
 #define SOL_PLUGIN_CTX_MAX_SERVICES       16u
 #define SOL_PLUGIN_CTX_MAX_STATUS_SEGS     8u
+#define SOL_PLUGIN_CTX_MAX_LANGUAGES       8u
 /* Keep in sync with SOL_UI_MAX_ACTION_LEN in sol_ui_internal.h */
 #define SOL_PLUGIN_CMD_ACTION_MAX_LEN     63u
 
@@ -79,6 +80,11 @@ struct SolPluginCtx {
     /* Tracked status bar tokens — auto-removed on cleanup */
     SolUIStatusToken status_tokens[SOL_PLUGIN_CTX_MAX_STATUS_SEGS];
     size_t           status_token_count;
+
+    /* Tracked language registrations — unregistered and buffer highlighters
+     * invalidated before the plugin library is unloaded (dlclose). */
+    const void *language_ptrs[SOL_PLUGIN_CTX_MAX_LANGUAGES];
+    size_t      language_count;
 };
 
 /* ================================================================== */
@@ -210,6 +216,17 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
     for (size_t i = 0u; i < ctx->service_count; ++i)
         sol_system_unregister_service(mgr->systems, ctx->services[i]);
 
+    /* Invalidate syntax highlighters in open buffers and remove language
+     * entries from the registry.  This must happen BEFORE the plugin
+     * library is closed (dlclose) so that the TSLanguage* pointers are
+     * still valid when we compare them against highlighter->language. */
+    SolSyntaxRegistry *reg = mgr->syntax_registry;
+    SolBufferSystem   *bs  = sol_system_buffers(mgr->systems);
+    for (size_t i = 0u; i < ctx->language_count; ++i) {
+        if (bs)  sol_text_buffer_invalidate_language(bs, ctx->language_ptrs[i]);
+        if (reg) sol_syntax_registry_unregister(reg, ctx->id);
+    }
+
     free(ctx->id);
     free(ctx->display_name);
     free(ctx->version);
@@ -327,6 +344,14 @@ static bool sol_plugin_finish_load(SolPluginManager *manager,
             sol_platform_library_close(library_handle);
         return false;
     }
+
+    /* Re-attach syntax highlighters to any already-open buffers whose
+     * file extension now has a registered language.  Covers the case
+     * where a language plugin is loaded (or reloaded) after files are
+     * already open in the editor. */
+    SolBufferSystem *bs_refresh = sol_system_buffers(manager->systems);
+    if (bs_refresh)
+        sol_text_buffer_refresh_highlighters(bs_refresh);
 
     return true;
 }
@@ -789,6 +814,12 @@ bool sol_plugin_manager_enable(SolPluginManager *manager, const char *plugin_id)
         plugin_ctx_cleanup(ctx);
         return false;
     }
+
+    /* Re-attach syntax highlighters to any already-open buffers. */
+    SolBufferSystem *bs_en = sol_system_buffers(manager->systems);
+    if (bs_en)
+        sol_text_buffer_refresh_highlighters(bs_en);
+
     return true;
 }
 
@@ -1233,6 +1264,12 @@ bool sol_plugin_register_language(SolPluginCtx      *ctx,
                        "language registration skipped");
         return false;
     }
-    return sol_syntax_registry_register(reg, ctx->id, language, extensions);
+    if (!sol_syntax_registry_register(reg, ctx->id, language, extensions))
+        return false;
+    /* Track the language pointer so plugin_ctx_cleanup can invalidate open
+     * buffer highlighters before the library is closed. */
+    if (ctx->language_count < SOL_PLUGIN_CTX_MAX_LANGUAGES)
+        ctx->language_ptrs[ctx->language_count++] = language;
+    return true;
 }
 

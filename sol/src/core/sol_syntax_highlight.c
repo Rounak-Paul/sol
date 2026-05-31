@@ -261,3 +261,8 @@ bool sol_syntax_highlight_is_valid(const SolSyntaxHighlighter *h)
 {
     return h && h->valid;
 }
+
+const void *sol_syntax_highlight_get_language(const SolSyntaxHighlighter *h)
+{
+    return h ? h->language : NULL;
+}
