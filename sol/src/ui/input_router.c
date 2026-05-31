@@ -63,7 +63,8 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
     int win_h = 0;
     sol_ui_system_window_size(r->ui, NULL, &win_h);
     if (win_h <= 0) win_h = 600;
-    const int viewport_full = sol_text_view_visible_lines(win_h);
+    const float ui_scale = ca_window_get_scale(sol_ui_system_primary_window(r->ui));
+    const int viewport_full = sol_text_view_visible_lines(win_h, ui_scale);
     int viewport = viewport_full - 2;
     if (viewport < 1) viewport = 1;
     sol_text_buffer_ensure_cursor_visible(tb, viewport);
@@ -247,7 +248,8 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     SolTextBuffer *tb = sol_text_buffer_state(buf);
     if (!tb) return;
 
-    const int rendered = sol_text_view_visible_lines(win_h);
+    const int rendered = sol_text_view_visible_lines(win_h,
+        ca_window_get_scale(sol_ui_system_primary_window(r->ui)));
     int viewport = rendered - 2;
     if (viewport < 1) viewport = 1;
     const int total = (int)sol_text_buffer_line_count(tb);

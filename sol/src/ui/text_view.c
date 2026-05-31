@@ -225,11 +225,16 @@ static void emit_highlighted_line(
 /* Geometry                                                            */
 /* ------------------------------------------------------------------ */
 
-int sol_text_view_visible_lines(int window_h)
+int sol_text_view_visible_lines(int window_h, float ui_scale)
 {
-    int avail = window_h - SOL_TEXT_PANE_CHROME_PX;
-    if (avail < SOL_TEXT_LINE_HEIGHT_PX) avail = SOL_TEXT_LINE_HEIGHT_PX;
-    int n = avail / SOL_TEXT_LINE_HEIGHT_PX;
+    if (ui_scale <= 0.0f) ui_scale = 1.0f;
+    /* Scale the CSS constants to layout pixels (= GLFW logical px). */
+    int line_h = (int)(SOL_TEXT_LINE_HEIGHT_PX * ui_scale + 0.5f);
+    if (line_h < 1) line_h = 1;
+    int chrome = (int)(SOL_TEXT_PANE_CHROME_PX * ui_scale + 0.5f);
+    int avail = window_h - chrome;
+    if (avail < line_h) avail = line_h;
+    int n = avail / line_h;
     /* Over-render by two so the pane always looks fully filled even
        when the chrome estimate is off. The parent has overflow:hidden,
        so extra rows just clip. */
@@ -262,22 +267,26 @@ static void on_text_col_drag(const Ca_DragEvent *ev, void *user_data)
     sol_ui_system_focus_leaf(cb->ui, cb->leaf_id);
 
     /* Convert pane-local (x, y) → (line, codepoint column). The text
-       column has 8 px padding all around. */
-    const float pad_x = 8.0f;
-    const float pad_y = 8.0f;
+       column has 8 px padding all around; scale the CSS constant to
+       layout pixels so clicks map to the right row at any ui_scale. */
+    Ca_Window *click_win = sol_ui_system_primary_window(cb->ui);
+    const float scale = ca_window_get_scale(click_win);
+    const float pad_x = 8.0f * scale;
+    const float pad_y = 8.0f * scale;
     float local_x = ev->local_x - pad_x;
     float local_y = ev->local_y - pad_y;
     if (local_x < 0.0f) local_x = 0.0f;
     if (local_y < 0.0f) local_y = 0.0f;
 
-    const int row = (int)(local_y / (float)SOL_TEXT_LINE_HEIGHT_PX);
+    const float line_h_layout = SOL_TEXT_LINE_HEIGHT_PX * scale;
+    const int row = (int)(local_y / line_h_layout);
     const int scroll_top = sol_text_buffer_scroll_top(cb->tb);
     int line_idx = scroll_top + row;
     if (line_idx < 0) line_idx = 0;
     const int total = (int)sol_text_buffer_line_count(cb->tb);
     if (line_idx >= total) line_idx = total - 1;
 
-    const float adv = glyph_advance_px_for(sol_ui_system_primary_window(cb->ui));
+    const float adv = glyph_advance_px_for(click_win);
     int target_cp = (int)((local_x / adv) + 0.5f);
     if (target_cp < 0) target_cp = 0;
 
@@ -306,10 +315,14 @@ void sol_text_view_render(const SolBuffer *buffer,
     if (ui) sol_ui_system_window_size(ui, NULL, &win_h);
     if (win_h <= 0) win_h = 600;
 
+    /* Get current scale so viewport count and geometry are correct. */
+    Ca_Window *primary_win = ui ? sol_ui_system_primary_window(ui) : NULL;
+    const float ui_scale = ca_window_get_scale(primary_win);
+
     /* `rendered` is what we emit (over-rendered to fill the pane);
        `viewport` is what the user actually sees and drives the
        scrollbar thumb math. */
-    const int rendered = sol_text_view_visible_lines(win_h);
+    const int rendered = sol_text_view_visible_lines(win_h, ui_scale);
     int viewport = rendered - 2;
     if (viewport < 1) viewport = 1;
 
@@ -434,18 +447,21 @@ void sol_text_view_render(const SolBuffer *buffer,
             /* Compute vertical geometry from live font metrics so the
              * caret aligns with the actual rendered glyphs regardless of
              * font or scale changes.  Fallback to hand-tuned constants
-             * if no font is loaded yet. */
-            float c_ascent = 11.0f, c_descent = -3.0f;
+             * if no font is loaded yet. ca_font_line_metrics returns
+             * layout-space values (CSS px × ui_scale). */
+            float c_ascent = 11.0f * ui_scale, c_descent = -3.0f * ui_scale;
             ca_font_line_metrics(caret_win, 12.0f, &c_ascent, &c_descent);
             /* em_height = ascent - descent (descent is negative, so this adds) */
             const float c_em_h = c_ascent - c_descent;
-            const float c_y    = ((float)SOL_TEXT_LINE_HEIGHT_PX - c_em_h) * 0.5f;
+            /* Line height in layout px for caret centering. */
+            const float c_line_h = SOL_TEXT_LINE_HEIGHT_PX * ui_scale;
+            const float c_y    = (c_line_h - c_em_h) * 0.5f;
 
             ca_div_begin(&(Ca_DivDesc){
                 .position = CA_POSITION_ABSOLUTE,
                 .pos_x    = caret_x,
                 .pos_y    = c_y,
-                .width    = 2.0f,
+                .width    = 2.0f * ui_scale,
                 .height   = c_em_h,
                 .background = ca_color(1.0f, 1.0f, 1.0f, visible ? 1.0f : 0.0f),
             });
@@ -460,7 +476,9 @@ void sol_text_view_render(const SolBuffer *buffer,
      * bumps sig_buffer_rev and posts a wake event every tick while an
      * active buffer is focused.  Nothing to do here. */
     if (total > viewport && max_top > 0) {
-        const float track_h     = (float)(viewport * SOL_TEXT_LINE_HEIGHT_PX);
+        /* Layout-space line height for proportional scrollbar sizing. */
+        const float line_h_layout = SOL_TEXT_LINE_HEIGHT_PX * ui_scale;
+        const float track_h     = (float)viewport * line_h_layout;
         float thumb_h           = track_h * (float)viewport / (float)total;
         if (thumb_h < 16.0f) thumb_h = 16.0f;
         if (thumb_h > track_h) thumb_h = track_h;

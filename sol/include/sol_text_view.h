@@ -32,7 +32,7 @@ void sol_text_view_render(const SolBuffer *buffer,
 /* Number of lines that fit in the viewport for a given window height.
    Used by the input router to clamp scroll deltas and ensure-cursor-
    visible math without poking the view's internal constants. */
-int sol_text_view_visible_lines(int window_h);
+int sol_text_view_visible_lines(int window_h, float ui_scale);
 
 #ifdef __cplusplus
 }

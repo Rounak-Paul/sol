@@ -1186,8 +1186,11 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  text-wrap: nowrap;"
     "  text-align: right;"
     "}"
-    ".sw-slider {"
-    "  corner-radius: 0px;"
+    ".sw-scale-input {"
+    "  width: 80px;"
+    "  height: 26px;"
+    "  font-size: 13px;"
+    "  corner-radius: 4px;"
     "}";
 
 #endif /* SOL_UI_STYLE_H */

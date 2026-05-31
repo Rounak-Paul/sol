@@ -32,7 +32,6 @@
 
 #define SW_DEFAULT_WIDTH   660
 #define SW_DEFAULT_HEIGHT  440
-#define SW_SCALE_SLIDER_W  220.0f
 
 /* Tab index constants */
 #define SW_TAB_THEME  0
@@ -64,8 +63,9 @@ struct SolSettingsWindow {
     /* Stable tab-button click context pool; pointers passed to causality. */
     SwTabCtx      tab_ctxs[SW_TAB_COUNT];
 
-    /* Formatted scale label: "1.00×" — updated on every slider change. */
-    char          scale_label[16];
+    /* Formatted scale label: "1.00" — updated on every valid input change.
+       This is the initial text used when the input node is first created. */
+    char          scale_input_text[16];
 
     /* Intrusive list link for lifecycle tracking. */
     SolSettingsWindow *next;
@@ -83,9 +83,8 @@ static SolSettingsWindow *g_sw_windows = NULL;
 
 static void sw_update_scale_label(SolSettingsWindow *w)
 {
-    /* × = U+00D7, UTF-8: 0xC3 0x97 */
-    snprintf(w->scale_label, sizeof(w->scale_label),
-             "%.2f\xc3\x97", (double)w->settings->ui_scale);
+    snprintf(w->scale_input_text, sizeof(w->scale_input_text),
+             "%.2f", (double)w->settings->ui_scale);
 }
 
 /* ------------------------------------------------------------------ */
@@ -103,29 +102,27 @@ static void sw_on_tab_click(Ca_Button *btn, void *user_data)
 }
 
 /* ------------------------------------------------------------------ */
-/* Slider callbacks                                                    */
+/* Input callbacks                                                     */
 /* ------------------------------------------------------------------ */
 
-static void sw_on_scale_change(Ca_Slider *s, void *user_data)
+static void sw_on_scale_input_change(Ca_TextInput *inp, void *user_data)
 {
-    SolSettingsWindow *w   = (SolSettingsWindow *)user_data;
-    float              val = ca_slider_get(s);
-
-    /* Clamp to valid range. */
-    if (val < SOL_SETTINGS_UI_SCALE_MIN) val = SOL_SETTINGS_UI_SCALE_MIN;
-    if (val > SOL_SETTINGS_UI_SCALE_MAX) val = SOL_SETTINGS_UI_SCALE_MAX;
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    const char *text = ca_get_text(inp);
+    if (!text) return;
+    char *end;
+    float val = strtof(text, &end);
+    /* Only apply when the whole string parses and the value is in range. */
+    if (end == text || *end != '\0') return;
+    if (val < SOL_SETTINGS_UI_SCALE_MIN || val > SOL_SETTINGS_UI_SCALE_MAX) return;
 
     w->settings->ui_scale = val;
-
-    /* Apply scale to the causality instance immediately. */
     ca_instance_set_scale(w->instance, val);
-
-    /* Persist to disk. */
     sol_settings_save(w->settings);
-
-    /* Update the label and rebuild the content to reflect the new value. */
-    sw_update_scale_label(w);
-    sol_ui_bump_u32(w->sig_rev);
+    /* Keep scale_input_text in sync so a scale-triggered rebuild doesn't
+       clobber what the user typed. */
+    snprintf(w->scale_input_text, sizeof(w->scale_input_text),
+             "%s", text);
 }
 
 /* ------------------------------------------------------------------ */
@@ -153,18 +150,16 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
         .style = "sw-setting-label",
     });
 
-    ca_slider(&(Ca_SliderDesc){
-        .min         = SOL_SETTINGS_UI_SCALE_MIN,
-        .max         = SOL_SETTINGS_UI_SCALE_MAX,
-        .value       = w->settings->ui_scale,
-        .width       = SW_SCALE_SLIDER_W,
-        .on_change   = sw_on_scale_change,
+    ca_input(&(Ca_InputDesc){
+        .text        = w->scale_input_text,
+        .placeholder = "1.00",
+        .on_change   = sw_on_scale_input_change,
         .change_data = w,
-        .style       = "sw-slider",
+        .style       = "sw-scale-input",
     });
 
     ca_text(&(Ca_TextDesc){
-        .text  = w->scale_label,
+        .text  = "0.5 – 3.0",
         .style = "sw-setting-value",
     });
 
