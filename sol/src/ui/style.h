@@ -406,12 +406,10 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  flex-shrink: 0;"
     "  gap: 0px;"
     "}"
-    ".buffer-caret {"
-    "  width: 2px;"
-    "  height: 18px;"
-    "  background: #c8d0ff;"
-    "  flex-shrink: 0;"
-    "}"
+    /* buffer-caret is now driven fully by Ca_DivDesc fields (pos, size,
+     * background color) rather than CSS, so this class is intentionally
+     * empty — kept as a no-op anchor in case tooling needs it. */
+    ".buffer-caret {}"
     /* Transparent button wrapping each visible line. Clicks anywhere on
        the row focus the host pane and reposition the cursor. */
     ".buffer-line-btn {"

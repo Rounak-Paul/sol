@@ -592,6 +592,19 @@ static void sol_ui_on_frame(void *user_data)
        drive from here. */
     (void)ui;
     sol_file_picker_tick();
+
+    /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
+     * so the workspace-content builder re-runs every tick and evaluates
+     * the current blink phase.  Then wake the instance so the next tick
+     * fires even from glfwWaitEvents mode.
+     *
+     * on_frame is called at ctx depth=-1 (between layout and paint),
+     * which is the safe window for triggering a reactive flush via
+     * sol_ui_bump_u32 without overflowing the widget stack. */
+    if (ui->buffers && sol_buffer_active_buffer(ui->buffers) != 0) {
+        sol_ui_bump_u32(ui->sig_buffer_rev);
+        ca_instance_wake();
+    }
 }
 
 void sol_ui_system_pre_tick(SolUISystem *ui)

@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 #include "sol_rope.h"
 #include "sol_syntax_highlight.h"
@@ -105,6 +106,44 @@ static int  g_token_ring_cursor = 0;
 static char *acquire_token_slot(void)
 {
     return g_token_ring[g_token_ring_cursor++ & (SOL_TEXT_VIEW_TOKEN_RING - 1u)];
+}
+
+/* ------------------------------------------------------------------ */
+/* Caret blink                                                         */
+/* ------------------------------------------------------------------ */
+
+/* Standard editor blink: 530 ms on / 530 ms off (~1 Hz).             */
+#define SOL_CARET_BLINK_HALF_MS  530u
+/* Show caret solid for this long after the cursor moves.             */
+#define SOL_CARET_SOLID_MS       150u
+
+static uint64_t g_caret_last_move_ms = 0u;
+static size_t   g_caret_prev_line    = (size_t)-1;
+static size_t   g_caret_prev_col     = (size_t)-1;
+
+static uint64_t monotonic_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
+}
+
+/* Call once per frame with the current cursor position.  Returns true
+ * when the caret should be drawn (on-phase or just moved). */
+static bool caret_blink_visible(size_t cur_line, size_t cur_col)
+{
+    const uint64_t now = monotonic_ms();
+    if (cur_line != g_caret_prev_line || cur_col != g_caret_prev_col) {
+        g_caret_prev_line    = cur_line;
+        g_caret_prev_col     = cur_col;
+        g_caret_last_move_ms = now;
+    }
+    /* Always solid immediately after movement. */
+    if (now - g_caret_last_move_ms < SOL_CARET_SOLID_MS) return true;
+    /* Periodic blink phase relative to last move. */
+    const uint64_t phase = (now - g_caret_last_move_ms)
+                           % (SOL_CARET_BLINK_HALF_MS * 2u);
+    return phase < SOL_CARET_BLINK_HALF_MS;
 }
 
 /* ------------------------------------------------------------------ */
@@ -387,14 +426,28 @@ void sol_text_view_render(const SolBuffer *buffer,
                 off += step;
                 ++cp_count;
             }
-            const float adv = glyph_advance_px_for(
-                ui ? sol_ui_system_primary_window(ui) : NULL);
+            Ca_Window *const caret_win = sol_ui_system_primary_window(ui);
+            const float adv = glyph_advance_px_for(caret_win);
             const float caret_x = (float)cp_count * adv;
+            const bool  visible = caret_blink_visible(cur_line, cur_col);
+
+            /* Compute vertical geometry from live font metrics so the
+             * caret aligns with the actual rendered glyphs regardless of
+             * font or scale changes.  Fallback to hand-tuned constants
+             * if no font is loaded yet. */
+            float c_ascent = 11.0f, c_descent = -3.0f;
+            ca_font_line_metrics(caret_win, 12.0f, &c_ascent, &c_descent);
+            /* em_height = ascent - descent (descent is negative, so this adds) */
+            const float c_em_h = c_ascent - c_descent;
+            const float c_y    = ((float)SOL_TEXT_LINE_HEIGHT_PX - c_em_h) * 0.5f;
+
             ca_div_begin(&(Ca_DivDesc){
-                .style    = "buffer-caret",
                 .position = CA_POSITION_ABSOLUTE,
                 .pos_x    = caret_x,
-                .pos_y    = 1.0f,
+                .pos_y    = c_y,
+                .width    = 2.0f,
+                .height   = c_em_h,
+                .background = ca_color(1.0f, 1.0f, 1.0f, visible ? 1.0f : 0.0f),
             });
             ca_div_end();
         }
@@ -403,7 +456,9 @@ void sol_text_view_render(const SolBuffer *buffer,
     }
     ca_div_end();   /* buffer-text-col */
 
-    /* -------- Scrollbar -------- */
+    /* Blink redraws are driven by sol_ui_on_frame (workspace.c), which
+     * bumps sig_buffer_rev and posts a wake event every tick while an
+     * active buffer is focused.  Nothing to do here. */
     if (total > viewport && max_top > 0) {
         const float track_h     = (float)(viewport * SOL_TEXT_LINE_HEIGHT_PX);
         float thumb_h           = track_h * (float)viewport / (float)total;
