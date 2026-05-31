@@ -582,6 +582,7 @@ int main(int argc, char **argv)
     sol_ui_system_set_plugin_manager(app.ui, sol_system_plugins(app.systems));
 
     app.syntax_registry = sol_syntax_registry_create();
+    sol_syntax_set_global_registry(app.syntax_registry);
     sol_plugin_manager_attach_syntax_registry(
         sol_system_plugins(app.systems), app.syntax_registry);
 

@@ -14,7 +14,7 @@ static bool on_load(SolPluginCtx *ctx)
     /* CMakeLists.txt uses .txt extension which clashes with plain text,
      * so we only register .cmake here.  Path-based detection for
      * CMakeLists.txt can be added when sol supports filename patterns. */
-    static const char *const exts[] = { ".cmake", NULL };
+    static const char *const exts[] = { ".cmake", "CMakeLists.txt", NULL };
     return sol_plugin_register_language(ctx, tree_sitter_cmake(), exts);
 }
 

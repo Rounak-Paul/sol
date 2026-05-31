@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "sol_rope.h"
+#include "sol_syntax_highlight.h"
 #include "sol_text_buffer.h"
 #include "sol_ui_constants.h"
 #include "sol_ui_system.h"
@@ -89,6 +91,95 @@ static char *acquire_num_slot(void)
 static TextClickCtx *acquire_click_slot(void)
 {
     return &g_click_ring[g_click_ring_cursor++ & (SOL_TEXT_VIEW_CLICK_RING - 1)];
+}
+
+/* Per-frame token-segment storage.
+ * Each highlighted line can emit multiple ca_text nodes (one per colored
+ * token / plain gap).  They need stable memory through the frame, so we
+ * use a secondary ring analogous to the line ring above. */
+#define SOL_TEXT_VIEW_TOKEN_RING 2048u
+#define SOL_TEXT_VIEW_TOKEN_MAX   512u
+static char g_token_ring[SOL_TEXT_VIEW_TOKEN_RING][SOL_TEXT_VIEW_TOKEN_MAX];
+static int  g_token_ring_cursor = 0;
+
+static char *acquire_token_slot(void)
+{
+    return g_token_ring[g_token_ring_cursor++ & (SOL_TEXT_VIEW_TOKEN_RING - 1u)];
+}
+
+/* ------------------------------------------------------------------ */
+/* Syntax-highlight helpers                                            */
+/* ------------------------------------------------------------------ */
+
+/* Emit ca_text nodes for a single line using the pre-queried span list.
+ * Spans must be sorted by start_byte and already clipped/filtered to
+ * the range [line_start_byte, line_start_byte + line_bytes). */
+static void emit_highlighted_line(
+    const char          *line_buf,
+    size_t               line_bytes,
+    uint32_t             line_start_byte,
+    const SolSyntaxSpan *spans,
+    size_t               span_count)
+{
+    if (line_bytes == 0u) {
+        /* Empty line — emit a space so the row keeps its layout height. */
+        ca_text(&(Ca_TextDesc){ .text = " ", .style = "hl-plain" });
+        return;
+    }
+    if (span_count == 0u) {
+        ca_text(&(Ca_TextDesc){
+            .text  = line_buf,
+            .style = "hl-plain",
+        });
+        return;
+    }
+
+    const uint32_t line_end_byte = line_start_byte + (uint32_t)line_bytes;
+    uint32_t pos = line_start_byte;   /* cursor in document bytes */
+
+    for (size_t i = 0u; i < span_count; i++) {
+        uint32_t sp_start = spans[i].start_byte;
+        uint32_t sp_end   = spans[i].end_byte;
+        /* Clamp span to line boundaries */
+        if (sp_start < line_start_byte) sp_start = line_start_byte;
+        if (sp_end   > line_end_byte)   sp_end   = line_end_byte;
+        if (sp_start >= sp_end || sp_start < pos) continue;
+
+        /* Plain gap before this colored span */
+        if (pos < sp_start) {
+            size_t off = pos - line_start_byte;
+            size_t len = sp_start - pos;
+            if (len >= SOL_TEXT_VIEW_TOKEN_MAX) len = SOL_TEXT_VIEW_TOKEN_MAX - 1u;
+            char *slot = acquire_token_slot();
+            memcpy(slot, line_buf + off, len);
+            slot[len] = '\0';
+            ca_text(&(Ca_TextDesc){ .text = slot, .style = "hl-plain" });
+        }
+
+        /* Colored token */
+        {
+            size_t off = sp_start - line_start_byte;
+            size_t len = sp_end - sp_start;
+            if (len >= SOL_TEXT_VIEW_TOKEN_MAX) len = SOL_TEXT_VIEW_TOKEN_MAX - 1u;
+            char *slot = acquire_token_slot();
+            memcpy(slot, line_buf + off, len);
+            slot[len] = '\0';
+            ca_text(&(Ca_TextDesc){ .text = slot, .style = spans[i].css_class });
+        }
+
+        pos = sp_end;
+    }
+
+    /* Trailing plain text after the last span */
+    if (pos < line_end_byte) {
+        size_t off = pos - line_start_byte;
+        size_t len = line_end_byte - pos;
+        if (len >= SOL_TEXT_VIEW_TOKEN_MAX) len = SOL_TEXT_VIEW_TOKEN_MAX - 1u;
+        char *slot = acquire_token_slot();
+        memcpy(slot, line_buf + off, len);
+        slot[len] = '\0';
+        ca_text(&(Ca_TextDesc){ .text = slot, .style = "hl-plain" });
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -258,10 +349,28 @@ void sol_text_view_render(const SolBuffer *buffer,
             .style     = "buffer-line-row",
         });
 
-        ca_text(&(Ca_TextDesc){
-            .text  = line_bytes > 0u ? line_buf : " ",
-            .style = "buffer-line",
-        });
+        /* Emit line content — tokenized when a syntax highlighter is
+         * available, plain otherwise. */
+        SolSyntaxHighlighter *hl = sol_text_buffer_highlighter(tb);
+        if (hl && sol_syntax_highlight_is_valid(hl)) {
+            const SolRope *rope =
+                sol_text_buffer_rope((SolBuffer *)buffer);
+            uint32_t line_start = rope
+                ? (uint32_t)sol_rope_byte_of_line(rope, (size_t)line_idx)
+                : 0u;
+            SolSyntaxSpan spans[64];
+            size_t span_count = sol_syntax_highlight_spans_for_range(
+                hl, line_start,
+                line_start + (uint32_t)line_bytes,
+                spans, 64u);
+            emit_highlighted_line(
+                line_buf, line_bytes, line_start, spans, span_count);
+        } else {
+            ca_text(&(Ca_TextDesc){
+                .text  = line_bytes > 0u ? line_buf : " ",
+                .style = "buffer-line",
+            });
+        }
 
         if (is_cursor_line) {
             /* Count codepoints in the byte prefix [0, cur_col). */

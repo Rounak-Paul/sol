@@ -45,6 +45,8 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     set(SOL_BUFFER_TEST_SRC
         src/core/sol_buffer.c
         src/core/sol_text_buffer.c
+        src/core/sol_syntax.c
+        src/core/sol_syntax_highlight.c
     )
 
     # Include path for causality headers (sol_buffer.c includes causality.h).
@@ -78,7 +80,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CAUSALITY_INCLUDE}
     )
     target_compile_definitions(sol_buffer_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_buffer_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_buffer_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_buffer_tests COMMAND sol_buffer_tests)
 
     # ---- Text-buffer unit tests -----------------------------------------
@@ -94,7 +96,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CAUSALITY_INCLUDE}
     )
     target_compile_definitions(sol_text_buffer_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_text_buffer_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_text_buffer_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_text_buffer_tests COMMAND sol_text_buffer_tests)
 
     # ---- Command-flow unit tests ----------------------------------------
@@ -126,7 +128,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CAUSALITY_INCLUDE}
     )
     target_compile_definitions(sol_integration_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_integration_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_integration_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_integration_tests COMMAND sol_integration_tests)
 
     # ---- Plugin system unit tests ---------------------------------------
@@ -138,6 +140,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         tests/stubs/sol_ui_bump_stub.c
         src/core/sol_plugin.c
         src/core/sol_syntax.c
+        src/core/sol_syntax_highlight.c
         src/core/sol_system_manager.c
         src/core/sol_event.c
         src/core/sol_rope.c
@@ -156,6 +159,6 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CAUSALITY_INCLUDE}
     )
     target_compile_definitions(sol_plugin_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_plugin_tests PRIVATE causality tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_plugin_tests COMMAND sol_plugin_tests)
 endif()

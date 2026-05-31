@@ -66,6 +66,17 @@ const void *sol_syntax_get_for_path(const SolSyntaxRegistry *reg,
 /* Return the number of registered languages. */
 size_t sol_syntax_registry_count(const SolSyntaxRegistry *reg);
 
+/* ================================================================== */
+/* Module-level global registry                                        */
+/*                                                                     */
+/* A single process-wide registry pointer used by the text-buffer     */
+/* system to automatically attach a highlighter when a file is opened.*/
+/* Set this once during startup before loading plugins.               */
+/* ================================================================== */
+
+void               sol_syntax_set_global_registry(SolSyntaxRegistry *reg);
+SolSyntaxRegistry *sol_syntax_get_global_registry(void);
+
 #ifdef __cplusplus
 }
 #endif

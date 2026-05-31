@@ -18,6 +18,8 @@
 #include "sol_text_buffer.h"
 
 #include "sol_platform.h"
+#include "sol_syntax.h"
+#include "sol_syntax_highlight.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -31,21 +33,17 @@
 /* ------------------------------------------------------------------ */
 
 struct SolTextBuffer {
-    SolRope *rope;            /* owned                              */
-    size_t   cursor_byte;     /* absolute byte offset into the rope */
-    /* Sticky column for vertical motion, in codepoints from the
-       start of the line. We track codepoints (not bytes) so the
-       cursor visually lines up across lines containing multibyte
-       glyphs. */
-    size_t   preferred_col_cp;
-    int      scroll_top_line; /* first visible line                 */
-    char    *source_path;     /* owned; NULL for unsaved/scratch    */
+    SolRope              *rope;            /* owned                              */
+    size_t                cursor_byte;     /* absolute byte offset into the rope */
+    size_t                preferred_col_cp;
+    int                   scroll_top_line; /* first visible line                 */
+    char                 *source_path;     /* owned; NULL for unsaved/scratch    */
 
-    /* Event-bus wiring, filled in by tb_register() once the
-       SolBufferSystem has minted an id. Both may be zero/NULL when
-       the buffer is detached from a system. */
-    SolEventBus *events;
-    SolBufferId  self_id;
+    SolEventBus          *events;
+    SolBufferId           self_id;
+
+    /* Syntax highlighter — NULL when no language matched the file extension. */
+    SolSyntaxHighlighter *highlighter;
 };
 
 /* Publish sol.text.edited. `removed` and `inserted` are byte counts;
@@ -55,6 +53,9 @@ static void tb_publish_edit(const SolTextBuffer *tb, size_t at,
                             size_t removed, size_t inserted)
 {
     if (!tb || !tb->events) return;
+    /* Re-parse so the highlight spans stay in sync with the rope. */
+    if (tb->highlighter)
+        sol_syntax_highlight_reparse(tb->highlighter, tb->rope);
     SolTextEditedPayload payload;
     payload.buffer_id      = tb->self_id;
     payload.byte_offset    = at;
@@ -231,6 +232,7 @@ static void tb_destroy(void *state)
 {
     SolTextBuffer *tb = (SolTextBuffer *)state;
     if (!tb) return;
+    sol_syntax_highlight_destroy(tb->highlighter);
     if (tb->rope) sol_rope_destroy(tb->rope);
     free(tb->source_path);
     free(tb);
@@ -267,11 +269,26 @@ static SolBufferId tb_register(SolBufferSystem *system, SolTextBuffer *tb,
     if (id == 0u) {
         tb_destroy(tb);
     } else {
-        /* Wire the bus so subsequent edits can publish text events.
-           Pulled from the buffer system so callers don't have to
-           plumb it through every open_* entry point. */
         tb->events  = sol_buffer_event_bus(system);
         tb->self_id = id;
+
+        /* Attach syntax highlighter if a language is registered for this
+         * file's extension.  Requires the global registry to be set
+         * (via sol_syntax_set_global_registry) before files are opened. */
+        if (tb->source_path) {
+            SolSyntaxRegistry *reg = sol_syntax_get_global_registry();
+            if (reg) {
+                const void *lang =
+                    sol_syntax_get_for_path(reg, tb->source_path);
+                if (lang) {
+                    tb->highlighter =
+                        sol_syntax_highlight_create(lang);
+                    if (tb->highlighter)
+                        sol_syntax_highlight_reparse(
+                            tb->highlighter, tb->rope);
+                }
+            }
+        }
     }
     return id;
 }
@@ -336,6 +353,11 @@ SolBufferId sol_text_buffer_open_string(SolBufferSystem *system,
 /* ------------------------------------------------------------------ */
 /* Find / accessors                                                    */
 /* ------------------------------------------------------------------ */
+
+SolSyntaxHighlighter *sol_text_buffer_highlighter(const SolTextBuffer *tb)
+{
+    return tb ? tb->highlighter : NULL;
+}
 
 SolBufferId sol_text_buffer_find_by_path(SolBufferSystem *system, const char *path)
 {

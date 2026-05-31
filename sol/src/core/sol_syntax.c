@@ -9,6 +9,22 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------ */
+/* Global registry                                                     */
+/* ------------------------------------------------------------------ */
+
+static SolSyntaxRegistry *g_global_registry = NULL;
+
+void sol_syntax_set_global_registry(SolSyntaxRegistry *reg)
+{
+    g_global_registry = reg;
+}
+
+SolSyntaxRegistry *sol_syntax_get_global_registry(void)
+{
+    return g_global_registry;
+}
+
+/* ------------------------------------------------------------------ */
 /* Limits                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -102,9 +118,31 @@ const void *sol_syntax_get_for_path(const SolSyntaxRegistry *reg,
                                      const char              *path)
 {
     if (!reg || !path) return NULL;
+
+    /* 1. Try extension-based match (e.g. ".c", ".cmake"). */
     const char *dot = strrchr(path, '.');
-    if (!dot) return NULL;
-    return sol_syntax_get_by_extension(reg, dot);
+    if (dot) {
+        const void *lang = sol_syntax_get_by_extension(reg, dot);
+        if (lang) return lang;
+    }
+
+    /* 2. Fall back to full-basename match so filenames like
+     *    "CMakeLists.txt" can be registered without clobbering .txt. */
+    const char *slash = strrchr(path, '/');
+    const char *basename = slash ? slash + 1 : path;
+    if (*basename) {
+        for (size_t i = 0u; i < reg->count; i++) {
+            const SolSyntaxEntry *e = &reg->entries[i];
+            for (size_t j = 0u; j < e->ext_count; j++) {
+                /* Basename entries have no leading dot. */
+                if (e->exts[j][0] != '.') {
+                    if (strcmp(e->exts[j], basename) == 0)
+                        return e->language;
+                }
+            }
+        }
+    }
+    return NULL;
 }
 
 size_t sol_syntax_registry_count(const SolSyntaxRegistry *reg)

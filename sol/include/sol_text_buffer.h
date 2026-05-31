@@ -78,6 +78,11 @@ SolRope *sol_text_buffer_rope(SolBuffer *buffer);
 
 const char *sol_text_buffer_source_path(const SolTextBuffer *tb);
 
+/* Syntax highlighter attached to this buffer, or NULL if no language
+ * was matched for the file extension.  Owned by the text buffer. */
+typedef struct SolSyntaxHighlighter SolSyntaxHighlighter;
+SolSyntaxHighlighter *sol_text_buffer_highlighter(const SolTextBuffer *tb);
+
 /* ---- Cursor / scroll metrics ------------------------------------- */
 
 size_t sol_text_buffer_cursor_byte (const SolTextBuffer *tb);
