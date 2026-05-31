@@ -443,6 +443,12 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     sol_buffer_workspace_visit(ui->buffers, &visitor, &visitor_context);
 }
 
+static void sol_ui_on_panel_resize(float ratio, void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (ui) ui->tree_panel_ratio = ratio;
+}
+
 /* ------------------------------------------------------------------ */
 /* Reactive content builder                                            */
 /* ------------------------------------------------------------------ */
@@ -470,7 +476,9 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
     (void)ca_signal_get_u32(ui->sig_file_tree_rev);
     (void)ca_signal_get_u32(ui->sig_window_rev);
 
-    /* Top region: optional left tree panel + buffer area. */
+    /* Top region: optional left tree panel + buffer area.
+       When the tree is visible we use ca_split_begin so the divider is
+       user-draggable; when hidden we render the buffer area directly. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style     = "workspace-main-content",
@@ -479,27 +487,50 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
     const bool has_tree_root =
         (ui->file_tree && sol_file_tree_root(ui->file_tree) != NULL);
 
-    ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
-        .style     = "tree-panel",
-        .hidden    = !has_tree_root,
-    });
     if (has_tree_root) {
-        sol_ui_render_file_tree_panel_body(ui);
-    }
-    ca_div_end();   /* tree-panel-host */
+        ca_split_begin(&(Ca_SplitDesc){
+            .direction      = CA_HORIZONTAL,
+            .ratio          = ui->tree_panel_ratio,
+            .min_ratio      = 0.10f,
+            .max_ratio      = 0.50f,
+            .bar_size       = 1.0f,
+            .bar_color       = 0x181e2eff,
+            .bar_hover_color = 0x2d3a5aff,
+            .on_resize      = sol_ui_on_panel_resize,
+            .user_data      = ui,
+        });
 
-    ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
-        .style     = "workspace-buffer-area",
-    });
-    /* Inline the buffer-area content directly — calling ca_div_set_builder
-       inside a reconcile context would cause the outer ca_div_end() to trim
-       the children built by the nested effect (cursor stays 0 at this level). */
-    ui->pane_click_ctx_count = 0u;
-    sol_ui_render_global_tab_strip(ui);
-    sol_ui_render_workspace_tree(ui);
-    ca_div_end();   /* workspace-buffer-area */
+        /* Left pane — file tree */
+        ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style     = "tree-panel",
+        });
+        sol_ui_render_file_tree_panel_body(ui);
+        ca_div_end();   /* tree-panel (left pane) */
+
+        /* Right pane — buffer area */
+        ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style     = "workspace-buffer-area",
+        });
+        ui->pane_click_ctx_count = 0u;
+        sol_ui_render_global_tab_strip(ui);
+        sol_ui_render_workspace_tree(ui);
+        ca_div_end();   /* workspace-buffer-area (right pane) */
+
+        ca_split_end();
+    } else {
+        ui->tree_panel_host = NULL;
+
+        ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style     = "workspace-buffer-area",
+        });
+        ui->pane_click_ctx_count = 0u;
+        sol_ui_render_global_tab_strip(ui);
+        sol_ui_render_workspace_tree(ui);
+        ca_div_end();   /* workspace-buffer-area */
+    }
 
     ca_div_end();   /* workspace-main-content */
 
@@ -632,6 +663,7 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .pos_y     = SOL_UI_TREE_STICKY_TOP,
         .z_index   = 5,
         .style     = "tree-sticky-host",
+        .no_hover  = true,   /* transparent to hover — sticky-row children still hit-test */
     });
     ca_div_set_builder(ui->tree_sticky_host, sol_ui_sticky_tree_builder, ui);
     ca_div_end();   /* tree_sticky_host */
@@ -661,6 +693,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->buffers         = buffers;
     ui->leader_modifier = SOL_MOD_CTRL;
     ui->status_bar_kind = SOL_UI_STATUS_KIND_KEY;
+    ui->tree_panel_ratio = 0.20f;
 
     /* ---- Reactive state ----
        All signals are owned by the instance and freed in

@@ -240,6 +240,11 @@ struct SolUISystem {
     SolUIMenuActionFn menu_on_open_file;
     SolUIMenuActionFn menu_on_open_folder;
     void             *menu_user_data;
+
+    /* Ratio of the file-tree panel vs. the buffer area (0.0–1.0).
+       Persisted here so ca_split_begin re-reads it each build and the
+       panel keeps its width across reactive rebuilds. Default 0.20. */
+    float tree_panel_ratio;
 };
 
 /* ------------------------------------------------------------------ */
