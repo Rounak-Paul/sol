@@ -120,4 +120,45 @@ bool   sol_plugin_manager_reload(SolPluginManager *manager,
 
 size_t sol_plugin_manager_count(SolPluginManager *manager);
 
+/* ================================================================== */
+/* Plugin enumeration                                                  */
+/* ================================================================== */
+
+/* Read-only snapshot of a plugin's metadata.  All string pointers are
+ * owned by the manager and valid until the next manager mutation
+ * (load / unload / disable).  Copy them if you need stability.       */
+typedef struct SolPluginInfo {
+    const char *id;
+    const char *display_name;
+    const char *version;
+    const char *path;        /* NULL for static (built-in) plugins   */
+    bool        is_dynamic;
+    bool        enabled;
+} SolPluginInfo;
+
+/* Fill *out with info for the record at position index (0-based).
+ * Includes both enabled and disabled-but-retained records.
+ * Returns false when index >= sol_plugin_manager_count().            */
+bool sol_plugin_manager_get_info_at(SolPluginManager *manager,
+                                     size_t            index,
+                                     SolPluginInfo    *out_info);
+
+/* ================================================================== */
+/* Enable / disable                                                    */
+/* ================================================================== */
+
+/* Disable a plugin: calls on_unload + cleans up the ctx but keeps the
+ * record in the manager so it can be re-enabled later without
+ * re-registering.  The shared-library handle (for dynamic plugins)
+ * is kept open.  Returns true if the plugin was found and was
+ * enabled; false if not found or already disabled.                   */
+bool sol_plugin_manager_disable(SolPluginManager *manager,
+                                 const char       *plugin_id);
+
+/* Re-enable a previously-disabled plugin by allocating a fresh ctx
+ * and calling on_load.  Returns true on success; false if not found,
+ * already enabled, or on_load returns false.                         */
+bool sol_plugin_manager_enable(SolPluginManager *manager,
+                                const char       *plugin_id);
+
 #endif /* SOL_PLUGIN_H */

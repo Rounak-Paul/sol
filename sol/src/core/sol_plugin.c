@@ -91,6 +91,7 @@ typedef struct SolPluginRecord {
     char            *version_owned;
     char            *path;            /* NULL for static plugins */
     bool             is_dynamic;
+    bool             enabled;         /* false = ctx is NULL, record kept for re-enable */
     void            *library_handle;  /* dlopen handle; NULL for static */
     SolPluginCtx    *ctx;             /* heap-allocated; freed on deinit */
 } SolPluginRecord;
@@ -271,6 +272,7 @@ static bool sol_plugin_finish_load(SolPluginManager *manager,
                                             ? api->version : "0.0.0");
     record.path               = sol_pstrdup(path);
     record.is_dynamic         = is_dynamic;
+    record.enabled            = true;
     record.library_handle     = library_handle;
 
     if (!record.id_owned || !record.display_name_owned || !record.version_owned
@@ -691,6 +693,95 @@ size_t sol_plugin_manager_count(SolPluginManager *manager)
     const size_t n = manager->plugin_count;
     pthread_mutex_unlock(&manager->lock);
     return n;
+}
+
+bool sol_plugin_manager_get_info_at(SolPluginManager *manager,
+                                     size_t            index,
+                                     SolPluginInfo    *out_info)
+{
+    if (!manager || !out_info) return false;
+    pthread_mutex_lock(&manager->lock);
+    if (index >= manager->plugin_count) {
+        pthread_mutex_unlock(&manager->lock);
+        return false;
+    }
+    const SolPluginRecord *r = &manager->plugins[index];
+    out_info->id           = r->api.id;
+    out_info->display_name = r->api.display_name;
+    out_info->version      = r->api.version;
+    out_info->path         = r->path;
+    out_info->is_dynamic   = r->is_dynamic;
+    out_info->enabled      = r->enabled;
+    pthread_mutex_unlock(&manager->lock);
+    return true;
+}
+
+bool sol_plugin_manager_disable(SolPluginManager *manager, const char *plugin_id)
+{
+    if (!manager || !plugin_id || !*plugin_id) return false;
+
+    pthread_mutex_lock(&manager->lock);
+    SolPluginRecord *record = NULL;
+    for (size_t i = 0u; i < manager->plugin_count; ++i) {
+        if (strcmp(manager->plugins[i].api.id, plugin_id) == 0) {
+            record = &manager->plugins[i];
+            break;
+        }
+    }
+    if (!record || !record->enabled) {
+        pthread_mutex_unlock(&manager->lock);
+        return false;
+    }
+    /* Mark as disabled while still holding the lock, then clean up
+       ctx outside the lock (user on_unload code must not lock). */
+    SolPluginCtx *ctx = record->ctx;
+    record->ctx     = NULL;
+    record->enabled = false;
+    pthread_mutex_unlock(&manager->lock);
+
+    if (record->api.on_unload && ctx)
+        record->api.on_unload(ctx);
+    plugin_ctx_cleanup(ctx);
+    return true;
+}
+
+bool sol_plugin_manager_enable(SolPluginManager *manager, const char *plugin_id)
+{
+    if (!manager || !plugin_id || !*plugin_id) return false;
+
+    pthread_mutex_lock(&manager->lock);
+    SolPluginRecord *record = NULL;
+    for (size_t i = 0u; i < manager->plugin_count; ++i) {
+        if (strcmp(manager->plugins[i].api.id, plugin_id) == 0) {
+            record = &manager->plugins[i];
+            break;
+        }
+    }
+    if (!record || record->enabled) {
+        pthread_mutex_unlock(&manager->lock);
+        return false;
+    }
+    SolPluginCtx *ctx = plugin_ctx_alloc(manager,
+                                          record->id_owned,
+                                          record->display_name_owned,
+                                          record->version_owned);
+    if (!ctx) {
+        pthread_mutex_unlock(&manager->lock);
+        return false;
+    }
+    record->ctx     = ctx;
+    record->enabled = true;
+    pthread_mutex_unlock(&manager->lock);
+
+    if (record->api.on_load && !record->api.on_load(ctx)) {
+        pthread_mutex_lock(&manager->lock);
+        record->ctx     = NULL;
+        record->enabled = false;
+        pthread_mutex_unlock(&manager->lock);
+        plugin_ctx_cleanup(ctx);
+        return false;
+    }
+    return true;
 }
 
 /* ================================================================== */

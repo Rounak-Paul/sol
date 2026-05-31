@@ -120,4 +120,33 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_compile_definitions(sol_integration_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_integration_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_integration_tests COMMAND sol_integration_tests)
+
+    # ---- Plugin system unit tests ---------------------------------------
+    # Links the full causality library (needed by status_bar.c render
+    # symbols and sol_ui_internal.h signal accessors).  Does NOT use
+    # sol_causality_signals_stub.c because causality provides those symbols.
+    add_executable(sol_plugin_tests
+        tests/test_plugin.c
+        tests/stubs/sol_ui_bump_stub.c
+        src/core/sol_plugin.c
+        src/core/sol_system_manager.c
+        src/core/sol_event.c
+        src/core/sol_rope.c
+        src/core/sol_platform.c
+        src/core/sol_buffer.c
+        src/core/sol_text_buffer.c
+        src/core/sol_job.c
+        src/core/sol_input.c
+        src/ui/command_flow.c
+        src/ui/status_bar.c
+    )
+    target_include_directories(sol_plugin_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_INCLUDE}
+    )
+    target_compile_definitions(sol_plugin_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_plugin_tests COMMAND sol_plugin_tests)
 endif()

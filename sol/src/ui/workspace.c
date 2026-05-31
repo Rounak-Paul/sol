@@ -53,6 +53,7 @@
 static void sol_ui_menu_new_buffer_action(void *user_data);
 static void sol_ui_menu_open_file_action(void *user_data);
 static void sol_ui_menu_open_folder_action(void *user_data);
+static void sol_ui_menu_open_plugin_manager_action(void *user_data);
 /* Forward declarations for welcome-screen button clicks (Ca_ClickFn) */
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data);
 static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data);
@@ -1030,6 +1031,11 @@ static void sol_ui_menu_open_folder_action(void *user_data)
     }
 }
 
+static void sol_ui_menu_open_plugin_manager_action(void *user_data)
+{
+    sol_ui_system_open_plugin_window((SolUISystem *)user_data);
+}
+
 /* Ca_ClickFn-compatible wrappers for welcome-screen buttons */
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data)
 {
@@ -1079,11 +1085,24 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
         },
     };
 
+    Ca_MenuItemDesc plugin_items[] = {
+        {
+            .label       = "Plugin Manager\xe2\x80\xa6",
+            .action      = sol_ui_menu_open_plugin_manager_action,
+            .action_data = ui,
+        },
+    };
+
     Ca_MenuDesc menus[] = {
         {
             .label      = "File",
             .items      = file_items,
             .item_count = (int)(sizeof(file_items) / sizeof(file_items[0])),
+        },
+        {
+            .label      = "Plugins",
+            .items      = plugin_items,
+            .item_count = (int)(sizeof(plugin_items) / sizeof(plugin_items[0])),
         },
     };
 
@@ -1099,6 +1118,18 @@ void sol_ui_system_tick(SolUISystem *ui)
        UI work moving forward without depending on the primary window's
        on_frame callback. */
     sol_file_picker_tick();
+    sol_ui_plugin_window_tick();
+}
+
+void sol_ui_system_set_plugin_manager(SolUISystem *ui, SolPluginManager *pm)
+{
+    if (ui) ui->plugin_manager = pm;
+}
+
+void sol_ui_system_open_plugin_window(SolUISystem *ui)
+{
+    if (!ui || !ui->instance) return;
+    sol_ui_plugin_window_open(ui->instance, ui->plugin_manager);
 }
 
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)

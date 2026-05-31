@@ -258,6 +258,10 @@ struct SolUISystem {
     /* Plugin-contributed status bar segments (right side). */
     SolUIStatusSegment plugin_status_segs[SOL_UI_MAX_STATUS_SEGMENTS];
     uint32_t           plugin_status_next_token;   /* monotonic counter, starts at 1 */
+
+    /* Back-pointer to the plugin manager, set via
+       sol_ui_system_set_plugin_manager().  NULL until attached. */
+    struct SolPluginManager *plugin_manager;
 };
 
 /* ------------------------------------------------------------------ */
@@ -311,5 +315,10 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui);
 /* Sticky-scroll ancestor builder — registered as the reactive builder
    on tree_sticky_host in workspace.c; defined in file_tree_panel.c. */
 void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data);
+
+/* Plugin Manager window — open/tick called from workspace.c;
+   defined in plugin_window.c.                                        */
+void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm);
+void sol_ui_plugin_window_tick(void);
 
 #endif /* SOL_UI_INTERNAL_H */

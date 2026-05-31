@@ -577,6 +577,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "[sol] warning: failed to register sol.ui service\n");
     }
     sol_plugin_manager_attach_ui(sol_system_plugins(app.systems), app.ui);
+    sol_ui_system_set_plugin_manager(app.ui, sol_system_plugins(app.systems));
 
     SolWarmupContext warmup = {0};
     const bool warmup_ok = sol_job_system_parallel_for(

@@ -120,6 +120,21 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
 void sol_ui_system_tick(SolUISystem *ui);
 
 /* ================================================================== */
+/* Plugin Manager window                                               */
+/* ================================================================== */
+
+/* Associate a SolPluginManager with the UI system so the plugin
+ * window can read plugin state. Called from sol_plugin_manager_attach_ui
+ * (via workspace.c) — application code does not need to call this
+ * directly.                                                           */
+typedef struct SolPluginManager SolPluginManager;
+void sol_ui_system_set_plugin_manager(SolUISystem    *ui,
+                                       SolPluginManager *pm);
+
+/* Open the plugin manager overlay window. */
+void sol_ui_system_open_plugin_window(SolUISystem *ui);
+
+/* ================================================================== */
 /* Plugin status bar segments                                          */
 /*                                                                     */
 /* Plugins contribute text segments shown on the RIGHT side of the     */
