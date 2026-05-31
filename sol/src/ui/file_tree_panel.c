@@ -37,16 +37,26 @@ static int sol_ascii_casecmp(const char *a, const char *b)
    set programmatically via Ca_DivDesc.width. */
 #define SOL_UI_TREE_INDENT_PX  16.0f
 
-/* FontAwesome 4 glyphs — all in the U+F000–U+F2FF range that Roboto Mono
-   Nerd Font is guaranteed to include. Bytes computed as 3-byte UTF-8. */
-#define TREE_ARROW_RIGHT  "\xef\x81\x94"   /* U+F054  fa-chevron-right   */
-#define TREE_ARROW_DOWN   "\xef\x81\xb8"   /* U+F078  fa-chevron-down    */
-#define TREE_DIR_CLOSED   "\xef\x81\xbb"   /* U+F07B  fa-folder          */
-#define TREE_DIR_OPEN     "\xef\x81\xbc"   /* U+F07C  fa-folder-open     */
-#define TREE_FILE_CODE    "\xef\x87\x89"   /* U+F1C9  fa-file-code-o     */
-#define TREE_FILE_TEXT    "\xef\x83\xb6"   /* U+F0F6  fa-file-text-o     */
-#define TREE_FILE_COG     "\xef\x80\x93"   /* U+F013  fa-cog (cmake)     */
-#define TREE_FILE_GENERIC "\xef\x80\x96"   /* U+F016  fa-file-o          */
+/* FontAwesome 4 glyphs — directory chrome, cmake cog, and generic fallback. */
+#define TREE_ARROW_RIGHT  "\xef\x81\x94"   /* U+F054  fa-chevron-right        */
+#define TREE_ARROW_DOWN   "\xef\x81\xb8"   /* U+F078  fa-chevron-down         */
+#define TREE_DIR_CLOSED   "\xef\x81\xbb"   /* U+F07B  fa-folder               */
+#define TREE_DIR_OPEN     "\xef\x81\xbc"   /* U+F07C  fa-folder-open          */
+#define TREE_FILE_CODE    "\xef\x87\x89"   /* U+F1C9  fa-file-code-o (fallback) */
+#define TREE_FILE_COG     "\xef\x80\x93"   /* U+F013  fa-cog          (cmake)  */
+#define TREE_FILE_GENERIC "\xef\x80\x96"   /* U+F016  fa-file-o       (unknown) */
+
+/* Language-specific devicons (nf-dev-* / nf-seti-*).
+ * Present in any Nerd Fonts-patched monospace font v2 or v3. */
+#define TREE_FILE_C_LANG  "\xee\x98\x9e"   /* U+E61E  nf-dev-c            */
+#define TREE_FILE_CPP     "\xee\x98\x9d"   /* U+E61D  nf-dev-cplusplus    */
+#define TREE_FILE_PYTHON  "\xee\x98\x86"   /* U+E606  nf-dev-python       */
+#define TREE_FILE_JS      "\xee\x98\x8c"   /* U+E60C  nf-dev-javascript   */
+#define TREE_FILE_TS      "\xee\x98\xa8"   /* U+E628  nf-seti-typescript  */
+#define TREE_FILE_HTML    "\xee\x98\x8e"   /* U+E60E  nf-dev-html5        */
+#define TREE_FILE_CSS     "\xee\x98\x8a"   /* U+E60A  nf-dev-css3         */
+#define TREE_FILE_JSON    "\xee\x98\x8b"   /* U+E60B  nf-dev-json         */
+#define TREE_FILE_MD      "\xef\x92\x8a"   /* U+F48A  nf-fa-markdown      */
 
 /* Pick the right icon glyph and CSS class for a file based on extension. */
 static const char *tree_file_icon(const char *name, const char **out_style)
@@ -56,12 +66,27 @@ static const char *tree_file_icon(const char *name, const char **out_style)
     }
     const char *dot = name ? strrchr(name, '.') : NULL;
     if (dot) {
-        if (sol_ascii_casecmp(dot, ".c")     == 0) { *out_style = "tree-icon tree-icon-c";     return TREE_FILE_CODE;    }
-        if (sol_ascii_casecmp(dot, ".h")     == 0) { *out_style = "tree-icon tree-icon-h";     return TREE_FILE_CODE;    }
+        /* C family */
+        if (sol_ascii_casecmp(dot, ".c")     == 0) { *out_style = "tree-icon tree-icon-c";    return TREE_FILE_C_LANG; }
+        if (sol_ascii_casecmp(dot, ".h")     == 0) { *out_style = "tree-icon tree-icon-h";    return TREE_FILE_C_LANG; }
         if (sol_ascii_casecmp(dot, ".cpp")   == 0 ||
-            sol_ascii_casecmp(dot, ".cc")    == 0) { *out_style = "tree-icon tree-icon-c";     return TREE_FILE_CODE;    }
-        if (sol_ascii_casecmp(dot, ".md")    == 0) { *out_style = "tree-icon tree-icon-md";    return TREE_FILE_TEXT;    }
-        if (sol_ascii_casecmp(dot, ".cmake") == 0) { *out_style = "tree-icon tree-icon-cmake"; return TREE_FILE_COG;     }
+            sol_ascii_casecmp(dot, ".cc")    == 0) { *out_style = "tree-icon tree-icon-c";    return TREE_FILE_CPP;    }
+        if (sol_ascii_casecmp(dot, ".hpp")   == 0 ||
+            sol_ascii_casecmp(dot, ".hh")    == 0) { *out_style = "tree-icon tree-icon-h";    return TREE_FILE_CPP;    }
+        /* Scripting */
+        if (sol_ascii_casecmp(dot, ".py")    == 0) { *out_style = "tree-icon tree-icon-py";   return TREE_FILE_PYTHON; }
+        if (sol_ascii_casecmp(dot, ".js")    == 0) { *out_style = "tree-icon tree-icon-js";   return TREE_FILE_JS;     }
+        if (sol_ascii_casecmp(dot, ".ts")    == 0) { *out_style = "tree-icon tree-icon-ts";   return TREE_FILE_TS;     }
+        /* Data / config */
+        if (sol_ascii_casecmp(dot, ".json")  == 0) { *out_style = "tree-icon tree-icon-json"; return TREE_FILE_JSON;   }
+        /* Web */
+        if (sol_ascii_casecmp(dot, ".html")  == 0 ||
+            sol_ascii_casecmp(dot, ".htm")   == 0) { *out_style = "tree-icon tree-icon-html"; return TREE_FILE_HTML;   }
+        if (sol_ascii_casecmp(dot, ".css")   == 0) { *out_style = "tree-icon tree-icon-css";  return TREE_FILE_CSS;    }
+        /* Prose */
+        if (sol_ascii_casecmp(dot, ".md")    == 0) { *out_style = "tree-icon tree-icon-md";   return TREE_FILE_MD;     }
+        /* Build */
+        if (sol_ascii_casecmp(dot, ".cmake") == 0) { *out_style = "tree-icon tree-icon-cmake";return TREE_FILE_COG;    }
     }
     *out_style = "tree-icon tree-icon-file";
     return TREE_FILE_GENERIC;

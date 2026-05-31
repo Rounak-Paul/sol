@@ -189,9 +189,22 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     ".tree-icon-dir-closed { color: #4d78c2; }"
     ".tree-icon-dir-open   { color: #6a96e0; }"
     ".tree-icon-file       { color: #4a5a7a; }"
+    /* C family: blue for implementation (.c/.cpp), purple for headers (.h/.hpp).
+     * The color difference is intentional — purple = interface/declarations. */
     ".tree-icon-c          { color: #6ba8d8; }"
-    ".tree-icon-h          { color: #8aaeca; }"
-    ".tree-icon-md         { color: #6e9db8; }"
+    ".tree-icon-h          { color: #c792ea; }"
+    /* Scripting */
+    ".tree-icon-py         { color: #c3e88d; }"
+    ".tree-icon-js         { color: #f5d76e; }"
+    ".tree-icon-ts         { color: #6ba8d8; }"
+    /* Data / config */
+    ".tree-icon-json       { color: #f78c6c; }"
+    /* Web */
+    ".tree-icon-html       { color: #e07b54; }"
+    ".tree-icon-css        { color: #80cbc4; }"
+    /* Prose */
+    ".tree-icon-md         { color: #7a8fa8; }"
+    /* Build */
     ".tree-icon-cmake      { color: #b07c30; }"
     /* Name label */
     ".tree-name {"
