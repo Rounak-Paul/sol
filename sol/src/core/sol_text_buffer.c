@@ -1123,29 +1123,52 @@ bool sol_text_buffer_delete_word_back(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
+    const size_t total = sol_rope_byte_len(tb->rope);
     const size_t start = tb->cursor_byte;
     if (start == 0u) return false;
 
-    size_t pos = start;
     uint8_t b = 0;
-    /* Skip non-word chars backward. */
-    while (pos > 0u) {
+    /* Find the start of the current word (go backward past any word chars). */
+    size_t pos = start;
+    /* If we're inside a word, go back to its start. */
+    {
         const size_t step = tb_cp_len_before(tb->rope, pos);
-        if (step == 0u) break;
-        if (sol_rope_read(tb->rope, pos - step, &b, 1u) != 1u) break;
-        if (tb_is_word_char(b)) break;
-        pos -= step;
+        if (step > 0u && sol_rope_read(tb->rope, pos - step, &b, 1u) == 1u
+                && tb_is_word_char(b)) {
+            while (pos > 0u) {
+                const size_t s = tb_cp_len_before(tb->rope, pos);
+                if (s == 0u) break;
+                if (sol_rope_read(tb->rope, pos - s, &b, 1u) != 1u) break;
+                if (!tb_is_word_char(b)) break;
+                pos -= s;
+            }
+        } else {
+            /* Not in a word — skip non-word chars back, then skip word chars back. */
+            while (pos > 0u) {
+                const size_t s = tb_cp_len_before(tb->rope, pos);
+                if (s == 0u) break;
+                if (sol_rope_read(tb->rope, pos - s, &b, 1u) != 1u) break;
+                if (tb_is_word_char(b)) break;
+                pos -= s;
+            }
+            while (pos > 0u) {
+                const size_t s = tb_cp_len_before(tb->rope, pos);
+                if (s == 0u) break;
+                if (sol_rope_read(tb->rope, pos - s, &b, 1u) != 1u) break;
+                if (!tb_is_word_char(b)) break;
+                pos -= s;
+            }
+        }
     }
-    /* Skip word chars backward. */
-    while (pos > 0u) {
-        const size_t step = tb_cp_len_before(tb->rope, pos);
-        if (step == 0u) break;
-        if (sol_rope_read(tb->rope, pos - step, &b, 1u) != 1u) break;
+    /* Now extend end forward past any remaining word chars (other half of word). */
+    size_t end = start;
+    while (end < total) {
+        if (sol_rope_read(tb->rope, end, &b, 1u) != 1u) break;
         if (!tb_is_word_char(b)) break;
-        pos -= step;
+        end += tb_utf8_lead_len(b);
     }
-    if (pos == start) return false;
-    const size_t len = start - pos;
+    if (pos == end) return false;
+    const size_t len = end - pos;
     char *old = tb_read_rope_bytes(tb->rope, pos, len);
     if (!sol_rope_remove(tb->rope, pos, len)) { free(old); return false; }
     tb->cursor_byte = pos;
@@ -1160,32 +1183,51 @@ bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
-    const size_t start = tb->cursor_byte;
-    const size_t total = sol_rope_byte_len(tb->rope);
-    if (start == total) return false;
+    const size_t cursor = tb->cursor_byte;
+    const size_t total  = sol_rope_byte_len(tb->rope);
+    if (cursor == total) return false;
 
-    size_t pos = start;
     uint8_t b = 0;
-    /* Skip current word chars (if any). */
-    while (pos < total) {
-        if (sol_rope_read(tb->rope, pos, &b, 1u) != 1u) break;
+    /* Snap to the start of the current word (go backward if mid-word). */
+    size_t word_start = cursor;
+    while (word_start > 0u) {
+        const size_t s = tb_cp_len_before(tb->rope, word_start);
+        if (s == 0u) break;
+        if (sol_rope_read(tb->rope, word_start - s, &b, 1u) != 1u) break;
         if (!tb_is_word_char(b)) break;
-        pos += tb_utf8_lead_len(b);
+        word_start -= s;
     }
-    /* Skip non-word chars. */
-    while (pos < total) {
-        if (sol_rope_read(tb->rope, pos, &b, 1u) != 1u) break;
-        if (tb_is_word_char(b)) break;
-        pos += tb_utf8_lead_len(b);
+
+    /* Walk forward from cursor to end of word. */
+    size_t word_end = cursor;
+    /* If we're on a non-word char, skip those first to reach the next word. */
+    if (word_end < total) {
+        if (sol_rope_read(tb->rope, word_end, &b, 1u) == 1u && !tb_is_word_char(b)) {
+            while (word_end < total) {
+                if (sol_rope_read(tb->rope, word_end, &b, 1u) != 1u) break;
+                if (tb_is_word_char(b)) break;
+                word_end += tb_utf8_lead_len(b);
+            }
+            /* Then skip the word chars of that next word too. */
+        }
     }
-    if (pos == start) return false;
-    const size_t len = pos - start;
-    char *old = tb_read_rope_bytes(tb->rope, start, len);
-    if (!sol_rope_remove(tb->rope, start, len)) { free(old); return false; }
+    while (word_end < total) {
+        if (sol_rope_read(tb->rope, word_end, &b, 1u) != 1u) break;
+        if (!tb_is_word_char(b)) break;
+        word_end += tb_utf8_lead_len(b);
+    }
+
+    const size_t del_start = word_start;
+    const size_t del_end   = word_end;
+    if (del_start == del_end) return false;
+    const size_t len = del_end - del_start;
+    char *old = tb_read_rope_bytes(tb->rope, del_start, len);
+    if (!sol_rope_remove(tb->rope, del_start, len)) { free(old); return false; }
+    tb->cursor_byte = del_start;
     tb_update_preferred_col(tb);
-    tb_push_undo(tb, start, old, len, NULL, 0u, start, start);
+    tb_push_undo(tb, del_start, old, len, NULL, 0u, cursor, del_start);
     free(old);
-    tb_publish_edit(tb, start, len, 0u);
+    tb_publish_edit(tb, del_start, len, 0u);
     return true;
 }
 
