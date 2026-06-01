@@ -440,28 +440,32 @@ void sol_text_view_render(const SolBuffer *buffer,
                 ++cp_count;
             }
             Ca_Window *const caret_win = sol_ui_system_primary_window(ui);
-            const float adv = glyph_advance_px_for(caret_win);
+
+            /* ca_measure_text_px and ca_font_line_metrics both return
+             * values in LAYOUT SPACE (CSS px × ui_scale).  Ca_DivDesc
+             * positional/size fields expect CSS pixels — div_to_nd
+             * applies the scale factor internally via s().  Passing
+             * layout-space values here would double-scale them at
+             * ui_scale != 1.0, causing the caret to drift right and
+             * grow too tall.  Divide by ui_scale to convert back to
+             * CSS px before handing off to Ca_DivDesc. */
+            const float adv = glyph_advance_px_for(caret_win) / ui_scale;
             const float caret_x = (float)cp_count * adv;
             const bool  visible = caret_blink_visible(cur_line, cur_col);
 
-            /* Compute vertical geometry from live font metrics so the
-             * caret aligns with the actual rendered glyphs regardless of
-             * font or scale changes.  Fallback to hand-tuned constants
-             * if no font is loaded yet. ca_font_line_metrics returns
-             * layout-space values (CSS px × ui_scale). */
+            /* Fallbacks in layout space (matching what ca_font_line_metrics
+             * would return if a font were already loaded). */
             float c_ascent = 11.0f * ui_scale, c_descent = -3.0f * ui_scale;
             ca_font_line_metrics(caret_win, 12.0f, &c_ascent, &c_descent);
-            /* em_height = ascent - descent (descent is negative, so this adds) */
-            const float c_em_h = c_ascent - c_descent;
-            /* Line height in layout px for caret centering. */
-            const float c_line_h = SOL_TEXT_LINE_HEIGHT_PX * ui_scale;
-            const float c_y    = (c_line_h - c_em_h) * 0.5f;
+            /* Convert layout-space metrics to CSS px. */
+            const float c_em_h = (c_ascent - c_descent) / ui_scale;
+            const float c_y    = (SOL_TEXT_LINE_HEIGHT_PX - c_em_h) * 0.5f;
 
             ca_div_begin(&(Ca_DivDesc){
                 .position = CA_POSITION_ABSOLUTE,
                 .pos_x    = caret_x,
                 .pos_y    = c_y,
-                .width    = 2.0f * ui_scale,
+                .width    = 2.0f,
                 .height   = c_em_h,
                 .background = ca_color(1.0f, 1.0f, 1.0f, visible ? 1.0f : 0.0f),
             });
@@ -476,9 +480,12 @@ void sol_text_view_render(const SolBuffer *buffer,
      * bumps sig_buffer_rev and posts a wake event every tick while an
      * active buffer is focused.  Nothing to do here. */
     if (total > viewport && max_top > 0) {
-        /* Layout-space line height for proportional scrollbar sizing. */
-        const float line_h_layout = SOL_TEXT_LINE_HEIGHT_PX * ui_scale;
-        const float track_h     = (float)viewport * line_h_layout;
+        /* Scrollbar thumb and spacer heights are passed as Ca_DivDesc.height
+         * which expects CSS pixels (div_to_nd scales internally).  Use
+         * SOL_TEXT_LINE_HEIGHT_PX directly — do NOT multiply by ui_scale
+         * here, otherwise at ui_scale > 1.0 the thumb would be double-scaled
+         * and appear oversized / mispositioned. */
+        const float track_h     = (float)viewport * (float)SOL_TEXT_LINE_HEIGHT_PX;
         float thumb_h           = track_h * (float)viewport / (float)total;
         if (thumb_h < 16.0f) thumb_h = 16.0f;
         if (thumb_h > track_h) thumb_h = track_h;
