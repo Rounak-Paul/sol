@@ -406,6 +406,11 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  flex-shrink: 0;"
     "  gap: 0px;"
     "}"
+    /* Selection highlight — absolutely positioned behind text, z-index -1
+       so it sits below text nodes emitted in the same line row. */
+    ".buffer-selection {"
+    "  height: 20px;"
+    "}"
     /* buffer-caret is now driven fully by Ca_DivDesc fields (pos, size,
      * background color) rather than CSS, so this class is intentionally
      * empty — kept as a no-op anchor in case tooling needs it. */

@@ -148,17 +148,102 @@ void sol_text_buffer_set_cursor_byte(SolTextBuffer *tb, size_t byte_offset);
 
 /* Cursor motion. `dx` is codepoints (wraps across lines); `dy` is
    lines. `sticky_col` preserves the visual column across vertical
-   motion (set true for Up/Down, false for Left/Right). */
+   motion (set true for Up/Down, false for Left/Right).
+   Clears the active selection. */
 void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
                                  bool sticky_col);
 
-/* Move cursor to start / end of current line. */
+/* Move cursor to start / end of current line.  Clears selection. */
 void sol_text_buffer_move_line_start(SolTextBuffer *tb);
 void sol_text_buffer_move_line_end  (SolTextBuffer *tb);
 
-/* Position the cursor at (line, codepoint_column). Used by click. */
+/* Position the cursor at (line, codepoint_column).  Clears selection. */
 void sol_text_buffer_set_cursor_to(SolTextBuffer *tb,
                                    size_t line, size_t cp_col);
+
+/* ---- Selection ---------------------------------------------------- */
+
+/* Returns true when a non-empty selection is active. */
+bool sol_text_buffer_has_selection(const SolTextBuffer *tb);
+
+/* Returns the selected range [*out_start, *out_end) as byte offsets
+   into the rope.  out_start <= out_end always.  If no selection is
+   active both are set to the cursor position. */
+void sol_text_buffer_selection_range(const SolTextBuffer *tb,
+                                     size_t *out_start,
+                                     size_t *out_end);
+
+/* Set the selection anchor at the current cursor position.  A zero-
+   width selection becomes visible the moment the cursor moves away
+   while the anchor is held. */
+void sol_text_buffer_set_selection_anchor(SolTextBuffer *tb);
+
+/* Drop the active selection.  Cursor position is unchanged. */
+void sol_text_buffer_clear_selection(SolTextBuffer *tb);
+
+/* Delete the selected region.  The cursor is placed at the region
+   start.  Returns false when no selection is active or deletion
+   fails. */
+bool sol_text_buffer_delete_selection(SolTextBuffer *tb);
+
+/* Select the entire buffer content. */
+void sol_text_buffer_select_all(SolTextBuffer *tb);
+
+/* Copy selected bytes into `out` (no NUL terminator appended).
+   Returns the byte count actually copied; 0 if no selection. */
+size_t sol_text_buffer_copy_selection_bytes(const SolTextBuffer *tb,
+                                             char *out, size_t max);
+
+/* ---- Motion with optional selection extension --------------------- */
+
+/* Like sol_text_buffer_move_cursor but when extend_sel is true the
+   selection anchor is set on the first call and extended on each
+   subsequent one.  When extend_sel is false the selection is cleared. */
+void sol_text_buffer_move_cursor_sel(SolTextBuffer *tb,
+                                     int dx, int dy, bool sticky_col,
+                                     bool extend_sel);
+
+void sol_text_buffer_move_line_start_sel(SolTextBuffer *tb, bool extend_sel);
+void sol_text_buffer_move_line_end_sel  (SolTextBuffer *tb, bool extend_sel);
+
+/* Like sol_text_buffer_set_cursor_to but extends/clears selection.
+   Used by the mouse-drag handler in the text view. */
+void sol_text_buffer_set_cursor_to_sel(SolTextBuffer *tb,
+                                       size_t line, size_t cp_col,
+                                       bool extend_sel);
+
+/* Move `dir` pages (dir > 0 = down, dir < 0 = up).  Extends or clears
+   selection according to extend_sel.  viewport_lines is the visible
+   height in lines and drives the page size. */
+void sol_text_buffer_move_page(SolTextBuffer *tb, int dir,
+                               bool extend_sel, int viewport_lines);
+
+/* ---- Word motion -------------------------------------------------- */
+
+/* Move one "word" in direction dir: +1 = next word, -1 = previous.
+   Extends or clears selection according to extend_sel. */
+void sol_text_buffer_move_word(SolTextBuffer *tb, int dir, bool extend_sel);
+
+/* Delete from the cursor to the start / end of the current word.
+   Honours an active selection (deletes selection instead). */
+bool sol_text_buffer_delete_word_back   (SolTextBuffer *tb);
+bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb);
+
+/* ---- Line operations ---------------------------------------------- */
+
+/* Insert a duplicate of the current line immediately below it.
+   Cursor moves to the new line at the same column. */
+bool sol_text_buffer_duplicate_line(SolTextBuffer *tb);
+
+/* Delete the entire current line (including its trailing newline). */
+bool sol_text_buffer_delete_line(SolTextBuffer *tb);
+
+/* ---- Undo / redo -------------------------------------------------- */
+
+bool sol_text_buffer_undo    (SolTextBuffer *tb);
+bool sol_text_buffer_redo    (SolTextBuffer *tb);
+bool sol_text_buffer_can_undo(const SolTextBuffer *tb);
+bool sol_text_buffer_can_redo(const SolTextBuffer *tb);
 
 #ifdef __cplusplus
 }

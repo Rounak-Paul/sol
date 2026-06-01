@@ -426,6 +426,177 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return true;
     }
 
+    /* ---- edit.copy : copy selection to clipboard. */
+    if (strcmp(p->action, "edit.copy") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb || !sol_text_buffer_has_selection(tb)) return false;
+        char buf[65536];
+        const size_t n = sol_text_buffer_copy_selection_bytes(tb, buf, sizeof(buf) - 1u);
+        if (n == 0u) return false;
+        buf[n] = '\0';
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        ca_clipboard_set_text(win, buf);
+        return true;
+    }
+
+    /* ---- edit.copy_line : copy the current line (without trailing newline). */
+    if (strcmp(p->action, "edit.copy_line") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        char buf[65536];
+        const size_t line = sol_text_buffer_cursor_line(tb);
+        const size_t n = sol_text_buffer_copy_line(tb, line, buf, sizeof(buf) - 1u);
+        buf[n] = '\0';
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        ca_clipboard_set_text(win, buf);
+        return true;
+    }
+
+    /* ---- edit.paste : insert clipboard text at cursor (replacing selection). */
+    if (strcmp(p->action, "edit.paste") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        const char *text = ca_clipboard_get_text(win);
+        if (!text || text[0] == '\0') return false;
+        if (sol_text_buffer_has_selection(tb))
+            sol_text_buffer_delete_selection(tb);
+        const size_t at = sol_text_buffer_cursor_byte(tb);
+        const size_t len = strlen(text);
+        if (!sol_text_buffer_insert_bytes(tb, at, text, len)) return false;
+        sol_text_buffer_set_cursor_byte(tb, at + len);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+        return true;
+    }
+
+    /* ---- edit.paste_line : insert clipboard text as a new line below cursor. */
+    if (strcmp(p->action, "edit.paste_line") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        const char *text = ca_clipboard_get_text(win);
+        if (!text || text[0] == '\0') return false;
+        /* Find the end of the current line (byte offset of the '\n' or EOF). */
+        const SolRope *rope = sol_text_buffer_rope(
+            sol_buffer_get(app->buffers, sol_buffer_active_buffer(app->buffers)));
+        if (!rope) return false;
+        const size_t line      = sol_text_buffer_cursor_line(tb);
+        const size_t line_b    = sol_rope_byte_of_line(rope, line);
+        const size_t line_len  = sol_text_buffer_line_len(tb, line);
+        const size_t insert_at = line_b + line_len; /* before the '\n' */
+        /* Build "\n<text>" — strip any leading/trailing newlines from text. */
+        const size_t tlen = strlen(text);
+        char *ins = (char *)malloc(tlen + 2u);
+        if (!ins) return false;
+        ins[0] = '\n';
+        memcpy(ins + 1u, text, tlen);
+        /* Strip a single trailing newline if present so we don't add a blank. */
+        size_t ins_len = tlen + 1u;
+        if (ins_len > 1u && ins[ins_len - 1u] == '\n') ins_len--;
+        if (!sol_text_buffer_insert_bytes(tb, insert_at, ins, ins_len)) {
+            free(ins); return false;
+        }
+        free(ins);
+        sol_text_buffer_set_cursor_byte(tb, insert_at + 1u);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+        return true;
+    }
+
+    /* ---- edit.undo --------------------------------------------------------- */
+    if (strcmp(p->action, "edit.undo") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb || !sol_text_buffer_can_undo(tb)) return false;
+        sol_text_buffer_undo(tb);
+        int win_h = 0;
+        sol_ui_system_window_size(app->ui, NULL, &win_h);
+        if (win_h <= 0) win_h = 600;
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        const float sc = ca_window_get_scale(win);
+        int vp = sol_text_view_visible_lines(win_h, sc) - 2;
+        if (vp < 1) vp = 1;
+        sol_text_buffer_ensure_cursor_visible(tb, vp);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+        return true;
+    }
+
+    /* ---- edit.redo --------------------------------------------------------- */
+    if (strcmp(p->action, "edit.redo") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb || !sol_text_buffer_can_redo(tb)) return false;
+        sol_text_buffer_redo(tb);
+        int win_h = 0;
+        sol_ui_system_window_size(app->ui, NULL, &win_h);
+        if (win_h <= 0) win_h = 600;
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        const float sc = ca_window_get_scale(win);
+        int vp = sol_text_view_visible_lines(win_h, sc) - 2;
+        if (vp < 1) vp = 1;
+        sol_text_buffer_ensure_cursor_visible(tb, vp);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+        return true;
+    }
+
+    /* ---- edit.select_all --------------------------------------------------- */
+    if (strcmp(p->action, "edit.select_all") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        sol_text_buffer_select_all(tb);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+        return true;
+    }
+
+    /* ---- edit.delete_char : delete one character forward (or selection). --- */
+    if (strcmp(p->action, "edit.delete_char") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        const bool changed = sol_text_buffer_delete_forward(tb);
+        if (changed) sol_ui_system_invalidate_buffer_area(app->ui);
+        return changed;
+    }
+
+    /* ---- edit.delete_word : delete one word forward (or selection). -------- */
+    if (strcmp(p->action, "edit.delete_word") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        const bool changed = sol_text_buffer_delete_word_forward(tb);
+        if (changed) sol_ui_system_invalidate_buffer_area(app->ui);
+        return changed;
+    }
+
+    /* ---- edit.delete_word_back : delete one word backward. ----------------- */
+    if (strcmp(p->action, "edit.delete_word_back") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        const bool changed = sol_text_buffer_delete_word_back(tb);
+        if (changed) sol_ui_system_invalidate_buffer_area(app->ui);
+        return changed;
+    }
+
+    /* ---- edit.delete_line : delete the entire current line. ---------------- */
+    if (strcmp(p->action, "edit.delete_line") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        const bool changed = sol_text_buffer_delete_line(tb);
+        if (changed) sol_ui_system_invalidate_buffer_area(app->ui);
+        return changed;
+    }
+
+    /* ---- edit.cut : copy selection to clipboard then delete it. ------------ */
+    if (strcmp(p->action, "edit.cut") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb || !sol_text_buffer_has_selection(tb)) return false;
+        char buf[65536];
+        const size_t n = sol_text_buffer_copy_selection_bytes(
+            tb, buf, sizeof(buf) - 1u);
+        if (n == 0u) return false;
+        buf[n] = '\0';
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        ca_clipboard_set_text(win, buf);
+        sol_text_buffer_delete_selection(tb);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+        return true;
+    }
+
     /* Unknown action — let other subscribers (plugins) try. */
     return false;
 }

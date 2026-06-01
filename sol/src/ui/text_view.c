@@ -77,6 +77,26 @@ typedef struct TextClickCtx {
     SolTextBuffer      *tb;
 } TextClickCtx;
 
+/* Count UTF-8 codepoints in the first `byte_len` bytes of `buf`. */
+static size_t tv_cp_count(const char *buf, size_t byte_len)
+{
+    size_t cp = 0u, off = 0u;
+    while (off < byte_len) {
+        const uint8_t b = (uint8_t)buf[off];
+        size_t step;
+        if      ((b & 0x80u) == 0x00u) step = 1u;
+        else if ((b & 0xE0u) == 0xC0u) step = 2u;
+        else if ((b & 0xF0u) == 0xE0u) step = 3u;
+        else if ((b & 0xF8u) == 0xF0u) step = 4u;
+        else                            step = 1u;
+        if (off + step > byte_len) break;
+        off += step;
+        ++cp;
+    }
+    return cp;
+}
+
+
 #define SOL_TEXT_VIEW_CLICK_RING 64
 static TextClickCtx g_click_ring[SOL_TEXT_VIEW_CLICK_RING];
 static int          g_click_ring_cursor = 0;
@@ -258,19 +278,12 @@ static float glyph_advance_px_for(Ca_Window *win)
 /* Pointer handler                                                     */
 /* ------------------------------------------------------------------ */
 
-static void on_text_col_drag(const Ca_DragEvent *ev, void *user_data)
+/* Convert pane-local drag event coordinates → (line, codepoint_col). */
+static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
+                               int *out_line, int *out_cp_col)
 {
-    TextClickCtx *cb = (TextClickCtx *)user_data;
-    if (!ev || !cb || !cb->ui || !cb->tb) return;
-
-    /* Focus the host pane first so subsequent typing lands here. */
-    sol_ui_system_focus_leaf(cb->ui, cb->leaf_id);
-
-    /* Convert pane-local (x, y) → (line, codepoint column). The text
-       column has 8 px padding all around; scale the CSS constant to
-       layout pixels so clicks map to the right row at any ui_scale. */
-    Ca_Window *click_win = sol_ui_system_primary_window(cb->ui);
-    const float scale = ca_window_get_scale(click_win);
+    Ca_Window *win = sol_ui_system_primary_window(cb->ui);
+    const float scale = ca_window_get_scale(win);
     const float pad_x = 8.0f * scale;
     const float pad_y = 8.0f * scale;
     float local_x = ev->local_x - pad_x;
@@ -278,22 +291,53 @@ static void on_text_col_drag(const Ca_DragEvent *ev, void *user_data)
     if (local_x < 0.0f) local_x = 0.0f;
     if (local_y < 0.0f) local_y = 0.0f;
 
-    const float line_h_layout = SOL_TEXT_LINE_HEIGHT_PX * scale;
-    const int row = (int)(local_y / line_h_layout);
-    const int scroll_top = sol_text_buffer_scroll_top(cb->tb);
-    int line_idx = scroll_top + row;
+    const float line_h = (float)SOL_TEXT_LINE_HEIGHT_PX * scale;
+    const int   row    = (int)(local_y / line_h);
+    const int   scroll = sol_text_buffer_scroll_top(cb->tb);
+    int line_idx = scroll + row;
     if (line_idx < 0) line_idx = 0;
     const int total = (int)sol_text_buffer_line_count(cb->tb);
     if (line_idx >= total) line_idx = total - 1;
 
-    const float adv = glyph_advance_px_for(click_win);
-    int target_cp = (int)((local_x / adv) + 0.5f);
-    if (target_cp < 0) target_cp = 0;
+    const float adv = glyph_advance_px_for(win);
+    int cp_col = (int)((local_x / adv) + 0.5f);
+    if (cp_col < 0) cp_col = 0;
 
-    sol_text_buffer_set_cursor_to(cb->tb, (size_t)line_idx, (size_t)target_cp);
-    /* Cursor changed → buffer rev gets bumped through... nothing,
-       actually — the cursor lives on SolTextBuffer, not the buffer
-       system. Force a buffer-area rebuild explicitly. */
+    *out_line   = line_idx;
+    *out_cp_col = cp_col;
+}
+
+/* on_drag_start — click or start of drag.  Set cursor and store anchor
+   for potential selection extension via on_drag. */
+static void on_text_col_drag_start(const Ca_DragEvent *ev, void *user_data)
+{
+    TextClickCtx *cb = (TextClickCtx *)user_data;
+    if (!ev || !cb || !cb->ui || !cb->tb) return;
+
+    sol_ui_system_focus_leaf(cb->ui, cb->leaf_id);
+
+    int line_idx, cp_col;
+    tv_ev_to_line_col(ev, cb, &line_idx, &cp_col);
+
+    /* Clear any existing selection and position cursor. */
+    sol_text_buffer_set_cursor_to(cb->tb, (size_t)line_idx, (size_t)cp_col);
+    /* Store anchor for drag — selection becomes active only when the
+       cursor moves away during on_drag. */
+    sol_text_buffer_set_selection_anchor(cb->tb);
+    sol_ui_system_invalidate_buffer_area(cb->ui);
+}
+
+/* on_drag — mouse moved while button held.  Extend selection. */
+static void on_text_col_drag_move(const Ca_DragEvent *ev, void *user_data)
+{
+    TextClickCtx *cb = (TextClickCtx *)user_data;
+    if (!ev || !cb || !cb->ui || !cb->tb) return;
+
+    int line_idx, cp_col;
+    tv_ev_to_line_col(ev, cb, &line_idx, &cp_col);
+
+    sol_text_buffer_set_cursor_to_sel(cb->tb, (size_t)line_idx,
+                                      (size_t)cp_col, /*extend=*/true);
     sol_ui_system_invalidate_buffer_area(cb->ui);
 }
 
@@ -376,9 +420,24 @@ void sol_text_view_render(const SolBuffer *buffer,
     ca_div_begin(&(Ca_DivDesc){
         .direction     = CA_VERTICAL,
         .style         = "buffer-text-col",
-        .on_drag_start = ui ? on_text_col_drag : NULL,
+        .on_drag_start = ui ? on_text_col_drag_start : NULL,
+        .on_drag       = ui ? on_text_col_drag_move  : NULL,
         .drag_data     = cb,
     });
+
+    /* Pre-compute selection range (byte offsets) once per frame.
+       Shown on any pane that holds a selection, regardless of focus. */
+    const bool sel_active = sol_text_buffer_has_selection(tb);
+    size_t sel_start = 0u, sel_end = 0u;
+    if (sel_active)
+        sol_text_buffer_selection_range(tb, &sel_start, &sel_end);
+
+    /* CSS-px glyph advance used for selection geometry (pre-scaled). */
+    const float sel_adv = glyph_advance_px_for(primary_win) / ui_scale;
+    /* Rope reference for per-line byte offset queries. */
+    const SolRope *rope_ref = sol_text_buffer_rope((SolBuffer *)buffer);
+    /* Selection highlight colour — dark steel blue. */
+    const uint32_t SEL_COLOR = ca_color(0.14f, 0.21f, 0.37f, 1.0f);
 
     for (int i = 0; i < rendered; ++i) {
         const int line_idx = scroll_top + i;
@@ -400,6 +459,40 @@ void sol_text_view_render(const SolBuffer *buffer,
             .direction = CA_HORIZONTAL,
             .style     = "buffer-line-row",
         });
+
+        /* ---- Selection highlight (behind text, z_index = -1) ---- */
+        if (sel_active && rope_ref) {
+            const size_t lb_start = sol_rope_byte_of_line(rope_ref, (size_t)line_idx);
+            const size_t lb_end   = lb_start + line_bytes;
+            /* +1 to include the newline so selection extends past EOL. */
+            if (sel_start < lb_end + 1u && sel_end > lb_start) {
+                /* Byte offsets of sel within this line's content. */
+                size_t col_b_start = sel_start > lb_start
+                    ? sel_start - lb_start : 0u;
+                size_t col_b_end   = sel_end   < lb_end
+                    ? sel_end   - lb_start : line_bytes;
+                if (col_b_end > line_bytes) col_b_end = line_bytes;
+                /* Convert byte offsets → codepoint columns. */
+                const float cp_s = (float)tv_cp_count(line_buf, col_b_start);
+                const float cp_e = (float)tv_cp_count(line_buf, col_b_end);
+                float x1 = cp_s * sel_adv;
+                float x2 = cp_e * sel_adv;
+                /* If selection extends past this line, add a bit of
+                   extra highlight for the newline. */
+                if (sel_end > lb_end && x2 < x1 + sel_adv * 0.5f)
+                    x2 = x1 + sel_adv * 0.5f;
+                if (x2 <= x1) x2 = x1 + 2.0f;
+                ca_div_begin(&(Ca_DivDesc){
+                    .position   = CA_POSITION_ABSOLUTE,
+                    .pos_x      = x1,
+                    .pos_y      = 0.0f,
+                    .width      = x2 - x1,
+                    .height     = (float)SOL_TEXT_LINE_HEIGHT_PX,
+                    .background = SEL_COLOR,
+                });
+                ca_div_end();
+            }
+        }
 
         /* Emit line content — tokenized when a syntax highlighter is
          * available, plain otherwise. */

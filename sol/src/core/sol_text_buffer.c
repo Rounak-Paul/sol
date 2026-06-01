@@ -32,6 +32,23 @@
 /* State                                                               */
 /* ------------------------------------------------------------------ */
 
+/* Maximum number of undoable records kept per buffer. */
+#define TB_UNDO_MAX 512
+
+/* One atomic change on the undo/redo stack. */
+typedef struct {
+    size_t byte_offset;
+    char  *old_bytes;   /* bytes that were removed; NULL = pure insert */
+    size_t old_len;
+    char  *new_bytes;   /* bytes that were inserted; NULL = pure delete */
+    size_t new_len;
+    size_t cursor_before;
+    size_t cursor_after;
+    /* Selection state BEFORE this edit (for full undo restore). */
+    size_t sel_anchor_before;
+    bool   had_selection_before;
+} TbEditRecord;
+
 struct SolTextBuffer {
     SolRope              *rope;            /* owned                              */
     size_t                cursor_byte;     /* absolute byte offset into the rope */
@@ -44,6 +61,17 @@ struct SolTextBuffer {
 
     /* Syntax highlighter — NULL when no language matched the file extension. */
     SolSyntaxHighlighter *highlighter;
+
+    /* Selection */
+    size_t                sel_anchor_byte; /* non-moving end                     */
+    bool                  has_selection;   /* true when a region is active       */
+
+    /* Undo/redo — linear stack with watermark for redo.
+       [0, undo_top)       = undoable records (most recent = undo_top-1)
+       [undo_top, undo_end) = redoable records (oldest redo = undo_top) */
+    TbEditRecord          undo_stack[TB_UNDO_MAX];
+    int                   undo_top;
+    int                   undo_end;
 };
 
 /* Publish sol.text.edited. `removed` and `inserted` are byte counts;
@@ -225,6 +253,114 @@ static size_t tb_line_byte_of_cp(const SolRope *r, size_t line, size_t cp_col)
 }
 
 /* ------------------------------------------------------------------ */
+/* Undo / redo helpers                                                 */
+/* ------------------------------------------------------------------ */
+
+/* Read `len` bytes from the rope at `at` into a malloc'd buffer.
+   Returns NULL on OOM or len == 0. */
+static char *tb_read_rope_bytes(const SolRope *r, size_t at, size_t len)
+{
+    if (len == 0u) return NULL;
+    char *buf = (char *)malloc(len);
+    if (!buf) return NULL;
+    const size_t got = sol_rope_read(r, at, (uint8_t *)buf, len);
+    if (got < len) memset(buf + got, 0, len - got);
+    return buf;
+}
+
+/* Push one record onto the undo stack.  cursor_before / cursor_after
+   are the cursor positions immediately before and after the edit.
+   Consecutive single-codepoint inserts are grouped automatically. */
+static void tb_push_undo(SolTextBuffer *tb,
+                         size_t at,
+                         const char *old_bytes, size_t old_len,
+                         const char *new_bytes, size_t new_len,
+                         size_t cursor_before,  size_t cursor_after)
+{
+    /* Clear all redo records. */
+    for (int i = tb->undo_top; i < tb->undo_end; ++i) {
+        free(tb->undo_stack[i].old_bytes);
+        free(tb->undo_stack[i].new_bytes);
+        tb->undo_stack[i].old_bytes = NULL;
+        tb->undo_stack[i].new_bytes = NULL;
+    }
+    tb->undo_end = tb->undo_top;
+
+    /* Group consecutive single-codepoint inserts (old_len == 0,
+       new_len <= 4) into the previous record when it is also a pure
+       insert ending right where this one starts. */
+    if (tb->undo_top > 0 && old_len == 0u &&
+        new_bytes && new_len > 0u && new_len <= 4u)
+    {
+        TbEditRecord *last = &tb->undo_stack[tb->undo_top - 1];
+        if (last->old_len == 0u && last->new_bytes &&
+            last->byte_offset + last->new_len == at &&
+            last->new_len < 200u)
+        {
+            char *merged = (char *)realloc(last->new_bytes,
+                                           last->new_len + new_len);
+            if (merged) {
+                memcpy(merged + last->new_len, new_bytes, new_len);
+                last->new_bytes  = merged;
+                last->new_len   += new_len;
+                last->cursor_after = cursor_after;
+                return;
+            }
+        }
+    }
+
+    /* Drop the oldest record when the stack is full. */
+    if (tb->undo_top >= TB_UNDO_MAX) {
+        free(tb->undo_stack[0].old_bytes);
+        free(tb->undo_stack[0].new_bytes);
+        memmove(tb->undo_stack, tb->undo_stack + 1,
+                (size_t)(TB_UNDO_MAX - 1) * sizeof(TbEditRecord));
+        tb->undo_top--;
+        tb->undo_end--;
+    }
+
+    TbEditRecord *rec    = &tb->undo_stack[tb->undo_top];
+    rec->byte_offset     = at;
+    rec->cursor_before   = cursor_before;
+    rec->cursor_after    = cursor_after;
+    rec->sel_anchor_before   = tb->sel_anchor_byte;
+    rec->had_selection_before = tb->has_selection;
+
+    rec->old_bytes = NULL;
+    rec->old_len   = 0u;
+    if (old_bytes && old_len > 0u) {
+        rec->old_bytes = (char *)malloc(old_len);
+        if (rec->old_bytes) {
+            memcpy(rec->old_bytes, old_bytes, old_len);
+            rec->old_len = old_len;
+        }
+    }
+
+    rec->new_bytes = NULL;
+    rec->new_len   = 0u;
+    if (new_bytes && new_len > 0u) {
+        rec->new_bytes = (char *)malloc(new_len);
+        if (rec->new_bytes) {
+            memcpy(rec->new_bytes, new_bytes, new_len);
+            rec->new_len = new_len;
+        }
+    }
+
+    ++tb->undo_top;
+    tb->undo_end = tb->undo_top;
+}
+
+/* ------------------------------------------------------------------ */
+/* Word-character classification                                       */
+/* ------------------------------------------------------------------ */
+
+static bool tb_is_word_char(uint8_t b)
+{
+    return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+           (b >= '0' && b <= '9') || b == '_' || (b >= 0x80u);
+}
+
+/* ------------------------------------------------------------------ */
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -235,6 +371,11 @@ static void tb_destroy(void *state)
     sol_syntax_highlight_destroy(tb->highlighter);
     if (tb->rope) sol_rope_destroy(tb->rope);
     free(tb->source_path);
+    /* Free undo/redo string storage. */
+    for (int i = 0; i < tb->undo_end; ++i) {
+        free(tb->undo_stack[i].old_bytes);
+        free(tb->undo_stack[i].new_bytes);
+    }
     free(tb);
 }
 
@@ -558,17 +699,17 @@ static void tb_update_preferred_col(SolTextBuffer *tb)
 bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
 {
     if (!tb || !tb->rope) return false;
+    /* Replace selection if active. */
+    if (tb->has_selection) sol_text_buffer_delete_selection(tb);
     uint8_t enc[4];
     const int n = tb_utf8_encode(cp, enc);
     if (n <= 0) return false;
     const size_t at = tb->cursor_byte;
-    if (!sol_rope_insert(tb->rope, at, enc, (size_t)n)) {
-        return false;
-    }
+    if (!sol_rope_insert(tb->rope, at, enc, (size_t)n)) return false;
     tb->cursor_byte += (size_t)n;
-    /* O(1) preferred_col update: inserting one codepoint on the current line
-       advances the column by exactly 1. No full-line scan needed. */
     tb->preferred_col_cp += 1u;
+    tb_push_undo(tb, at, NULL, 0u, (const char *)enc, (size_t)n,
+                 at, tb->cursor_byte);
     tb_publish_edit(tb, at, 0u, (size_t)n);
     return true;
 }
@@ -576,11 +717,13 @@ bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
 bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
+    if (tb->has_selection) sol_text_buffer_delete_selection(tb);
     const uint8_t nl = '\n';
     const size_t at = tb->cursor_byte;
     if (!sol_rope_insert(tb->rope, at, &nl, 1u)) return false;
     tb->cursor_byte += 1u;
     tb->preferred_col_cp = 0u;
+    tb_push_undo(tb, at, NULL, 0u, "\n", 1u, at, tb->cursor_byte);
     tb_publish_edit(tb, at, 0u, 1u);
     return true;
 }
@@ -588,22 +731,24 @@ bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
 bool sol_text_buffer_backspace(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
+    if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
     if (tb->cursor_byte == 0u) return false;
     const size_t step = tb_cp_len_before(tb->rope, tb->cursor_byte);
     if (step == 0u) return false;
     const size_t at = tb->cursor_byte - step;
-    /* Peek at the byte being removed to decide how to update preferred_col.
-       If it is a newline the cursor is crossing a line boundary — fall back
-       to the full recompute. For any other codepoint just decrement. */
     uint8_t removed_lead = 0;
     tb_rope_read_at(tb->rope, at, &removed_lead, 1u);
-    if (!sol_rope_remove(tb->rope, at, step)) return false;
+    char *old = tb_read_rope_bytes(tb->rope, at, step);
+    if (!sol_rope_remove(tb->rope, at, step)) { free(old); return false; }
+    const size_t cursor_before = at + step;
     tb->cursor_byte = at;
     if (removed_lead == (uint8_t)'\n') {
-        tb_update_preferred_col(tb); /* crossing line boundary */
+        tb_update_preferred_col(tb);
     } else if (tb->preferred_col_cp > 0u) {
         tb->preferred_col_cp -= 1u;
     }
+    tb_push_undo(tb, at, old, step, NULL, 0u, cursor_before, at);
+    free(old);
     tb_publish_edit(tb, at, step, 0u);
     return true;
 }
@@ -611,28 +756,29 @@ bool sol_text_buffer_backspace(SolTextBuffer *tb)
 bool sol_text_buffer_delete_forward(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
+    if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
     const size_t step = tb_cp_len_at(tb->rope, tb->cursor_byte);
     if (step == 0u) return false;
     const size_t at = tb->cursor_byte;
-    /* Cursor stays in place; preferred_col is unchanged unless the deleted
-       char is a newline (merging the next line). In that case recompute. */
     uint8_t deleted_lead = 0;
     tb_rope_read_at(tb->rope, at, &deleted_lead, 1u);
-    if (!sol_rope_remove(tb->rope, at, step)) return false;
-    if (deleted_lead == (uint8_t)'\n') {
-        tb_update_preferred_col(tb);
-    }
-    /* else: cursor byte unchanged, still on same line — preferred_col unchanged */
+    char *old = tb_read_rope_bytes(tb->rope, at, step);
+    if (!sol_rope_remove(tb->rope, at, step)) { free(old); return false; }
+    if (deleted_lead == (uint8_t)'\n') tb_update_preferred_col(tb);
+    tb_push_undo(tb, at, old, step, NULL, 0u, at, at);
+    free(old);
     tb_publish_edit(tb, at, step, 0u);
     return true;
 }
 
-void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
-                                 bool sticky_col)
-{
-    if (!tb || !tb->rope) return;
-    const size_t total = sol_rope_byte_len(tb->rope);
+/* ------------------------------------------------------------------ */
+/* Raw (selection-neutral) motion helpers                              */
+/* ------------------------------------------------------------------ */
 
+static void tb_move_cursor_raw(SolTextBuffer *tb, int dx, int dy,
+                                bool sticky_col)
+{
+    const size_t total = sol_rope_byte_len(tb->rope);
     if (dx != 0 && dy == 0) {
         if (dx > 0) {
             for (int i = 0; i < dx; ++i) {
@@ -650,7 +796,6 @@ void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
         tb_update_preferred_col(tb);
         return;
     }
-
     if (dy != 0) {
         const size_t target_cp = sticky_col
             ? tb->preferred_col_cp
@@ -665,17 +810,15 @@ void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
     }
 }
 
-void sol_text_buffer_move_line_start(SolTextBuffer *tb)
+static void tb_move_line_start_raw(SolTextBuffer *tb)
 {
-    if (!tb || !tb->rope) return;
     const size_t line = sol_text_buffer_cursor_line(tb);
     tb->cursor_byte = sol_rope_byte_of_line(tb->rope, line);
     tb->preferred_col_cp = 0u;
 }
 
-void sol_text_buffer_move_line_end(SolTextBuffer *tb)
+static void tb_move_line_end_raw(SolTextBuffer *tb)
 {
-    if (!tb || !tb->rope) return;
     const size_t line = sol_text_buffer_cursor_line(tb);
     const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
     const size_t line_bytes = tb_line_byte_len(tb->rope, line);
@@ -683,15 +826,44 @@ void sol_text_buffer_move_line_end(SolTextBuffer *tb)
     tb_update_preferred_col(tb);
 }
 
-void sol_text_buffer_set_cursor_to(SolTextBuffer *tb, size_t line, size_t cp_col)
+static void tb_set_cursor_to_raw(SolTextBuffer *tb, size_t line, size_t cp_col)
 {
-    if (!tb || !tb->rope) return;
     const size_t total_lines = sol_text_buffer_line_count(tb);
     if (line >= total_lines) line = total_lines ? total_lines - 1u : 0u;
     const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
     const size_t col_bytes  = tb_line_byte_of_cp(tb->rope, line, cp_col);
     tb_set_cursor_byte(tb, line_start + col_bytes);
     tb->preferred_col_cp = cp_col;
+}
+
+
+void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
+                                 bool sticky_col)
+{
+    if (!tb || !tb->rope) return;
+    tb->has_selection = false;
+    tb_move_cursor_raw(tb, dx, dy, sticky_col);
+}
+
+void sol_text_buffer_move_line_start(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return;
+    tb->has_selection = false;
+    tb_move_line_start_raw(tb);
+}
+
+void sol_text_buffer_move_line_end(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return;
+    tb->has_selection = false;
+    tb_move_line_end_raw(tb);
+}
+
+void sol_text_buffer_set_cursor_to(SolTextBuffer *tb, size_t line, size_t cp_col)
+{
+    if (!tb || !tb->rope) return;
+    tb->has_selection = false;
+    tb_set_cursor_to_raw(tb, line, cp_col);
 }
 
 /* ------------------------------------------------------------------ */
@@ -742,6 +914,401 @@ void sol_text_buffer_set_cursor_byte(SolTextBuffer *tb, size_t byte_offset)
     if (!tb || !tb->rope) return;
     const size_t total = sol_rope_byte_len(tb->rope);
     if (byte_offset > total) byte_offset = total;
+    tb->has_selection = false;
     tb_set_cursor_byte(tb, byte_offset);
     tb_update_preferred_col(tb);
+}
+
+/* ------------------------------------------------------------------ */
+/* Selection                                                           */
+/* ------------------------------------------------------------------ */
+
+bool sol_text_buffer_has_selection(const SolTextBuffer *tb)
+{
+    return tb ? tb->has_selection : false;
+}
+
+void sol_text_buffer_selection_range(const SolTextBuffer *tb,
+                                     size_t *out_start, size_t *out_end)
+{
+    if (!tb || !out_start || !out_end) return;
+    if (!tb->has_selection) {
+        *out_start = *out_end = tb->cursor_byte;
+        return;
+    }
+    if (tb->cursor_byte <= tb->sel_anchor_byte) {
+        *out_start = tb->cursor_byte;
+        *out_end   = tb->sel_anchor_byte;
+    } else {
+        *out_start = tb->sel_anchor_byte;
+        *out_end   = tb->cursor_byte;
+    }
+}
+
+void sol_text_buffer_set_selection_anchor(SolTextBuffer *tb)
+{
+    if (!tb) return;
+    tb->sel_anchor_byte = tb->cursor_byte;
+    /* A zero-width selection is not visually active yet; has_selection
+       stays false until the cursor moves while the anchor is held. */
+}
+
+void sol_text_buffer_clear_selection(SolTextBuffer *tb)
+{
+    if (!tb) return;
+    tb->has_selection = false;
+}
+
+bool sol_text_buffer_delete_selection(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope || !tb->has_selection) return false;
+    size_t sel_start, sel_end;
+    sol_text_buffer_selection_range(tb, &sel_start, &sel_end);
+    const size_t len = sel_end - sel_start;
+    if (len == 0u) { tb->has_selection = false; return false; }
+    const size_t cursor_before = tb->cursor_byte;
+    char *old = tb_read_rope_bytes(tb->rope, sel_start, len);
+    if (!sol_rope_remove(tb->rope, sel_start, len)) { free(old); return false; }
+    tb->cursor_byte   = sel_start;
+    tb->has_selection = false;
+    tb_update_preferred_col(tb);
+    tb_push_undo(tb, sel_start, old, len, NULL, 0u, cursor_before, sel_start);
+    free(old);
+    tb_publish_edit(tb, sel_start, len, 0u);
+    return true;
+}
+
+void sol_text_buffer_select_all(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return;
+    const size_t total = sol_rope_byte_len(tb->rope);
+    tb->sel_anchor_byte = 0u;
+    tb->cursor_byte     = total;
+    tb->has_selection   = (total > 0u);
+    tb_update_preferred_col(tb);
+}
+
+size_t sol_text_buffer_copy_selection_bytes(const SolTextBuffer *tb,
+                                             char *out, size_t max)
+{
+    if (!tb || !tb->rope || !out || max == 0u || !tb->has_selection) return 0u;
+    size_t sel_start, sel_end;
+    sol_text_buffer_selection_range(tb, &sel_start, &sel_end);
+    size_t len = sel_end - sel_start;
+    if (len > max) len = max;
+    return sol_rope_read(tb->rope, sel_start, (uint8_t *)out, len);
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion with optional selection extension                            */
+/* ------------------------------------------------------------------ */
+
+/* Helper: ensure the anchor is set if we are about to extend, or clear
+   the selection if not extending. */
+static void tb_prep_sel(SolTextBuffer *tb, bool extend)
+{
+    if (extend) {
+        if (!tb->has_selection) {
+            tb->sel_anchor_byte = tb->cursor_byte;
+            tb->has_selection   = true;
+        }
+    } else {
+        tb->has_selection = false;
+    }
+}
+
+/* After moving: if cursor == anchor the selection collapsed — clear it. */
+static void tb_finalize_sel(SolTextBuffer *tb, bool extend)
+{
+    if (extend && tb->cursor_byte == tb->sel_anchor_byte)
+        tb->has_selection = false;
+}
+
+void sol_text_buffer_move_cursor_sel(SolTextBuffer *tb,
+                                     int dx, int dy, bool sticky_col,
+                                     bool extend_sel)
+{
+    if (!tb || !tb->rope) return;
+    tb_prep_sel(tb, extend_sel);
+    tb_move_cursor_raw(tb, dx, dy, sticky_col);
+    tb_finalize_sel(tb, extend_sel);
+}
+
+void sol_text_buffer_move_line_start_sel(SolTextBuffer *tb, bool extend_sel)
+{
+    if (!tb || !tb->rope) return;
+    tb_prep_sel(tb, extend_sel);
+    tb_move_line_start_raw(tb);
+    tb_finalize_sel(tb, extend_sel);
+}
+
+void sol_text_buffer_move_line_end_sel(SolTextBuffer *tb, bool extend_sel)
+{
+    if (!tb || !tb->rope) return;
+    tb_prep_sel(tb, extend_sel);
+    tb_move_line_end_raw(tb);
+    tb_finalize_sel(tb, extend_sel);
+}
+
+void sol_text_buffer_set_cursor_to_sel(SolTextBuffer *tb,
+                                       size_t line, size_t cp_col,
+                                       bool extend_sel)
+{
+    if (!tb || !tb->rope) return;
+    tb_prep_sel(tb, extend_sel);
+    tb_set_cursor_to_raw(tb, line, cp_col);
+    tb_finalize_sel(tb, extend_sel);
+}
+
+void sol_text_buffer_move_page(SolTextBuffer *tb, int dir,
+                               bool extend_sel, int viewport_lines)
+{
+    if (!tb || !tb->rope || viewport_lines <= 0) return;
+    tb_prep_sel(tb, extend_sel);
+    tb_move_cursor_raw(tb, 0, dir * viewport_lines, true);
+    sol_text_buffer_ensure_cursor_visible(tb, viewport_lines);
+    tb_finalize_sel(tb, extend_sel);
+}
+
+/* ------------------------------------------------------------------ */
+/* Word motion                                                         */
+/* ------------------------------------------------------------------ */
+
+void sol_text_buffer_move_word(SolTextBuffer *tb, int dir, bool extend_sel)
+{
+    if (!tb || !tb->rope) return;
+    const size_t total = sol_rope_byte_len(tb->rope);
+    tb_prep_sel(tb, extend_sel);
+
+    size_t pos = tb->cursor_byte;
+    uint8_t b = 0;
+
+    if (dir > 0) {
+        /* Skip current word chars (if any), then skip non-word chars. */
+        while (pos < total) {
+            if (sol_rope_read(tb->rope, pos, &b, 1u) != 1u) break;
+            if (!tb_is_word_char(b)) break;
+            pos += tb_utf8_lead_len(b);
+        }
+        while (pos < total) {
+            if (sol_rope_read(tb->rope, pos, &b, 1u) != 1u) break;
+            if (tb_is_word_char(b)) break;
+            pos += tb_utf8_lead_len(b);
+        }
+    } else {
+        /* Skip non-word chars backward, then word chars backward. */
+        while (pos > 0u) {
+            const size_t step = tb_cp_len_before(tb->rope, pos);
+            if (step == 0u) break;
+            if (sol_rope_read(tb->rope, pos - step, &b, 1u) != 1u) break;
+            if (tb_is_word_char(b)) break;
+            pos -= step;
+        }
+        while (pos > 0u) {
+            const size_t step = tb_cp_len_before(tb->rope, pos);
+            if (step == 0u) break;
+            if (sol_rope_read(tb->rope, pos - step, &b, 1u) != 1u) break;
+            if (!tb_is_word_char(b)) break;
+            pos -= step;
+        }
+    }
+
+    if (pos > total) pos = total;
+    tb->cursor_byte = pos;
+    tb_update_preferred_col(tb);
+    tb_finalize_sel(tb, extend_sel);
+}
+
+bool sol_text_buffer_delete_word_back(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return false;
+    if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
+    const size_t start = tb->cursor_byte;
+    if (start == 0u) return false;
+
+    size_t pos = start;
+    uint8_t b = 0;
+    /* Skip non-word chars backward. */
+    while (pos > 0u) {
+        const size_t step = tb_cp_len_before(tb->rope, pos);
+        if (step == 0u) break;
+        if (sol_rope_read(tb->rope, pos - step, &b, 1u) != 1u) break;
+        if (tb_is_word_char(b)) break;
+        pos -= step;
+    }
+    /* Skip word chars backward. */
+    while (pos > 0u) {
+        const size_t step = tb_cp_len_before(tb->rope, pos);
+        if (step == 0u) break;
+        if (sol_rope_read(tb->rope, pos - step, &b, 1u) != 1u) break;
+        if (!tb_is_word_char(b)) break;
+        pos -= step;
+    }
+    if (pos == start) return false;
+    const size_t len = start - pos;
+    char *old = tb_read_rope_bytes(tb->rope, pos, len);
+    if (!sol_rope_remove(tb->rope, pos, len)) { free(old); return false; }
+    tb->cursor_byte = pos;
+    tb_update_preferred_col(tb);
+    tb_push_undo(tb, pos, old, len, NULL, 0u, start, pos);
+    free(old);
+    tb_publish_edit(tb, pos, len, 0u);
+    return true;
+}
+
+bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return false;
+    if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
+    const size_t start = tb->cursor_byte;
+    const size_t total = sol_rope_byte_len(tb->rope);
+    if (start == total) return false;
+
+    size_t pos = start;
+    uint8_t b = 0;
+    /* Skip current word chars (if any). */
+    while (pos < total) {
+        if (sol_rope_read(tb->rope, pos, &b, 1u) != 1u) break;
+        if (!tb_is_word_char(b)) break;
+        pos += tb_utf8_lead_len(b);
+    }
+    /* Skip non-word chars. */
+    while (pos < total) {
+        if (sol_rope_read(tb->rope, pos, &b, 1u) != 1u) break;
+        if (tb_is_word_char(b)) break;
+        pos += tb_utf8_lead_len(b);
+    }
+    if (pos == start) return false;
+    const size_t len = pos - start;
+    char *old = tb_read_rope_bytes(tb->rope, start, len);
+    if (!sol_rope_remove(tb->rope, start, len)) { free(old); return false; }
+    tb_update_preferred_col(tb);
+    tb_push_undo(tb, start, old, len, NULL, 0u, start, start);
+    free(old);
+    tb_publish_edit(tb, start, len, 0u);
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Line operations                                                     */
+/* ------------------------------------------------------------------ */
+
+bool sol_text_buffer_duplicate_line(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return false;
+    const size_t line       = sol_text_buffer_cursor_line(tb);
+    const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
+    const size_t line_bytes = tb_line_byte_len(tb->rope, line);
+    /* Build: '\n' + line_content — inserted before the trailing newline. */
+    const size_t insert_len = 1u + line_bytes;
+    char *ins = (char *)malloc(insert_len);
+    if (!ins) return false;
+    ins[0] = '\n';
+    if (line_bytes > 0u)
+        sol_rope_read(tb->rope, line_start, (uint8_t *)(ins + 1u), line_bytes);
+    const size_t insert_at    = line_start + line_bytes; /* before the '\n' */
+    const size_t cursor_before = tb->cursor_byte;
+    if (!sol_rope_insert(tb->rope, insert_at,
+                         (const uint8_t *)ins, insert_len)) {
+        free(ins); return false;
+    }
+    /* Move cursor to same column on the duplicated line below. */
+    const size_t cursor_col = tb->cursor_byte - line_start;
+    const size_t clamped    = cursor_col <= line_bytes ? cursor_col : line_bytes;
+    tb->cursor_byte  = insert_at + 1u + clamped;
+    tb->has_selection = false;
+    tb_update_preferred_col(tb);
+    tb_push_undo(tb, insert_at, NULL, 0u, ins, insert_len,
+                 cursor_before, tb->cursor_byte);
+    free(ins);
+    tb_publish_edit(tb, insert_at, 0u, insert_len);
+    return true;
+}
+
+bool sol_text_buffer_delete_line(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope) return false;
+    const size_t line       = sol_text_buffer_cursor_line(tb);
+    const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
+    const size_t line_bytes = tb_line_byte_len(tb->rope, line);
+    const size_t total      = sol_rope_byte_len(tb->rope);
+    /* Include the trailing newline in the deletion range. */
+    size_t del_len = line_bytes;
+    const size_t nl_at = line_start + line_bytes;
+    if (nl_at < total) {
+        uint8_t b = 0;
+        tb_rope_read_at(tb->rope, nl_at, &b, 1u);
+        if (b == '\n') del_len++;
+    }
+    if (del_len == 0u) return false;
+    const size_t cursor_before = tb->cursor_byte;
+    char *old = tb_read_rope_bytes(tb->rope, line_start, del_len);
+    if (!sol_rope_remove(tb->rope, line_start, del_len)) {
+        free(old); return false;
+    }
+    const size_t new_total  = sol_rope_byte_len(tb->rope);
+    tb->cursor_byte   = line_start <= new_total ? line_start : new_total;
+    tb->has_selection = false;
+    tb_update_preferred_col(tb);
+    tb_push_undo(tb, line_start, old, del_len, NULL, 0u,
+                 cursor_before, tb->cursor_byte);
+    free(old);
+    tb_publish_edit(tb, line_start, del_len, 0u);
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Undo / redo                                                         */
+/* ------------------------------------------------------------------ */
+
+bool sol_text_buffer_can_undo(const SolTextBuffer *tb)
+{
+    return tb && tb->undo_top > 0;
+}
+
+bool sol_text_buffer_can_redo(const SolTextBuffer *tb)
+{
+    return tb && tb->undo_top < tb->undo_end;
+}
+
+bool sol_text_buffer_undo(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope || tb->undo_top <= 0) return false;
+    --tb->undo_top;
+    const TbEditRecord *rec = &tb->undo_stack[tb->undo_top];
+    const size_t at = rec->byte_offset;
+    /* Remove what was inserted. */
+    if (rec->new_len > 0u)
+        sol_rope_remove(tb->rope, at, rec->new_len);
+    /* Re-insert what was there before. */
+    if (rec->old_len > 0u && rec->old_bytes)
+        sol_rope_insert(tb->rope, at,
+                        (const uint8_t *)rec->old_bytes, rec->old_len);
+    /* Restore cursor and selection. */
+    tb_set_cursor_byte(tb, rec->cursor_before);
+    tb_update_preferred_col(tb);
+    tb->sel_anchor_byte = rec->sel_anchor_before;
+    tb->has_selection   = rec->had_selection_before;
+    tb_publish_edit(tb, at, rec->new_len, rec->old_len);
+    return true;
+}
+
+bool sol_text_buffer_redo(SolTextBuffer *tb)
+{
+    if (!tb || !tb->rope || tb->undo_top >= tb->undo_end) return false;
+    const TbEditRecord *rec = &tb->undo_stack[tb->undo_top];
+    ++tb->undo_top;
+    const size_t at = rec->byte_offset;
+    /* Remove what was there before. */
+    if (rec->old_len > 0u)
+        sol_rope_remove(tb->rope, at, rec->old_len);
+    /* Re-insert what was inserted. */
+    if (rec->new_len > 0u && rec->new_bytes)
+        sol_rope_insert(tb->rope, at,
+                        (const uint8_t *)rec->new_bytes, rec->new_len);
+    tb_set_cursor_byte(tb, rec->cursor_after);
+    tb_update_preferred_col(tb);
+    tb->has_selection = false;
+    tb_publish_edit(tb, at, rec->old_len, rec->new_len);
+    return true;
 }

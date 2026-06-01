@@ -78,23 +78,37 @@ static bool handle_text_buffer_key(SolInputRouter *r,
     SolTextBuffer *tb = sol_text_buffer_active(r->buffers);
     if (!tb) return false;
 
-    /* Modifier-bearing chords (Cmd-S etc.) belong to the flow system;
-       only consume the unadorned variants here. */
-    const bool has_chord =
+    /* Modifier-bearing chords (Cmd-S etc.) belong to the flow system.
+       Exception: Shift is allowed through for navigation keys so that
+       Shift+Arrow/Home/End extend the selection. */
+    const bool shift = (mods & SOL_MOD_SHIFT) != 0u;
+    const bool has_non_shift_chord =
         (mods & (SOL_MOD_CTRL | SOL_MOD_SUPER | SOL_MOD_ALT)) != 0u;
-    if (has_chord) return false;
+    if (has_non_shift_chord) return false;
 
     bool handled = false;
     switch (key) {
-    case SOL_KEY_LEFT:      sol_text_buffer_move_cursor(tb, -1,  0, false); handled = true; break;
-    case SOL_KEY_RIGHT:     sol_text_buffer_move_cursor(tb, +1,  0, false); handled = true; break;
-    case SOL_KEY_UP:        sol_text_buffer_move_cursor(tb,  0, -1, true);  handled = true; break;
-    case SOL_KEY_DOWN:      sol_text_buffer_move_cursor(tb,  0, +1, true);  handled = true; break;
-    case SOL_KEY_HOME:      sol_text_buffer_move_line_start(tb); handled = true; break;
-    case SOL_KEY_END:       sol_text_buffer_move_line_end(tb);   handled = true; break;
-    case SOL_KEY_BACKSPACE: handled = sol_text_buffer_backspace(tb); break;
-    case SOL_KEY_DELETE:    handled = sol_text_buffer_delete_forward(tb); break;
-    case SOL_KEY_ENTER:     handled = sol_text_buffer_insert_newline(tb); break;
+    case SOL_KEY_LEFT:
+        sol_text_buffer_move_cursor_sel(tb, -1,  0, false, shift);
+        handled = true; break;
+    case SOL_KEY_RIGHT:
+        sol_text_buffer_move_cursor_sel(tb, +1,  0, false, shift);
+        handled = true; break;
+    case SOL_KEY_UP:
+        sol_text_buffer_move_cursor_sel(tb,  0, -1, true,  shift);
+        handled = true; break;
+    case SOL_KEY_DOWN:
+        sol_text_buffer_move_cursor_sel(tb,  0, +1, true,  shift);
+        handled = true; break;
+    case SOL_KEY_HOME:
+        sol_text_buffer_move_line_start_sel(tb, shift);
+        handled = true; break;
+    case SOL_KEY_END:
+        sol_text_buffer_move_line_end_sel(tb, shift);
+        handled = true; break;
+    case SOL_KEY_BACKSPACE: if (!shift) handled = sol_text_buffer_backspace(tb);      break;
+    case SOL_KEY_DELETE:    if (!shift) handled = sol_text_buffer_delete_forward(tb); break;
+    case SOL_KEY_ENTER:     if (!shift) handled = sol_text_buffer_insert_newline(tb); break;
     default: break;
     }
 
