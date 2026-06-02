@@ -619,6 +619,18 @@ void sol_ui_system_pre_tick(SolUISystem *ui)
        within the same frame's reactive flush. */
     float sy = ca_get_scroll_y(ui->primary_window, "tree-list");
     ca_signal_set_float(ui->sig_tree_scroll, sy);
+
+    /* Keep the sticky overlay's width clamped to the tree panel's actual
+       laid-out pixel width.  tree_panel_host->w is the computed value from
+       the previous frame's layout pass — accurate enough for a one-frame
+       lag that is never visible. */
+    if (ui->tree_sticky_host && ui->tree_panel_host) {
+        float panel_w = ca_div_get_layout_width(ui->tree_panel_host);
+        /* Subtract the built-in scrollbar width (14px) so sticky rows
+           don't overdraw it. */
+        if (panel_w > 14.0f)
+            ca_div_set_width(ui->tree_sticky_host, panel_w - 14.0f);
+    }
 }
 
 static bool sol_ui_build_layout(SolUISystem *ui)

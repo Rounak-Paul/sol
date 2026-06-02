@@ -230,7 +230,6 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "}"
     /* ===== Sticky ancestor headers ===== */
     ".tree-sticky-host {"
-    "  width: 240px;"
     "  padding: 0;"
     "  gap: 0;"
     "}"
