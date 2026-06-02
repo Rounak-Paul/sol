@@ -25,6 +25,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 
 /* ---------------------------------------------------------------- */
 /* Tunables                                                          */
@@ -50,6 +52,11 @@
 #define FP_ICON_FILE_JSON    "\xee\x98\x8b"  /* U+E60B  nf-dev-json        */
 #define FP_ICON_FILE_MD      "\xef\x92\x8a"  /* U+F48A  nf-fa-markdown     */
 #define FP_ICON_FILE_COG     "\xef\x80\x93"  /* U+F013  fa-cog (cmake)     */
+#define FP_ICON_HOME         "\xef\x80\x95"  /* U+F015  fa-home            */
+#define FP_ICON_REFRESH      "\xef\x80\xa1"  /* U+F021  fa-refresh         */
+#define FP_ICON_EYE          "\xef\x81\xae"  /* U+F06E  fa-eye             */
+#define FP_ICON_EYE_SLASH    "\xef\x81\xb0"  /* U+F070  fa-eye-slash       */
+#define FP_ICON_FOLDER_PLUS  "\xef\x99\x9d"  /* U+F65D  nf-mdi-folder_plus */
 
 /* ---------------------------------------------------------------- */
 /* Types                                                             */
@@ -58,11 +65,19 @@
 /* Kind tag for the unified click-context pool. */
 #define FP_CTX_ENTRY  0   /* index = row in entries[]        */
 #define FP_CTX_CRUMB  1   /* index = position in crumb_paths */
+#define FP_CTX_SORT   2   /* index = FP_SORT_* column        */
+
+/* Sort column identifiers. */
+#define FP_SORT_NAME  0
+#define FP_SORT_SIZE  1
+#define FP_SORT_DATE  2
 
 typedef struct SolFpEntry {
-    char *name;       /* basename, owned */
-    char *full_path;  /* absolute,  owned */
-    bool  is_dir;
+    char    *name;        /* basename, owned          */
+    char    *full_path;   /* absolute path, owned     */
+    bool     is_dir;
+    uint64_t size_bytes;  /* 0 for directories        */
+    int64_t  mtime;       /* Unix timestamp, 0=unavail*/
 } SolFpEntry;
 
 typedef struct SolFpClickCtx {
@@ -100,6 +115,15 @@ struct SolFilePicker {
     size_t         click_ctx_count;
     size_t         click_ctx_capacity;
 
+    /* Toolbar feature state */
+    bool           show_hidden;            /* show dotfiles / hidden entries */
+    bool           show_new_folder_bar;    /* inline new-folder creation bar */
+    int            sort_by;               /* FP_SORT_NAME / SIZE / DATE     */
+    bool           sort_asc;              /* true = ascending               */
+    bool           new_folder_needs_focus; /* focus input on next build      */
+    char           new_folder_buf[256];    /* folder name being typed        */
+    Ca_TextInput  *new_folder_input;       /* reference for programmatic focus */
+
     SolFilePicker *next;
 };
 
@@ -130,12 +154,32 @@ static int fp_casecmp(const char *a, const char *b)
     return (int)(unsigned char)*a - (int)(unsigned char)*b;
 }
 
+/* Set to the current picker during qsort (synchronous, single-threaded). */
+static SolFilePicker *g_sort_ctx = NULL;
+
 static int fp_entry_cmp(const void *a, const void *b)
 {
     const SolFpEntry *x = (const SolFpEntry *)a;
     const SolFpEntry *y = (const SolFpEntry *)b;
+    /* Directories always sort before files. */
     if (x->is_dir != y->is_dir) return x->is_dir ? -1 : 1;
-    return fp_casecmp(x->name, y->name);
+    int  sort_by  = g_sort_ctx ? g_sort_ctx->sort_by  : FP_SORT_NAME;
+    bool sort_asc = g_sort_ctx ? g_sort_ctx->sort_asc : true;
+    int cmp = 0;
+    switch (sort_by) {
+        case FP_SORT_SIZE:
+            cmp = (x->size_bytes < y->size_bytes) ? -1
+                : (x->size_bytes > y->size_bytes) ?  1 : 0;
+            break;
+        case FP_SORT_DATE:
+            cmp = (x->mtime < y->mtime) ? -1
+                : (x->mtime > y->mtime) ?  1 : 0;
+            break;
+        default:
+            cmp = fp_casecmp(x->name, y->name);
+            break;
+    }
+    return sort_asc ? cmp : -cmp;
 }
 
 static char *fp_path_join(const char *parent, const char *name)
@@ -170,6 +214,33 @@ static char *fp_parent_dir(const char *path)
     memcpy(out, path, last);
     out[last] = '\0';
     return out;
+}
+
+/* ---------------------------------------------------------------- */
+/* Metadata format helpers                                          */
+/* ---------------------------------------------------------------- */
+
+static void fp_format_size(uint64_t bytes, bool is_dir, char *buf, size_t bufsz)
+{
+    if (is_dir) { buf[0] = '\0'; return; }
+    if (bytes < 1024u)
+        snprintf(buf, bufsz, "%u B", (unsigned)bytes);
+    else if (bytes < 1024u * 1024u)
+        snprintf(buf, bufsz, "%.0f KB", (double)bytes / 1024.0);
+    else if (bytes < 1024u * 1024u * 1024u)
+        snprintf(buf, bufsz, "%.1f MB", (double)bytes / (1024.0 * 1024.0));
+    else
+        snprintf(buf, bufsz, "%.1f GB",
+                 (double)bytes / (1024.0 * 1024.0 * 1024.0));
+}
+
+static void fp_format_date(int64_t mtime, char *buf, size_t bufsz)
+{
+    if (mtime == 0) { buf[0] = '\0'; return; }
+    time_t    t  = (time_t)mtime;
+    struct tm *tm = localtime(&t);
+    if (!tm)  { buf[0] = '\0'; return; }
+    strftime(buf, bufsz, "%b %d %H:%M", tm);
 }
 
 /* Return a pointer into crumb_path at the start of its last path
@@ -336,7 +407,13 @@ static void fp_load_directory(SolFilePicker *p)
 
     SolDirectoryEntry entry;
     while (sol_platform_dir_next(&iter, &entry)) {
-        if (entry.name[0] == '.') continue;   /* skip dotfiles, . and .. */
+        if (entry.name[0] == '.') {
+            /* Always skip the pseudo-entries "." and "..". */
+            if (entry.name[1] == '\0') continue;
+            if (entry.name[1] == '.' && entry.name[2] == '\0') continue;
+            /* Skip other hidden/dotfile entries unless show_hidden is on. */
+            if (!p->show_hidden) continue;
+        }
         char *full = fp_path_join(p->current_dir, entry.name);
         if (!full) continue;
         char *name = fp_strdup(entry.name);
@@ -344,9 +421,20 @@ static void fp_load_directory(SolFilePicker *p)
         if (!fp_entries_push(p, name, full, entry.is_directory)) {
             free(name); free(full); break;
         }
+        /* Populate size / mtime from the filesystem. */
+        {
+            SolFpEntry *fe = &p->entries[p->entry_count - 1u];
+            struct stat st;
+            if (stat(fe->full_path, &st) == 0) {
+                fe->size_bytes = entry.is_directory ? 0u : (uint64_t)st.st_size;
+                fe->mtime      = (int64_t)st.st_mtime;
+            }
+        }
     }
     sol_platform_dir_close(&iter);
+    g_sort_ctx = p;
     qsort(p->entries, p->entry_count, sizeof(SolFpEntry), fp_entry_cmp);
+    g_sort_ctx = NULL;
 }
 
 static bool fp_set_current_dir(SolFilePicker *p, const char *path)
@@ -472,6 +560,133 @@ static void fp_on_cancel(Ca_Button *btn, void *user_data)
 }
 
 /* ---------------------------------------------------------------- */
+/* Toolbar action handlers                                           */
+/* ---------------------------------------------------------------- */
+
+static void fp_on_home_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p) return;
+    const char *home = getenv("HOME");
+#ifdef _WIN32
+    if (!home || !home[0]) home = getenv("USERPROFILE");
+#endif
+    if (!home || !home[0]) return;
+    fp_set_current_dir(p, home);
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+static void fp_on_refresh_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p) return;
+    fp_load_directory(p);
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+static void fp_on_toggle_hidden_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p) return;
+    p->show_hidden = !p->show_hidden;
+    fp_load_directory(p);
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+/* ---------------------------------------------------------------- */
+/* Inline new-folder creation                                        */
+/* ---------------------------------------------------------------- */
+
+static void fp_on_new_folder_change(Ca_TextInput *input, void *user_data)
+{
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p) return;
+    const char *text = ca_get_text(input);
+    if (text) {
+        strncpy(p->new_folder_buf, text, sizeof(p->new_folder_buf) - 1u);
+        p->new_folder_buf[sizeof(p->new_folder_buf) - 1u] = '\0';
+    }
+    /* Enter (GLFW_KEY_ENTER = 257): commit creation. */
+    if (ca_input_key_pressed(input, 257) && p->new_folder_buf[0]) {
+        char *new_path = fp_path_join(p->current_dir, p->new_folder_buf);
+        if (new_path) {
+            sol_platform_mkdir_p(new_path);
+            fp_set_current_dir(p, new_path);
+            free(new_path);
+        }
+        p->show_new_folder_bar = false;
+        p->new_folder_buf[0]   = '\0';
+        if (p->content_host) ca_div_invalidate(p->content_host);
+        return;
+    }
+    /* Escape (GLFW_KEY_ESCAPE = 256): dismiss without creating. */
+    if (ca_input_key_pressed(input, 256)) {
+        p->show_new_folder_bar = false;
+        p->new_folder_buf[0]   = '\0';
+        if (p->content_host) ca_div_invalidate(p->content_host);
+    }
+}
+
+static void fp_on_new_folder_toggle_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p) return;
+    p->show_new_folder_bar    = !p->show_new_folder_bar;
+    p->new_folder_buf[0]      = '\0';
+    p->new_folder_needs_focus = p->show_new_folder_bar;
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+static void fp_on_create_folder_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p || !p->new_folder_buf[0]) return;
+    char *new_path = fp_path_join(p->current_dir, p->new_folder_buf);
+    if (new_path) {
+        sol_platform_mkdir_p(new_path);
+        fp_set_current_dir(p, new_path);
+        free(new_path);
+    }
+    p->show_new_folder_bar = false;
+    p->new_folder_buf[0]   = '\0';
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+static void fp_on_cancel_new_folder_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFilePicker *p = (SolFilePicker *)user_data;
+    if (!p) return;
+    p->show_new_folder_bar = false;
+    p->new_folder_buf[0]   = '\0';
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+static void fp_on_sort_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolFpClickCtx *ctx = (SolFpClickCtx *)user_data;
+    if (!ctx || !ctx->picker) return;
+    SolFilePicker *p = ctx->picker;
+    if (p->sort_by == ctx->index) {
+        p->sort_asc = !p->sort_asc;
+    } else {
+        p->sort_by  = ctx->index;
+        /* Date defaults to newest-first on first click. */
+        p->sort_asc = (ctx->index != FP_SORT_DATE);
+    }
+    g_sort_ctx = p;
+    qsort(p->entries, p->entry_count, sizeof(SolFpEntry), fp_entry_cmp);
+    g_sort_ctx = NULL;
+    if (p->content_host) ca_div_invalidate(p->content_host);
+}
+
+/* ---------------------------------------------------------------- */
 /* Rendering                                                         */
 /* ---------------------------------------------------------------- */
 
@@ -502,6 +717,19 @@ static void fp_render_row(SolFilePicker *p, size_t index)
         const char *icon = fp_file_icon(e->name, &icon_style);
         ca_text(&(Ca_TextDesc){ .text = icon,    .style = icon_style    });
         ca_text(&(Ca_TextDesc){ .text = e->name, .style = "fp-row-name" });
+    }
+
+    /* Size column */
+    {
+        char size_buf[24];
+        fp_format_size(e->size_bytes, e->is_dir, size_buf, sizeof(size_buf));
+        ca_text(&(Ca_TextDesc){ .text = size_buf, .style = "fp-row-size" });
+    }
+    /* Date column */
+    {
+        char date_buf[24];
+        fp_format_date(e->mtime, date_buf, sizeof(date_buf));
+        ca_text(&(Ca_TextDesc){ .text = date_buf, .style = "fp-row-date" });
     }
 
     ca_btn_end();
@@ -546,6 +774,68 @@ static void fp_render_breadcrumb(SolFilePicker *p)
     ca_div_end();
 }
 
+static void fp_render_colhdr_cell(
+        SolFilePicker *p, const char *cell_style, const char *btn_style,
+        const char *label, int sort_col, bool justify_end)
+{
+    (void)btn_style;
+    bool active = (p->sort_by == sort_col);
+
+    SolFpClickCtx *ctx = fp_acquire_ctx(p);
+    if (!ctx) return;
+    ctx->picker = p;
+    ctx->kind   = FP_CTX_SORT;
+    ctx->index  = sort_col;
+
+    /* Build label string with arrow baked in — single text node is reliable. */
+    char display[64];
+    if (active) {
+        const char *arrow = p->sort_asc ? "\xe2\x86\x91" : "\xe2\x86\x93"; /* ↑ or ↓ */
+        if (justify_end)
+            snprintf(display, sizeof(display), "%s %s", arrow, label);
+        else
+            snprintf(display, sizeof(display), "%s %s", label, arrow);
+    } else {
+        snprintf(display, sizeof(display), "%s", label);
+    }
+
+    /* Wrapper div owns the column width so the button can be width:100%. */
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = cell_style });
+
+    ca_btn_begin(&(Ca_BtnDesc){
+        .style      = active
+                          ? (justify_end ? "fp-colhdr-btn-end fp-colhdr-btn-active"
+                                         : "fp-colhdr-btn fp-colhdr-btn-active")
+                          : (justify_end ? "fp-colhdr-btn-end" : "fp-colhdr-btn"),
+        .direction  = CA_HORIZONTAL,
+        .on_click   = fp_on_sort_click,
+        .click_data = ctx,
+    });
+    ca_text(&(Ca_TextDesc){
+        .text  = display,
+        .style = active ? "fp-colhdr-text fp-colhdr-text-active"
+                        : "fp-colhdr-text",
+    });
+    ca_btn_end();
+
+    ca_div_end();
+}
+
+static void fp_render_column_header(SolFilePicker *p)
+{
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "fp-colhdr" });
+
+    /* 21-px icon-area spacer (tree-icon: width:16 + margin-right:5 = 21px). */
+    ca_div_begin(&(Ca_DivDesc){ .style = "fp-colhdr-icon-gap" });
+    ca_div_end();
+
+    fp_render_colhdr_cell(p, "fp-colhdr-name-cell",  NULL, "Name",     FP_SORT_NAME, false);
+    fp_render_colhdr_cell(p, "fp-colhdr-size-cell",  NULL, "Size",     FP_SORT_SIZE, true);
+    fp_render_colhdr_cell(p, "fp-colhdr-date-cell",  NULL, "Modified", FP_SORT_DATE, true);
+
+    ca_div_end();
+}
+
 static void fp_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -556,9 +846,10 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
        pointers handed to causality in prior builds stay valid.      */
     p->click_ctx_count = 0u;
 
-    /* ── Toolbar: up button + breadcrumb ── */
+    /* ── Toolbar: up + breadcrumb + right actions ── */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "fp-toolbar" });
     {
+        /* Up / parent directory */
         ca_btn_begin(&(Ca_BtnDesc){
             .style      = "fp-up-btn",
             .direction  = CA_HORIZONTAL,
@@ -570,8 +861,84 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
         ca_btn_end();
 
         fp_render_breadcrumb(p);
+
+        /* ── Right-side toolbar actions ── */
+
+        /* Home directory */
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = "fp-up-btn",
+            .direction  = CA_HORIZONTAL,
+            .on_click   = fp_on_home_click,
+            .click_data = p,
+        });
+        ca_text(&(Ca_TextDesc){ .text = FP_ICON_HOME, .style = "fp-up-icon" });
+        ca_btn_end();
+
+        /* Refresh listing */
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = "fp-up-btn",
+            .direction  = CA_HORIZONTAL,
+            .on_click   = fp_on_refresh_click,
+            .click_data = p,
+        });
+        ca_text(&(Ca_TextDesc){ .text = FP_ICON_REFRESH, .style = "fp-up-icon" });
+        ca_btn_end();
+
+        /* Toggle hidden / dotfiles */
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = "fp-up-btn",
+            .direction  = CA_HORIZONTAL,
+            .on_click   = fp_on_toggle_hidden_click,
+            .click_data = p,
+        });
+        ca_text(&(Ca_TextDesc){
+            .text  = p->show_hidden ? FP_ICON_EYE_SLASH : FP_ICON_EYE,
+            .style = p->show_hidden ? "fp-up-icon fp-up-icon-active"
+                                    : "fp-up-icon",
+        });
+        ca_btn_end();
+
     }
     ca_div_end();
+
+    /* ── Inline new-folder creation bar ── */
+    if (p->show_new_folder_bar) {
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL,
+                                    .style     = "fp-new-folder-bar" });
+        {
+            ca_text(&(Ca_TextDesc){ .text  = "New folder:",
+                                    .style = "fp-new-folder-label" });
+            p->new_folder_input = ca_input(&(Ca_InputDesc){
+                .placeholder = "folder name",
+                .style       = "fp-new-folder-input",
+                .on_change   = fp_on_new_folder_change,
+                .change_data = p,
+            });
+            ca_btn_begin(&(Ca_BtnDesc){
+                .text       = "Create",
+                .style      = "fp-nf-create",
+                .on_click   = fp_on_create_folder_click,
+                .click_data = p,
+            });
+            ca_btn_end();
+            ca_btn_begin(&(Ca_BtnDesc){
+                .text       = "Cancel",
+                .style      = "fp-nf-cancel",
+                .on_click   = fp_on_cancel_new_folder_click,
+                .click_data = p,
+            });
+            ca_btn_end();
+        }
+        ca_div_end();
+        /* Focus input once when the bar first opens. */
+        if (p->new_folder_needs_focus && p->new_folder_input) {
+            ca_input_focus(p->new_folder_input);
+            p->new_folder_needs_focus = false;
+        }
+    }
+
+    /* ── Column header (sortable) ── */
+    fp_render_column_header(p);
 
     /* ── Scrollable file list ── */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "fp-list" });
@@ -585,6 +952,47 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
     /* ── Footer ── */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "fp-footer" });
     {
+        /* Left: item count info. */
+        {
+            char   fp_count_buf[64];
+            size_t fp_dirs  = 0;
+            size_t fp_files = 0;
+            for (size_t ci = 0; ci < p->entry_count; ++ci) {
+                if (p->entries[ci].is_dir) ++fp_dirs; else ++fp_files;
+            }
+            if (fp_dirs && fp_files)
+                snprintf(fp_count_buf, sizeof(fp_count_buf),
+                         "%zu folder%s, %zu file%s",
+                         fp_dirs,  fp_dirs  == 1 ? "" : "s",
+                         fp_files, fp_files == 1 ? "" : "s");
+            else if (fp_dirs)
+                snprintf(fp_count_buf, sizeof(fp_count_buf),
+                         "%zu folder%s", fp_dirs, fp_dirs == 1 ? "" : "s");
+            else if (fp_files)
+                snprintf(fp_count_buf, sizeof(fp_count_buf),
+                         "%zu file%s", fp_files, fp_files == 1 ? "" : "s");
+            else
+                fp_count_buf[0] = '\0';
+            if (fp_count_buf[0])
+                ca_text(&(Ca_TextDesc){ .text  = fp_count_buf,
+                                        .style = "fp-footer-count" });
+        }
+
+        /* New Folder button — reliable placement in footer. */
+        ca_btn_begin(&(Ca_BtnDesc){
+            .text       = "+ New Folder",
+            .style      = p->show_new_folder_bar
+                              ? "fp-action-new-folder fp-action-new-folder-active"
+                              : "fp-action-new-folder",
+            .on_click   = fp_on_new_folder_toggle_click,
+            .click_data = p,
+        });
+        ca_btn_end();
+
+        /* Spacer: pushes action buttons to the right. */
+        ca_div_begin(&(Ca_DivDesc){ .style = "fp-footer-spacer" });
+        ca_div_end();
+
         if (p->mode == SOL_FILE_PICKER_FOLDER) {
             ca_btn_begin(&(Ca_BtnDesc){
                 .text       = "Select Folder",
@@ -658,6 +1066,7 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
     p->mode      = mode;
     p->callback  = on_select;
     p->user_data = user_data;
+    p->sort_asc  = true;   /* default: ascending by name */
 
     /* Resolve initial directory. */
     char        cwd_buf[4096];
