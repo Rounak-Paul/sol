@@ -383,13 +383,16 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "}"
     /* Highlight token classes — sized/height-matched to buffer-line.
      * hl-plain is the fallback for unstyled text within a highlighted
-     * buffer; the others map to tree-sitter leaf-node categories. */
-    ".hl-plain   { color: #d7deef; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; flex-shrink: 0; }"
-    ".hl-keyword { color: #c792ea; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; flex-shrink: 0; }"
-    ".hl-comment { color: #546e7a; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; flex-shrink: 0; }"
-    ".hl-string  { color: #c3e88d; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; flex-shrink: 0; }"
-    ".hl-number  { color: #f78c6c; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; flex-shrink: 0; }"
-    ".hl-type    { color: #ffcb6b; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; flex-shrink: 0; }"
+     * buffer; the others map to tree-sitter leaf-node categories.
+     * height: 20px must be explicit — without it ca_text() defaults to
+     * its 16px fallback, causing paint_text() to center glyphs in a 16px
+     * box that sits at the top of the 20px row, rendering text too high. */
+    ".hl-plain   { color: #d7deef; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
+    ".hl-keyword { color: #c792ea; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
+    ".hl-comment { color: #546e7a; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
+    ".hl-string  { color: #c3e88d; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
+    ".hl-number  { color: #f78c6c; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
+    ".hl-type    { color: #ffcb6b; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
     ".buffer-line-empty {"
     "  height: 20px;"
     "  width: 100%;"
