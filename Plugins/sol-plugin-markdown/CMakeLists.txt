@@ -56,6 +56,10 @@ target_include_directories(sol_plugin_markdown PRIVATE
     ${CMAKE_SOURCE_DIR}/sol/include
 )
 
+sol_embed_highlights_scm(sol_plugin_markdown
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendors/tree-sitter-markdown/tree-sitter-markdown/queries/highlights.scm"
+    "${CMAKE_CURRENT_BINARY_DIR}")
+
 if(APPLE)
     target_link_options(sol_plugin_markdown PRIVATE -undefined dynamic_lookup)
 endif()

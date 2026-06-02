@@ -54,6 +54,10 @@ target_include_directories(sol_plugin_typescript PRIVATE
     ${CMAKE_SOURCE_DIR}/sol/include
 )
 
+sol_embed_highlights_scm(sol_plugin_typescript
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendors/tree-sitter-typescript/queries/highlights.scm"
+    "${CMAKE_CURRENT_BINARY_DIR}")
+
 if(APPLE)
     target_link_options(sol_plugin_typescript PRIVATE -undefined dynamic_lookup)
 endif()

@@ -39,9 +39,12 @@ typedef struct SolSyntaxHighlighter SolSyntaxHighlighter;
 /* ---- Lifecycle ---------------------------------------------------- */
 
 /* Create a highlighter for the given TSLanguage* (passed as void* to
- * keep this header tree-sitter-free).  Returns NULL on allocation failure
- * or if language is NULL. */
-SolSyntaxHighlighter *sol_syntax_highlight_create(const void *language);
+ * keep this header tree-sitter-free).  `query_text` is the raw text of
+ * a highlights.scm query to compile; pass NULL to fall back to the
+ * built-in node-type heuristic walker.
+ * Returns NULL on allocation failure or if language is NULL. */
+SolSyntaxHighlighter *sol_syntax_highlight_create(const void *language,
+                                                   const char *query_text);
 void                  sol_syntax_highlight_destroy(SolSyntaxHighlighter *h);
 
 /* ---- Parsing ------------------------------------------------------ */

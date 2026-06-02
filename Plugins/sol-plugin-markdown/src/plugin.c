@@ -12,6 +12,7 @@
 
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
+#include "highlights_scm.h"
 
 typedef struct TSLanguage TSLanguage;
 extern const TSLanguage *tree_sitter_markdown(void);
@@ -20,7 +21,7 @@ extern const TSLanguage *tree_sitter_markdown_inline(void);
 static bool on_load(SolPluginCtx *ctx)
 {
     static const char *const exts[] = { ".md", ".markdown", ".mkd", NULL };
-    return sol_plugin_register_language(ctx, tree_sitter_markdown(), exts);
+    return sol_plugin_register_language_with_query(ctx, tree_sitter_markdown(), exts, k_highlights_scm);
 }
 
 static void on_unload(SolPluginCtx *ctx) { (void)ctx; }

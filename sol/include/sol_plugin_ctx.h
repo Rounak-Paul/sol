@@ -91,6 +91,15 @@ bool sol_plugin_register_language(SolPluginCtx      *ctx,
                                    const void        *language,
                                    const char *const *extensions);
 
+/* Variant that also supplies the raw highlights.scm query text so Sol
+ * can use the full TSQuery pipeline for syntax highlighting.  Pass
+ * query_scm=NULL to fall back to the built-in heuristic walker. */
+bool sol_plugin_register_language_with_query(
+                                   SolPluginCtx      *ctx,
+                                   const void        *language,
+                                   const char *const *extensions,
+                                   const char        *query_scm);
+
 /* ================================================================== */
 /* Event subscriptions                                                 */
 /*                                                                     */

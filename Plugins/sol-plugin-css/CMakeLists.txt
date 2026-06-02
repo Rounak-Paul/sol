@@ -26,6 +26,10 @@ target_include_directories(sol_plugin_css PRIVATE
     ${CMAKE_SOURCE_DIR}/sol/include
 )
 
+sol_embed_highlights_scm(sol_plugin_css
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendors/tree-sitter-css/queries/highlights.scm"
+    "${CMAKE_CURRENT_BINARY_DIR}")
+
 set_source_files_properties(${GRAMMAR_SOURCES}
     PROPERTIES COMPILE_OPTIONS "-w")
 

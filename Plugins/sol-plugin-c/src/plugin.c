@@ -7,6 +7,7 @@
 
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
+#include "highlights_scm.h"
 
 /* tree_sitter_c() is defined in the compiled grammar (parser.c). */
 typedef struct TSLanguage TSLanguage;
@@ -15,7 +16,7 @@ extern const TSLanguage *tree_sitter_c(void);
 static bool on_load(SolPluginCtx *ctx)
 {
     static const char *const exts[] = { ".c", ".h", NULL };
-    return sol_plugin_register_language(ctx, tree_sitter_c(), exts);
+    return sol_plugin_register_language_with_query(ctx, tree_sitter_c(), exts, k_highlights_scm);
 }
 
 static void on_unload(SolPluginCtx *ctx) { (void)ctx; }

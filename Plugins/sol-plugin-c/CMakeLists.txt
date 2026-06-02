@@ -28,6 +28,10 @@ target_include_directories(sol_plugin_c PRIVATE
     ${CMAKE_SOURCE_DIR}/sol/include
 )
 
+sol_embed_highlights_scm(sol_plugin_c
+    "${CMAKE_CURRENT_SOURCE_DIR}/vendors/tree-sitter-c/queries/highlights.scm"
+    "${CMAKE_CURRENT_BINARY_DIR}")
+
 # Generated grammar files produce many warnings — silence them.
 set_source_files_properties(${GRAMMAR_SOURCES}
     PROPERTIES COMPILE_OPTIONS "-w")

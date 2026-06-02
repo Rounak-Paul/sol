@@ -1273,3 +1273,24 @@ bool sol_plugin_register_language(SolPluginCtx      *ctx,
     return true;
 }
 
+bool sol_plugin_register_language_with_query(
+        SolPluginCtx      *ctx,
+        const void        *language,
+        const char *const *extensions,
+        const char        *query_scm)
+{
+    if (!ctx || !language || !extensions) return false;
+    SolSyntaxRegistry *reg = ctx->manager->syntax_registry;
+    if (!reg) {
+        sol_plugin_log(ctx, "syntax registry not attached — "
+                       "language registration skipped");
+        return false;
+    }
+    if (!sol_syntax_registry_register_with_query(
+            reg, ctx->id, language, extensions, query_scm))
+        return false;
+    if (ctx->language_count < SOL_PLUGIN_CTX_MAX_LANGUAGES)
+        ctx->language_ptrs[ctx->language_count++] = language;
+    return true;
+}
+

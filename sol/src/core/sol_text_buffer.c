@@ -422,8 +422,10 @@ static SolBufferId tb_register(SolBufferSystem *system, SolTextBuffer *tb,
                 const void *lang =
                     sol_syntax_get_for_path(reg, tb->source_path);
                 if (lang) {
+                    const char *query =
+                        sol_syntax_get_query_for_path(reg, tb->source_path);
                     tb->highlighter =
-                        sol_syntax_highlight_create(lang);
+                        sol_syntax_highlight_create(lang, query);
                     if (tb->highlighter)
                         sol_syntax_highlight_reparse(
                             tb->highlighter, tb->rope);
@@ -530,7 +532,8 @@ void sol_text_buffer_refresh_highlighters(SolBufferSystem *system)
         if (!tb || tb->highlighter || !tb->source_path) continue;
         const void *lang = sol_syntax_get_for_path(reg, tb->source_path);
         if (!lang) continue;
-        tb->highlighter = sol_syntax_highlight_create(lang);
+        const char *query = sol_syntax_get_query_for_path(reg, tb->source_path);
+        tb->highlighter = sol_syntax_highlight_create(lang, query);
         if (tb->highlighter && tb->rope)
             sol_syntax_highlight_reparse(tb->highlighter, tb->rope);
     }

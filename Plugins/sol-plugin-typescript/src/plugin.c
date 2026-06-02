@@ -10,6 +10,7 @@
 
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
+#include "highlights_scm.h"
 
 typedef struct TSLanguage TSLanguage;
 extern const TSLanguage *tree_sitter_typescript(void);
@@ -20,11 +21,11 @@ static bool on_load(SolPluginCtx *ctx)
     bool ok = true;
     {
         static const char *const exts[] = { ".ts", NULL };
-        ok &= sol_plugin_register_language(ctx, tree_sitter_typescript(), exts);
+        ok &= sol_plugin_register_language_with_query(ctx, tree_sitter_typescript(), exts, k_highlights_scm);
     }
     {
         static const char *const exts[] = { ".tsx", NULL };
-        ok &= sol_plugin_register_language(ctx, tree_sitter_tsx(), exts);
+        ok &= sol_plugin_register_language_with_query(ctx, tree_sitter_tsx(), exts, k_highlights_scm);
     }
     return ok;
 }

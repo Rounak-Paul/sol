@@ -5,6 +5,7 @@
 
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
+#include "highlights_scm.h"
 
 typedef struct TSLanguage TSLanguage;
 extern const TSLanguage *tree_sitter_javascript(void);
@@ -12,7 +13,7 @@ extern const TSLanguage *tree_sitter_javascript(void);
 static bool on_load(SolPluginCtx *ctx)
 {
     static const char *const exts[] = { ".js", ".mjs", ".cjs", NULL };
-    return sol_plugin_register_language(ctx, tree_sitter_javascript(), exts);
+    return sol_plugin_register_language_with_query(ctx, tree_sitter_javascript(), exts, k_highlights_scm);
 }
 
 static void on_unload(SolPluginCtx *ctx) { (void)ctx; }

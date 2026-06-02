@@ -50,6 +50,15 @@ bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
                                    const void         *language,
                                    const char *const  *extensions);
 
+/* Variant that also stores a highlights.scm query string pointer.
+ * query_text must remain valid for the lifetime of the registry.     */
+bool sol_syntax_registry_register_with_query(
+                                   SolSyntaxRegistry  *reg,
+                                   const char         *lang_id,
+                                   const void         *language,
+                                   const char *const  *extensions,
+                                   const char         *query_text);
+
 /* Remove all entries whose lang_id matches.  No-op when not found.
  * Must be called BEFORE the library that owns the TSLanguage* is
  * unloaded, while the pointer is still valid.                        */
@@ -68,6 +77,11 @@ const void *sol_syntax_get_by_extension(const SolSyntaxRegistry *reg,
  * Returns NULL when the extension is not registered.                */
 const void *sol_syntax_get_for_path(const SolSyntaxRegistry *reg,
                                      const char              *path);
+
+/* Return the highlights.scm query text for the given file path,
+ * or NULL when no query was registered for the matching language.   */
+const char *sol_syntax_get_query_for_path(const SolSyntaxRegistry *reg,
+                                           const char              *path);
 
 /* Return the number of registered languages. */
 size_t sol_syntax_registry_count(const SolSyntaxRegistry *reg);

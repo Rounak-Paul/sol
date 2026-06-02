@@ -5,6 +5,7 @@
 
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
+#include "highlights_scm.h"
 
 typedef struct TSLanguage TSLanguage;
 extern const TSLanguage *tree_sitter_cmake(void);
@@ -15,7 +16,7 @@ static bool on_load(SolPluginCtx *ctx)
      * so we only register .cmake here.  Path-based detection for
      * CMakeLists.txt can be added when sol supports filename patterns. */
     static const char *const exts[] = { ".cmake", "CMakeLists.txt", NULL };
-    return sol_plugin_register_language(ctx, tree_sitter_cmake(), exts);
+    return sol_plugin_register_language_with_query(ctx, tree_sitter_cmake(), exts, k_highlights_scm);
 }
 
 static void on_unload(SolPluginCtx *ctx) { (void)ctx; }

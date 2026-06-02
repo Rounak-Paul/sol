@@ -38,6 +38,7 @@ SolSyntaxRegistry *sol_syntax_get_global_registry(void)
 
 typedef struct SolSyntaxEntry {
     const void *language;                              /* TSLanguage* opaque */
+    const char *query_text;                            /* highlights.scm or NULL */
     char        lang_id[64];
     char        exts[SOL_SYNTAX_MAX_EXTS][SOL_SYNTAX_MAX_EXT_LEN];
     size_t      ext_count;
@@ -88,8 +89,9 @@ bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
         e = &reg->entries[reg->count++];
     }
 
-    e->language  = language;
-    e->ext_count = 0u;
+    e->language   = language;
+    e->query_text = NULL;  /* caller may set via register_with_query */
+    e->ext_count  = 0u;
 
     strncpy(e->lang_id, lang_id, sizeof(e->lang_id) - 1u);
     e->lang_id[sizeof(e->lang_id) - 1u] = '\0';
@@ -117,6 +119,28 @@ void sol_syntax_registry_unregister(SolSyntaxRegistry *reg, const char *lang_id)
         /* A given lang_id should appear at most once; done. */
         return;
     }
+}
+
+/* Register with an optional highlights.scm query string pointer.
+ * query_text must point to a string that outlives the registry entry
+ * (typically a static constant in the plugin). */
+bool sol_syntax_registry_register_with_query(
+        SolSyntaxRegistry  *reg,
+        const char         *lang_id,
+        const void         *language,
+        const char *const  *extensions,
+        const char         *query_text)
+{
+    if (!sol_syntax_registry_register(reg, lang_id, language, extensions))
+        return false;
+    /* Find the entry we just inserted/updated and attach the query. */
+    for (size_t i = 0u; i < reg->count; i++) {
+        if (strcmp(reg->entries[i].lang_id, lang_id) == 0) {
+            reg->entries[i].query_text = query_text;
+            break;
+        }
+    }
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -172,4 +196,26 @@ const void *sol_syntax_get_for_path(const SolSyntaxRegistry *reg,
 size_t sol_syntax_registry_count(const SolSyntaxRegistry *reg)
 {
     return reg ? reg->count : 0u;
+}
+
+/* Return the raw highlights.scm query text for the language matching
+ * the given file path, or NULL when none was registered.             */
+const char *sol_syntax_get_query_for_path(const SolSyntaxRegistry *reg,
+                                           const char              *path)
+{
+    if (!reg || !path) return NULL;
+
+    const char *dot   = strrchr(path, '.');
+    const char *slash = strrchr(path, '/');
+    const char *base  = slash ? slash + 1 : path;
+
+    for (size_t i = 0u; i < reg->count; i++) {
+        const SolSyntaxEntry *e = &reg->entries[i];
+        for (size_t j = 0u; j < e->ext_count; j++) {
+            if (dot   && strcmp(e->exts[j], dot)  == 0) return e->query_text;
+            if (*base && e->exts[j][0] != '.' &&
+                strcmp(e->exts[j], base) == 0)          return e->query_text;
+        }
+    }
+    return NULL;
 }
