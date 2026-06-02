@@ -231,6 +231,27 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
 {
     if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return;
 
+    /* Pre-size the click-context pool before the render loop.
+       acquire_click_ctx calls realloc when the array needs to grow.  If
+       that realloc moves the backing store, every pointer already
+       distributed to a button's click_data earlier in THIS loop becomes
+       a dangling pointer — the crash in on_row_click at the ctx->ui
+       check.  Allocating enough capacity up-front guarantees realloc
+       never runs mid-loop, keeping all distributed pointers stable. */
+    size_t needed = sol_file_tree_visible_count(ui->file_tree);
+    if (needed > ui->file_tree_click_ctx_capacity) {
+        size_t new_cap = ui->file_tree_click_ctx_capacity
+                             ? ui->file_tree_click_ctx_capacity * 2u
+                             : 64u;
+        while (new_cap < needed) new_cap *= 2u;
+        SolFileTreeClickCtx *grown = (SolFileTreeClickCtx *)realloc(
+            ui->file_tree_click_ctxs, new_cap * sizeof(SolFileTreeClickCtx));
+        if (grown) {
+            ui->file_tree_click_ctxs = grown;
+            ui->file_tree_click_ctx_capacity = new_cap;
+        }
+    }
+
     /* Reset the click-context pool for this rebuild. */
     ui->file_tree_click_ctx_count = 0u;
 
