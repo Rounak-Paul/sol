@@ -53,6 +53,22 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     # Tests use a signal stub instead of the full causality dylib.
     set(CAUSALITY_INCLUDE ${CMAKE_SOURCE_DIR}/vendors/causality/causality/include)
 
+    # ---- File-tree unit tests ------------------------------------------
+    add_executable(sol_file_tree_tests
+        tests/test_file_tree.c
+        tests/stubs/sol_causality_signals_stub.c
+        src/core/sol_file_tree.c
+        ${SOL_CORE_TEST_SRC}
+    )
+    target_include_directories(sol_file_tree_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_INCLUDE}
+    )
+    target_compile_definitions(sol_file_tree_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_file_tree_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    add_test(NAME sol_file_tree_tests COMMAND sol_file_tree_tests)
+
     # ---- Event-bus unit tests -------------------------------------------
     add_executable(sol_event_tests
         tests/test_event.c

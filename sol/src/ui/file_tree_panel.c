@@ -99,10 +99,15 @@ static const char *tree_file_icon(const char *name, const char **out_style)
 bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path)
 {
     if (!ui || !ui->file_tree) return false;
-    /* sol_file_tree_set_root self-notifies via sig_file_tree_rev, so
-       the workspace content builder re-runs and the tree panel column
-       appears/disappears as appropriate. */
-    return sol_file_tree_set_root(ui->file_tree, path);
+    /* Root changes self-notify via sig_file_tree_rev; visibility is a
+       separate UI concern managed by the workspace builder. */
+    const bool ok = sol_file_tree_set_root(ui->file_tree, path);
+    if (ok && path) {
+        sol_ui_system_set_file_tree_visible(ui, true);
+    } else {
+        sol_ui_system_set_file_tree_visible(ui, false);
+    }
+    return ok;
 }
 
 void sol_ui_system_set_file_open_callback(SolUISystem *ui,
@@ -229,7 +234,8 @@ static void render_row(SolUISystem *ui, const SolFileEntry *entry,
    Used as the body of the reactive tree-panel sub-builder. */
 void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
 {
-    if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return;
+    if (!ui || !ui->file_tree || !sol_ui_system_file_tree_visible(ui) ||
+        !sol_file_tree_root(ui->file_tree)) return;
 
     /* Pre-size the click-context pool before the render loop.
        acquire_click_ctx calls realloc when the array needs to grow.  If
@@ -302,7 +308,8 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
    variant directly. */
 void sol_ui_render_file_tree_panel(SolUISystem *ui)
 {
-    if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return;
+    if (!ui || !ui->file_tree || !sol_ui_system_file_tree_visible(ui) ||
+        !sol_file_tree_root(ui->file_tree)) return;
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
@@ -406,7 +413,8 @@ void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data)
     float scroll_y = ca_signal_get_float(ui->sig_tree_scroll);
     (void)ca_signal_get_u32(ui->sig_file_tree_rev);
 
-    if (!sol_file_tree_root(ui->file_tree)) return;
+    if (!sol_ui_system_file_tree_visible(ui) ||
+        !sol_file_tree_root(ui->file_tree)) return;
 
     ui->sticky_click_ctx_count = 0;
 

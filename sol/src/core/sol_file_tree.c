@@ -355,16 +355,39 @@ bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
 
     SolPathInfo info;
     if (!sol_platform_get_path_info(root_path, &info) || !info.is_directory) {
+        bump_rev(tree);
+        if (tree->events) {
+            SolFileTreeRootPayload payload;
+            payload.path = NULL;
+            sol_event_publish(tree->events, SOL_EVENT_FILE_TREE_ROOT,
+                              &payload, sizeof(payload), tree);
+        }
         return false;
     }
 
     tree->root_path = xstrdup(root_path);
-    if (!tree->root_path) return false;
+    if (!tree->root_path) {
+        bump_rev(tree);
+        if (tree->events) {
+            SolFileTreeRootPayload payload;
+            payload.path = NULL;
+            sol_event_publish(tree->events, SOL_EVENT_FILE_TREE_ROOT,
+                              &payload, sizeof(payload), tree);
+        }
+        return false;
+    }
 
     size_t root_idx = alloc_node(tree, root_path, root_path, true);
     if (root_idx == (size_t)-1) {
         free(tree->root_path);
         tree->root_path = NULL;
+        bump_rev(tree);
+        if (tree->events) {
+            SolFileTreeRootPayload payload;
+            payload.path = NULL;
+            sol_event_publish(tree->events, SOL_EVENT_FILE_TREE_ROOT,
+                              &payload, sizeof(payload), tree);
+        }
         return false;
     }
     tree->root_index = root_idx;

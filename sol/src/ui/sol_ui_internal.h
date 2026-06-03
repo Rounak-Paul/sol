@@ -166,7 +166,9 @@ struct SolUISystem {
      *                           sol_buffer_* mutation.
      *   sig_file_tree_rev     — u32 revision counter attached to
      *                           ui->file_tree. Bumped on set_root /
-     *                           toggle.
+     *                           toggle / clear.
+     *   sig_file_tree_visible — bool. True while the explorer panel
+     *                           should be shown.
      *   sig_leader_active     — bool. True while the which-key popup
      *                           is open. Mirrored by the leader_active
      *                           field for non-reactive readers.
@@ -181,6 +183,7 @@ struct SolUISystem {
      */
     Ca_Signal        *sig_buffer_rev;
     Ca_Signal        *sig_file_tree_rev;
+    Ca_Signal        *sig_file_tree_visible;
     Ca_Signal        *sig_leader_active;
     Ca_Signal        *sig_leader_prefix_rev;
     Ca_Signal        *sig_flow_registry_rev;
@@ -220,9 +223,11 @@ struct SolUISystem {
     SolSplitCallbackCtx split_callback_ctxs[SOL_UI_MAX_SPLIT_CALLBACKS];
     size_t              split_callback_ctx_count;
 
-    /* File tree state + click-context pool. file_tree is NULL until a
-       directory has been set as the root. */
+    /* File tree state + click-context pool. The tree object is created
+       eagerly; its mounted root is managed by SolFileTree itself, and
+       panel visibility is tracked separately here. */
     SolFileTree                *file_tree;
+    bool                        file_tree_visible;
     SolFileTreeClickCtx        *file_tree_click_ctxs;
     size_t                      file_tree_click_ctx_count;
     size_t                      file_tree_click_ctx_capacity;

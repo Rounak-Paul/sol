@@ -70,7 +70,6 @@ typedef struct SolAppContext {
     SolSyntaxRegistry    *syntax_registry;
     Ca_Instance          *instance;
     SolInputRouter       *router;
-    char                 *explorer_root_path;
     bool                  explorer_focused;
     SolBufferNodeId       focus_before_explorer;
     SolSettings           settings;
@@ -80,31 +79,10 @@ typedef struct SolAppContext {
 /* Buffer-open glue                                                    */
 /* ------------------------------------------------------------------ */
 
-static char *sol_strdup_owned(const char *s)
-{
-    if (!s) return NULL;
-    const size_t n = strlen(s);
-    char *out = (char *)malloc(n + 1u);
-    if (!out) return NULL;
-    memcpy(out, s, n);
-    out[n] = '\0';
-    return out;
-}
-
 static bool sol_set_explorer_root(SolAppContext *app, const char *path)
 {
     if (!app || !app->ui) return false;
-    if (!sol_ui_system_set_file_tree_root(app->ui, path)) {
-        return false;
-    }
-    if (path && path[0] != '\0') {
-        char *dup = sol_strdup_owned(path);
-        if (dup) {
-            free(app->explorer_root_path);
-            app->explorer_root_path = dup;
-        }
-    }
-    return true;
+    return sol_ui_system_set_file_tree_root(app->ui, path);
 }
 
 /* Open `path` into the active leaf, deduping against an existing
@@ -293,7 +271,7 @@ static bool sol_toggle_explorer_focus(SolAppContext *app)
 
     if (app->explorer_focused) {
         app->explorer_focused = false;
-        (void)sol_set_explorer_root(app, NULL);
+        sol_ui_system_set_file_tree_visible(app->ui, false);
         SolBufferNodeId restore = app->focus_before_explorer;
         if (restore == 0u) {
             /* First-time explorer toggle with no prior anchor: ensure
@@ -308,16 +286,18 @@ static bool sol_toggle_explorer_focus(SolAppContext *app)
     }
 
     if (sol_ui_system_tree_panel_width(app->ui) == 0) {
-        const char *root = app->explorer_root_path;
+        const char *root = sol_ui_system_file_tree_root(app->ui);
         char cwd_buf[4096];
         if (!root || root[0] == '\0') {
             if (!sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) {
                 return false;
             }
             root = cwd_buf;
-        }
-        if (!sol_set_explorer_root(app, root)) {
-            return false;
+            if (!sol_set_explorer_root(app, root)) {
+                return false;
+            }
+        } else {
+            sol_ui_system_set_file_tree_visible(app->ui, true);
         }
     }
 
@@ -830,6 +810,5 @@ int main(int argc, char **argv)
     sol_syntax_registry_destroy(app.syntax_registry);
     ca_instance_destroy(instance);
     sol_system_manager_destroy(app.systems);
-    free(app.explorer_root_path);
     return 0;
 }

@@ -30,6 +30,7 @@
  *
  *   UI-only signals (this file owns):
  *     - sig_leader_active (bool)
+ *     - sig_file_tree_visible (bool)
  *     - sig_leader_prefix_rev (u32)
  *     - sig_flow_registry_rev (u32)
  *     - sig_window_rev (u32)
@@ -82,6 +83,26 @@ void sol_ui_bump_u32(Ca_Signal *sig)
         return;
     }
     ca_signal_set_u32(sig, ca_signal_get_u32(sig) + 1u);
+}
+
+void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible)
+{
+    if (!ui) return;
+    if (ui->file_tree_visible == visible) return;
+    ui->file_tree_visible = visible;
+    if (ui->sig_file_tree_visible) {
+        ca_signal_set_bool(ui->sig_file_tree_visible, visible);
+    }
+}
+
+bool sol_ui_system_file_tree_visible(const SolUISystem *ui)
+{
+    return ui ? ui->file_tree_visible : false;
+}
+
+const char *sol_ui_system_file_tree_root(const SolUISystem *ui)
+{
+    return (ui && ui->file_tree) ? sol_file_tree_root(ui->file_tree) : NULL;
 }
 
 
@@ -467,15 +488,14 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
        reads. Causality re-runs us exactly when one of them changes:
          - sig_buffer_rev    : the buffer/split tree (auto-bumped by
                                sol_buffer_*)
-         - sig_file_tree_rev : the file tree pane (auto-bumped by
-                               sol_file_tree_*); only meaningful while
-                               a root is set, but reading it
-                               unconditionally keeps the subscription
-                               attached across set_root.
+         - sig_file_tree_rev : the file tree contents (auto-bumped by
+                               sol_file_tree_*)
+         - sig_file_tree_visible : explorer panel visibility
          - sig_window_rev    : window resize — layout-sensitive
                                children (split bars, tabs) re-flow. */
     (void)ca_signal_get_u32(ui->sig_buffer_rev);
     (void)ca_signal_get_u32(ui->sig_file_tree_rev);
+    (void)ca_signal_get_bool(ui->sig_file_tree_visible);
     (void)ca_signal_get_u32(ui->sig_window_rev);
 
     /* Top region: optional left tree panel + buffer area.
@@ -487,7 +507,9 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
     });
 
     const bool has_tree_root =
-        (ui->file_tree && sol_file_tree_root(ui->file_tree) != NULL);
+        (ui->file_tree &&
+         sol_ui_system_file_tree_visible(ui) &&
+         sol_file_tree_root(ui->file_tree) != NULL);
 
     if (has_tree_root) {
         ca_split_begin(&(Ca_SplitDesc){
@@ -722,6 +744,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->leader_modifier = SOL_MOD_CTRL;
     ui->status_bar_kind = SOL_UI_STATUS_KIND_KEY;
     ui->tree_panel_ratio = 0.20f;
+    ui->file_tree_visible = false;
 
     /* ---- Reactive state ----
        All signals are owned by the instance and freed in
@@ -738,12 +761,14 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
        subscribed across set_root attach/detach. */
     ui->sig_buffer_rev        = ca_signal_u32  (instance, 0u);
     ui->sig_file_tree_rev     = ca_signal_u32  (instance, 0u);
+    ui->sig_file_tree_visible = ca_signal_bool(instance, false);
     ui->sig_leader_active     = ca_signal_bool (instance, false);
     ui->sig_leader_prefix_rev = ca_signal_u32  (instance, 0u);
     ui->sig_flow_registry_rev = ca_signal_u32  (instance, 0u);
     ui->sig_window_rev        = ca_signal_u32  (instance, 0u);
     ui->sig_tree_scroll       = ca_signal_float(instance, 0.0f);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
+        !ui->sig_file_tree_visible ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
         !ui->sig_tree_scroll) {
@@ -1226,7 +1251,8 @@ int sol_ui_system_status_bar_height(const SolUISystem *ui)
 
 int sol_ui_system_tree_panel_width(const SolUISystem *ui)
 {
-    if (!ui || !ui->file_tree || !sol_file_tree_root(ui->file_tree)) return 0;
+    if (!ui || !ui->file_tree || !sol_ui_system_file_tree_visible(ui) ||
+        !sol_file_tree_root(ui->file_tree)) return 0;
     return SOL_UI_TREE_PANEL_WIDTH_PX;
 }
 

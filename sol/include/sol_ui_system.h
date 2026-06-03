@@ -62,6 +62,9 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height);
 /* File tree integration. Calling set_file_tree_root with a directory
  * path mounts the left-side hierarchy panel. Pass NULL to hide it. */
 bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path);
+void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible);
+bool sol_ui_system_file_tree_visible(const SolUISystem *ui);
+const char *sol_ui_system_file_tree_root(const SolUISystem *ui);
 void sol_ui_system_set_file_open_callback(SolUISystem *ui,
                                           SolUIFileOpenFn callback,
                                           void *user_data);
