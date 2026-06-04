@@ -286,6 +286,18 @@ static void test_register_update_existing(SolTestCtx *T)
     free_ui(ui);
 }
 
+static void test_register_replaces_chord_owner(SolTestCtx *T)
+{
+    SolUISystem *ui = make_ui();
+    SolKeyCode seq[] = { 'F', 'F' };
+    SolModifierMask mods[] = { SOL_MOD_NONE, SOL_MOD_NONE };
+    SOL_CHECK(T, regN(ui, "search.old_owner", "Old owner", seq, mods, 2u));
+    SOL_CHECK(T, regN(ui, "search.find_files", "Find files", seq, mods, 2u));
+    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 1u);
+    SOL_CHECK_STR(T, ui->command_flows[0].action, "search.find_files");
+    free_ui(ui);
+}
+
 static void test_register_null_action(SolTestCtx *T)
 {
     SolUISystem *ui = make_ui();
@@ -316,7 +328,12 @@ static void test_register_capacity(SolTestCtx *T)
     char action[64];
     for (size_t i = 0; i < SOL_UI_MAX_COMMAND_FLOWS; ++i) {
         snprintf(action, sizeof(action), "action.%zu", i);
-        bool ok = reg1(ui, action, "X", (SolKeyCode)('A' + (i % 26)));
+        SolKeyCode seq[] = {
+            (SolKeyCode)('A' + (i / 26u)),
+            (SolKeyCode)('A' + (i % 26u)),
+        };
+        SolModifierMask mods[] = { SOL_MOD_NONE, SOL_MOD_NONE };
+        bool ok = regN(ui, action, "X", seq, mods, 2u);
         SOL_CHECK_MSG(T, ok || i >= SOL_UI_MAX_COMMAND_FLOWS,
                       "registration %zu failed unexpectedly", i);
     }
@@ -564,6 +581,7 @@ int main(void)
     SOL_RUN(s, test_register_single_key);
     SOL_RUN(s, test_register_multi_key);
     SOL_RUN(s, test_register_update_existing);
+    SOL_RUN(s, test_register_replaces_chord_owner);
     SOL_RUN(s, test_register_null_action);
     SOL_RUN(s, test_register_zero_sequence);
     SOL_RUN(s, test_register_capacity);

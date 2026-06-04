@@ -616,6 +616,7 @@ static void sol_ui_on_frame(void *user_data)
     (void)ui;
     sol_file_picker_tick();
     sol_ui_settings_window_tick();
+    sol_ui_search_window_tick();
 
     /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
      * so the workspace-content builder re-runs every tick and evaluates
@@ -1190,6 +1191,7 @@ void sol_ui_system_tick(SolUISystem *ui)
     sol_file_picker_tick();
     sol_ui_plugin_window_tick();
     sol_ui_settings_window_tick();
+    sol_ui_search_window_tick();
 }
 
 void sol_ui_system_set_plugin_manager(SolUISystem *ui, SolPluginManager *pm)
@@ -1212,6 +1214,16 @@ void sol_ui_system_open_settings_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance || !ui->settings) return;
     sol_ui_settings_window_open(ui->instance, ui->settings);
+}
+
+void sol_ui_system_open_file_search(SolUISystem *ui)
+{
+    sol_ui_search_window_open_files(ui);
+}
+
+void sol_ui_system_open_content_search(SolUISystem *ui)
+{
+    sol_ui_search_window_open_contents(ui);
 }
 
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)

@@ -151,6 +151,11 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
 /* Open the settings window. No-op if one is already open. */
 void sol_ui_system_open_settings_window(SolUISystem *ui);
 
+/* Workspace search windows. File search fuzzy-matches relative paths;
+ * content search finds matching lines across the mounted tree root. */
+void sol_ui_system_open_file_search(SolUISystem *ui);
+void sol_ui_system_open_content_search(SolUISystem *ui);
+
 /* ================================================================== */
 /* Plugin status bar segments                                          */
 /*                                                                     */

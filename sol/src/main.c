@@ -85,6 +85,28 @@ static bool sol_set_explorer_root(SolAppContext *app, const char *path)
     return sol_ui_system_set_file_tree_root(app->ui, path);
 }
 
+/* Install defaults before loading bindings.conf. Config entries with the
+   same action replace these, so existing custom keymaps remain authoritative
+   while older configs still gain newly-added built-in actions. */
+static void sol_register_search_command_defaults(SolUISystem *ui)
+{
+    if (!ui) return;
+    const SolKeyCode file_sequence[] = { 'F', 'F' };
+    const SolKeyCode content_sequence[] = { 'F', 'G' };
+    (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "search.find_files",
+        .label = "Find files",
+        .sequence = file_sequence,
+        .sequence_length = 2u,
+    });
+    (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "search.live_grep",
+        .label = "Search file contents",
+        .sequence = content_sequence,
+        .sequence_length = 2u,
+    });
+}
+
 /* Open `path` into the active leaf, deduping against an existing
    buffer with the same source path. */
 static bool sol_open_path_in_active_leaf(SolAppContext *app, const char *path)
@@ -406,6 +428,15 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return true;
     }
 
+    if (strcmp(p->action, "search.find_files") == 0) {
+        sol_ui_system_open_file_search(app->ui);
+        return true;
+    }
+    if (strcmp(p->action, "search.live_grep") == 0) {
+        sol_ui_system_open_content_search(app->ui);
+        return true;
+    }
+
     /* ---- edit.copy : copy selection to clipboard. */
     if (strcmp(p->action, "edit.copy") == 0) {
         SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
@@ -701,6 +732,7 @@ int main(int argc, char **argv)
             .user_data  = &app,
         });
 
+    sol_register_search_command_defaults(app.ui);
     app.command_flows_loaded = sol_config_load_bindings(app.ui);
     if (app.command_flows_loaded < 0) {
         fprintf(stderr, "sol: failed to load key bindings from ~/.sol/bindings.conf\n");

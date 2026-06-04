@@ -48,6 +48,30 @@ static void sol_ui_copy_text(char *dst, size_t dst_size, const char *src)
     snprintf(dst, dst_size, "%s", src);
 }
 
+static bool sol_ui_flows_have_same_chord(const SolCommandFlowBinding *a,
+                                         const SolCommandFlowBinding *b)
+{
+    if (!a || !b || a->sequence_length != b->sequence_length) return false;
+    for (size_t i = 0u; i < a->sequence_length; ++i) {
+        if (a->sequence[i] != b->sequence[i] ||
+            a->step_modifiers[i] != b->step_modifiers[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void sol_ui_remove_flow_at(SolUISystem *ui, size_t index)
+{
+    if (!ui || index >= ui->command_flow_count) return;
+    for (size_t i = index + 1u; i < ui->command_flow_count; ++i) {
+        ui->command_flows[i - 1u] = ui->command_flows[i];
+    }
+    ui->command_flow_count--;
+    memset(&ui->command_flows[ui->command_flow_count], 0,
+           sizeof(ui->command_flows[ui->command_flow_count]));
+}
+
 static const char *
 sol_ui_flow_label_for_next(const SolUISystem *ui,
                            const SolKeyCode *prefix,
@@ -457,6 +481,18 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
     flow->user_data = desc->user_data;
     sol_ui_copy_text(flow->label, sizeof(flow->label),
                      desc->label ? desc->label : desc->action);
+
+    /* A chord has one owner. Later config/plugin registrations therefore
+       replace built-in defaults deterministically. */
+    for (size_t i = ui->command_flow_count; i > 0u; --i) {
+        const size_t index = i - 1u;
+        SolCommandFlowBinding *candidate = &ui->command_flows[index];
+        if (strcmp(candidate->action, desc->action) == 0) continue;
+        if (sol_ui_flows_have_same_chord(candidate, flow)) {
+            sol_ui_remove_flow_at(ui, index);
+            flow = sol_ui_find_flow_by_action(ui, desc->action);
+        }
+    }
 
     /* Registration affects the which-key suggestion set; notify the
        popup builder's flow-registry subscription. */

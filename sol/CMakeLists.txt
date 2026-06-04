@@ -69,6 +69,19 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_link_libraries(sol_file_tree_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_file_tree_tests COMMAND sol_file_tree_tests)
 
+    # ---- Workspace-search unit tests -----------------------------------
+    add_executable(sol_search_tests
+        tests/test_search.c
+        src/core/sol_search.c
+        src/core/sol_platform.c
+    )
+    target_include_directories(sol_search_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(sol_search_tests PRIVATE ${SOL_TEST_DEFS})
+    add_test(NAME sol_search_tests COMMAND sol_search_tests)
+
     # ---- Event-bus unit tests -------------------------------------------
     add_executable(sol_event_tests
         tests/test_event.c

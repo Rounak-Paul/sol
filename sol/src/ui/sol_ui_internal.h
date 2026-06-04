@@ -285,6 +285,11 @@ struct SolUISystem {
    by the data systems themselves — callers don't touch them. */
 void sol_ui_bump_u32(Ca_Signal *sig);
 
+/* Search window lifecycle (search_window.c). */
+void sol_ui_search_window_open_files(SolUISystem *ui);
+void sol_ui_search_window_open_contents(SolUISystem *ui);
+void sol_ui_search_window_tick(void);
+
 /* Key utilities (command_flow.c) */
 bool        sol_ui_is_modifier_key(SolKeyCode key);
 bool        sol_ui_is_leader_key(const SolUISystem *ui, SolKeyCode key);
