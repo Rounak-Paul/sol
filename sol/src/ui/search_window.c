@@ -19,7 +19,6 @@
 #define SEARCH_DEFAULT_WIDTH   1040
 #define SEARCH_DEFAULT_HEIGHT  680
 #define SEARCH_RESULT_MAX      200u
-#define SEARCH_CONTENT_DEBOUNCE_NS 75000000ull
 #define SEARCH_PREVIEW_LINES   36u
 #define SEARCH_PREVIEW_LINE_BYTES 1024u
 #define SEARCH_PREVIEW_TOKEN_MAX 512u
@@ -57,7 +56,6 @@ struct SolSearchWindow {
     size_t               result_count;
     size_t               selected;
     bool                 search_pending;
-    uint64_t             query_changed_ns;
     pthread_t            search_thread;
     bool                 search_thread_started;
     _Atomic bool         search_cancel;
@@ -240,6 +238,7 @@ static bool search_worker_progress(const SolSearchResult *results,
         w->worker_last_publish_ns = now;
         atomic_fetch_add_explicit(
             &w->stream_revision, 1u, memory_order_release);
+        ca_instance_wake();
     }
     return true;
 }
@@ -251,6 +250,7 @@ static void *search_worker_main(void *user_data)
         w->index, w->worker_query, w->worker_results, SEARCH_RESULT_MAX,
         search_worker_progress, w);
     atomic_store_explicit(&w->search_done, true, memory_order_release);
+    ca_instance_wake();
     return NULL;
 }
 
@@ -347,7 +347,6 @@ static void search_on_input_change(Ca_TextInput *input, void *user_data)
         search_cancel_worker(w);
         w->search_pending = true;
         w->search_has_completed = false;
-        w->query_changed_ns = sol_platform_now_monotonic_ns();
         w->result_count = 0u;
         snprintf(w->status, sizeof(w->status),
                  w->query[0] ? "Starting search..." : "Type to search");
@@ -616,9 +615,7 @@ static void search_on_frame(void *user_data)
         sol_ui_bump_u32(w->sig_results_rev);
     }
 
-    if (w->search_pending && !w->search_thread_started &&
-        sol_platform_now_monotonic_ns() - w->query_changed_ns >=
-            SEARCH_CONTENT_DEBOUNCE_NS) {
+    if (w->search_pending && !w->search_thread_started) {
         if (!w->query[0]) {
             w->search_pending = false;
             w->result_count = 0u;
