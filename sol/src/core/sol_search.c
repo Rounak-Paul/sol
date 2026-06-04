@@ -293,7 +293,8 @@ size_t sol_search_contents_progress(const SolSearchIndex *index,
     size_t count = 0u;
     bool completed = true;
     for (size_t fi = 0u; fi < index->file_count; ++fi) {
-        if (progress && !progress(fi, index->file_count, progress_data)) {
+        if (progress &&
+            !progress(results, count, fi, index->file_count, progress_data)) {
             completed = false;
             break;
         }
@@ -318,7 +319,8 @@ size_t sol_search_contents_progress(const SolSearchIndex *index,
             while (line_end < mapped.size_bytes && mapped.data[line_end] != '\n') {
                 line_end++;
                 if (progress && line_end >= next_cancel_check) {
-                    if (!progress(fi, index->file_count, progress_data)) {
+                    if (!progress(
+                            results, count, fi, index->file_count, progress_data)) {
                         completed = false;
                         break;
                     }
@@ -363,11 +365,17 @@ size_t sol_search_contents_progress(const SolSearchIndex *index,
         }
         sol_platform_unmap_file(&mapped);
         if (!completed) break;
-    }
-    if (progress && completed) {
-        (void)progress(index->file_count, index->file_count, progress_data);
+        if (progress &&
+            !progress(results, count, fi + 1u, index->file_count, progress_data)) {
+            completed = false;
+            break;
+        }
     }
     qsort(results, count, sizeof(SolSearchResult), search_result_compare);
+    if (progress && completed) {
+        (void)progress(
+            results, count, index->file_count, index->file_count, progress_data);
+    }
     free(query_lower);
     return count;
 }

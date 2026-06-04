@@ -8,17 +8,20 @@
 #include <stddef.h>
 
 typedef struct SolSearchIndex SolSearchIndex;
-typedef bool (*SolSearchProgressFn)(size_t processed_files,
+typedef struct SolSearchResult SolSearchResult;
+typedef bool (*SolSearchProgressFn)(const SolSearchResult *results,
+                                    size_t result_count,
+                                    size_t processed_files,
                                     size_t total_files,
                                     void *user_data);
 
-typedef struct SolSearchResult {
+struct SolSearchResult {
     const char *full_path;
     const char *relative_path;
     size_t      line_number;   /* 1-based; 0 for file-search results */
     int         score;
     char        preview[256];
-} SolSearchResult;
+};
 
 SolSearchIndex *sol_search_index_create(const char *root_path);
 void            sol_search_index_destroy(SolSearchIndex *index);

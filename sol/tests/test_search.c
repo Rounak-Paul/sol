@@ -44,14 +44,25 @@ typedef struct SearchProgressCtx {
     size_t total;
     size_t cancel_after;
     size_t cancel_after_calls;
+    size_t largest_snapshot;
+    bool saw_results_before_complete;
 } SearchProgressCtx;
 
-static bool record_search_progress(size_t processed, size_t total, void *user_data)
+static bool record_search_progress(const SolSearchResult *results,
+                                   size_t result_count,
+                                   size_t processed,
+                                   size_t total,
+                                   void *user_data)
 {
+    (void)results;
     SearchProgressCtx *ctx = (SearchProgressCtx *)user_data;
     ctx->calls++;
     ctx->processed = processed;
     ctx->total = total;
+    if (result_count > ctx->largest_snapshot) ctx->largest_snapshot = result_count;
+    if (result_count > 0u && processed < total) {
+        ctx->saw_results_before_complete = true;
+    }
     if (ctx->cancel_after_calls > 0u && ctx->calls >= ctx->cancel_after_calls) {
         return false;
     }
@@ -111,6 +122,8 @@ static void test_workspace_search(SolTestCtx *T)
         SOL_CHECK(T, progress.calls > 0u);
         SOL_CHECK_EQ_SZ(T, progress.processed, 2u);
         SOL_CHECK_EQ_SZ(T, progress.total, 2u);
+        SOL_CHECK_EQ_SZ(T, progress.largest_snapshot, 2u);
+        SOL_CHECK(T, progress.saw_results_before_complete);
 
         SearchProgressCtx cancelled = { .cancel_after = 1u };
         count = sol_search_contents_progress(

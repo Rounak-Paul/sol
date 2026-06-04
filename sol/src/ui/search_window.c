@@ -24,6 +24,7 @@
 #define SEARCH_PREVIEW_LINE_BYTES 1024u
 #define SEARCH_PREVIEW_TOKEN_MAX 512u
 #define SEARCH_PREVIEW_TOKEN_RING 2048u
+#define SEARCH_STREAM_INTERVAL_NS 16000000ull
 
 #define SEARCH_KEY_ESCAPE 256
 #define SEARCH_KEY_ENTER  257
@@ -66,8 +67,20 @@ struct SolSearchWindow {
     char                 worker_query[256];
     SolSearchResult      worker_results[SEARCH_RESULT_MAX];
     size_t               worker_result_count;
+    pthread_mutex_t      stream_mutex;
+    bool                 stream_mutex_initialized;
+    SolSearchResult      stream_results[SEARCH_RESULT_MAX];
+    size_t               stream_result_count;
+    _Atomic uint32_t     stream_revision;
+    uint32_t             shown_stream_revision;
+    uint64_t             worker_last_publish_ns;
     size_t               shown_progress;
     bool                 search_has_completed;
+    char                 preview_path[4096];
+    SolMappedFile        preview_mapped;
+    bool                 preview_mapped_valid;
+    SolRope             *preview_rope;
+    SolSyntaxHighlighter *preview_highlighter;
     SolSearchRowCtx      row_ctxs[SEARCH_RESULT_MAX];
     char                 status[160];
     SolSearchWindow     *next;
@@ -81,6 +94,44 @@ static char *search_preview_token_slot(void)
 {
     return g_preview_token_ring[
         g_preview_token_ring_cursor++ & (SEARCH_PREVIEW_TOKEN_RING - 1u)];
+}
+
+static void search_clear_preview_cache(SolSearchWindow *w)
+{
+    if (!w) return;
+    sol_syntax_highlight_destroy(w->preview_highlighter);
+    sol_rope_destroy(w->preview_rope);
+    if (w->preview_mapped_valid) sol_platform_unmap_file(&w->preview_mapped);
+    w->preview_highlighter = NULL;
+    w->preview_rope = NULL;
+    w->preview_mapped_valid = false;
+    w->preview_path[0] = '\0';
+}
+
+static bool search_prepare_preview(SolSearchWindow *w, const char *path)
+{
+    if (!w || !path) return false;
+    if (w->preview_mapped_valid && strcmp(w->preview_path, path) == 0) {
+        return true;
+    }
+    search_clear_preview_cache(w);
+    if (!sol_platform_map_file_readonly(path, &w->preview_mapped, NULL)) {
+        return false;
+    }
+    w->preview_mapped_valid = true;
+    snprintf(w->preview_path, sizeof(w->preview_path), "%s", path);
+
+    SolSyntaxRegistry *registry = sol_syntax_get_global_registry();
+    const void *language = registry ? sol_syntax_get_for_path(registry, path) : NULL;
+    if (language) {
+        w->preview_rope = sol_rope_from_file(path, NULL);
+        w->preview_highlighter = sol_syntax_highlight_create(
+            language, sol_syntax_get_query_for_path(registry, path));
+        if (w->preview_rope && w->preview_highlighter) {
+            sol_syntax_highlight_reparse(w->preview_highlighter, w->preview_rope);
+        }
+    }
+    return true;
 }
 
 static void search_render_preview_text(const char *line,
@@ -165,12 +216,32 @@ static void search_render_preview_text(const char *line,
     }
 }
 
-static bool search_worker_progress(size_t processed, size_t total, void *user_data)
+static bool search_worker_progress(const SolSearchResult *results,
+                                   size_t result_count,
+                                   size_t processed,
+                                   size_t total,
+                                   void *user_data)
 {
     SolSearchWindow *w = (SolSearchWindow *)user_data;
     atomic_store_explicit(&w->search_processed, processed, memory_order_relaxed);
     atomic_store_explicit(&w->search_total, total, memory_order_relaxed);
-    return !atomic_load_explicit(&w->search_cancel, memory_order_relaxed);
+    if (atomic_load_explicit(&w->search_cancel, memory_order_relaxed)) {
+        return false;
+    }
+
+    const uint64_t now = sol_platform_now_monotonic_ns();
+    if (results && (processed == total ||
+                    now - w->worker_last_publish_ns >= SEARCH_STREAM_INTERVAL_NS)) {
+        pthread_mutex_lock(&w->stream_mutex);
+        w->stream_result_count = result_count;
+        memcpy(w->stream_results, results,
+               result_count * sizeof(SolSearchResult));
+        pthread_mutex_unlock(&w->stream_mutex);
+        w->worker_last_publish_ns = now;
+        atomic_fetch_add_explicit(
+            &w->stream_revision, 1u, memory_order_release);
+    }
+    return true;
 }
 
 static void *search_worker_main(void *user_data)
@@ -201,6 +272,10 @@ static bool search_start_worker(SolSearchWindow *w)
     if (!w || w->search_thread_started || !w->query[0]) return false;
     snprintf(w->worker_query, sizeof(w->worker_query), "%s", w->query);
     w->worker_result_count = 0u;
+    w->stream_result_count = 0u;
+    w->shown_stream_revision = 0u;
+    w->worker_last_publish_ns = 0u;
+    atomic_store_explicit(&w->stream_revision, 0u, memory_order_relaxed);
     atomic_store_explicit(&w->search_cancel, false, memory_order_relaxed);
     atomic_store_explicit(&w->search_done, false, memory_order_relaxed);
     atomic_store_explicit(&w->search_processed, 0u, memory_order_relaxed);
@@ -342,8 +417,7 @@ static void search_render_preview(SolSearchWindow *w)
         .style = "search-preview-code",
     });
 
-    SolMappedFile mapped;
-    if (!sol_platform_map_file_readonly(result->full_path, &mapped, NULL)) {
+    if (!search_prepare_preview(w, result->full_path)) {
         ca_text(&(Ca_TextDesc){
             .text = "Preview unavailable",
             .style = "search-preview-empty",
@@ -352,41 +426,27 @@ static void search_render_preview(SolSearchWindow *w)
         ca_div_end();
         return;
     }
-
-    SolRope *preview_rope = NULL;
-    SolSyntaxHighlighter *highlighter = NULL;
-    SolSyntaxRegistry *registry = sol_syntax_get_global_registry();
-    const void *language = registry
-        ? sol_syntax_get_for_path(registry, result->full_path)
-        : NULL;
-    if (language) {
-        preview_rope = sol_rope_from_file(result->full_path, NULL);
-        highlighter = sol_syntax_highlight_create(
-            language, sol_syntax_get_query_for_path(registry, result->full_path));
-        if (preview_rope && highlighter) {
-            sol_syntax_highlight_reparse(highlighter, preview_rope);
-        }
-    }
+    const SolMappedFile *mapped = &w->preview_mapped;
 
     const size_t target = result->line_number > 0u ? result->line_number : 1u;
     const size_t first = target > 8u ? target - 8u : 1u;
     const size_t last = first + SEARCH_PREVIEW_LINES - 1u;
     size_t line_number = 1u;
     size_t line_start = 0u;
-    while (line_start < mapped.size_bytes && line_number <= last) {
+    while (line_start < mapped->size_bytes && line_number <= last) {
         size_t line_end = line_start;
-        while (line_end < mapped.size_bytes && mapped.data[line_end] != '\n') {
+        while (line_end < mapped->size_bytes && mapped->data[line_end] != '\n') {
             line_end++;
         }
         if (line_number >= first) {
             char number[32];
             char text[SEARCH_PREVIEW_LINE_BYTES];
             size_t length = line_end - line_start;
-            if (length > 0u && mapped.data[line_start + length - 1u] == '\r') {
+            if (length > 0u && mapped->data[line_start + length - 1u] == '\r') {
                 length--;
             }
             if (length >= sizeof(text)) length = sizeof(text) - 1u;
-            memcpy(text, mapped.data + line_start, length);
+            memcpy(text, mapped->data + line_start, length);
             text[length] = '\0';
             snprintf(number, sizeof(number), "%zu", line_number);
             char *number_slot = search_preview_token_slot();
@@ -403,15 +463,12 @@ static void search_render_preview(SolSearchWindow *w)
                 .style = "search-preview-number",
             });
             search_render_preview_text(
-                text, length, (uint32_t)line_start, highlighter);
+                text, length, (uint32_t)line_start, w->preview_highlighter);
             ca_div_end();
         }
         line_start = line_end + 1u;
         line_number++;
     }
-    sol_syntax_highlight_destroy(highlighter);
-    sol_rope_destroy(preview_rope);
-    sol_platform_unmap_file(&mapped);
     ca_div_end();
     ca_div_end();
 }
@@ -542,6 +599,23 @@ static void search_on_frame(void *user_data)
         sol_ui_bump_u32(w->sig_results_rev);
     }
 
+    const uint32_t stream_revision =
+        atomic_load_explicit(&w->stream_revision, memory_order_acquire);
+    if (w->search_thread_started &&
+        stream_revision != w->shown_stream_revision &&
+        strcmp(w->worker_query, w->query) == 0) {
+        pthread_mutex_lock(&w->stream_mutex);
+        w->result_count = w->stream_result_count;
+        memcpy(w->results, w->stream_results,
+               w->result_count * sizeof(SolSearchResult));
+        pthread_mutex_unlock(&w->stream_mutex);
+        w->shown_stream_revision = stream_revision;
+        if (w->selected >= w->result_count) {
+            w->selected = w->result_count ? w->result_count - 1u : 0u;
+        }
+        sol_ui_bump_u32(w->sig_results_rev);
+    }
+
     if (w->search_pending && !w->search_thread_started &&
         sol_platform_now_monotonic_ns() - w->query_changed_ns >=
             SEARCH_CONTENT_DEBOUNCE_NS) {
@@ -598,7 +672,9 @@ static void search_destroy(SolSearchWindow *w)
     search_cancel_worker(w);
     search_join_worker(w);
     if (w->window && ca_window_is_open(w->window)) ca_window_close(w->window);
+    search_clear_preview_cache(w);
     sol_search_index_destroy(w->index);
+    if (w->stream_mutex_initialized) pthread_mutex_destroy(&w->stream_mutex);
     free(w);
 }
 
@@ -625,6 +701,12 @@ static void search_open(SolUISystem *ui, SolSearchWindowMode mode)
     atomic_init(&w->search_done, false);
     atomic_init(&w->search_processed, 0u);
     atomic_init(&w->search_total, 0u);
+    atomic_init(&w->stream_revision, 0u);
+    if (pthread_mutex_init(&w->stream_mutex, NULL) != 0) {
+        free(w);
+        return;
+    }
+    w->stream_mutex_initialized = true;
     w->index = sol_search_index_create(root);
     w->sig_results_rev = ca_signal_u32(ui->instance, 0u);
     if (!w->index || !w->sig_results_rev) {
