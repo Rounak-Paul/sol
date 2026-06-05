@@ -657,9 +657,14 @@ int main(int argc, char **argv)
             .user_data  = NULL,
         });
 
+    /* Load user settings before creating Causality so the global UI scale is
+       present from instance init, before any windows inherit it. */
+    sol_settings_load(&app.settings);
+
     Ca_Instance *instance = ca_instance_create(&(Ca_InstanceDesc){
         .app_name             = "Sol",
         .prefer_dedicated_gpu = true,
+        .default_ui_scale     = app.settings.ui_scale,
     });
     if (!instance) {
         fprintf(stderr, "Failed to create causality instance\n");
@@ -667,10 +672,6 @@ int main(int argc, char **argv)
         return 1;
     }
     app.instance = instance;
-
-    /* Load user settings and apply initial scale. */
-    sol_settings_load(&app.settings);
-    ca_instance_set_scale(instance, app.settings.ui_scale);
 
     /* Wire the buffer system to the bus BEFORE the UI is built so the
        UI system can in turn share the bus with the file tree. After
