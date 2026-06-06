@@ -362,7 +362,9 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  min-height: 0px;"
     "  padding: 8px;"
     "  gap: 0px;"
-    "  overflow: hidden;"
+    "  align-items: flex-start;"
+    "  overflow-x: scroll;"
+    "  overflow-y: hidden;"
     "}"
     /* Left gutter */
     ".buffer-gutter-col {"
@@ -394,8 +396,8 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  color: #c4c4cc;"
     "  font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS ";"
     "  height: 20px;"
-    "  width: 100%;"
     "  flex-shrink: 0;"
+    "  text-wrap: nowrap;"
     "}"
     /* Highlight token classes */
     ".hl-plain   { color: #c4c4cc; font-size: " SOL_UI_BOOT_FONT_SIZE_PX_CSS "; height: 20px; flex-shrink: 0; }"
@@ -425,9 +427,9 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     /* Per-line row */
     ".buffer-line-row {"
     "  height: 20px;"
-    "  width: 100%;"
     "  flex-shrink: 0;"
     "  gap: 0px;"
+    "  align-items: flex-start;"
     "}"
     /* Selection highlight */
     ".buffer-selection {"

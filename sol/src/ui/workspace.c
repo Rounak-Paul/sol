@@ -69,6 +69,60 @@ typedef struct SolWorkspaceVisitorContext {
     SolUISystem *ui;
 } SolWorkspaceVisitorContext;
 
+/* Causality places its custom title bar at a fixed 30 px height (see
+   causality/src/ui/title_bar.c). */
+#define SOL_UI_TITLE_BAR_HEIGHT_PX  30
+/* Buffer split-tree root geometry.
+   The tree lives below the global tab strip and inside the right pane of
+   the workspace split. */
+#define SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX 28.0f
+#define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX    1.0f
+
+static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
+                                             float *out_x,
+                                             float *out_y,
+                                             float *out_w,
+                                             float *out_h)
+{
+    if (!ui || ui->window_w <= 0 || ui->window_h <= 0) {
+        return false;
+    }
+
+    const float title_h  = (float)SOL_UI_TITLE_BAR_HEIGHT_PX;
+    const float status_h = (float)SOL_UI_STATUS_BAR_HEIGHT;
+    const float tabs_h   = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX;
+
+    float root_x = 0.0f;
+    float root_y = title_h + tabs_h;
+    float root_w = (float)ui->window_w;
+    float root_h = (float)ui->window_h - title_h - status_h - tabs_h;
+
+    if (root_h < 0.0f) root_h = 0.0f;
+
+    const bool has_tree_root =
+        (ui->file_tree &&
+         sol_ui_system_file_tree_visible(ui) &&
+         sol_file_tree_root(ui->file_tree) != NULL);
+    if (has_tree_root) {
+        float avail_w = root_w - SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX;
+        if (avail_w < 0.0f) avail_w = 0.0f;
+        const float ratio = ui->tree_panel_ratio < 0.0f ? 0.0f
+                             : (ui->tree_panel_ratio > 1.0f ? 1.0f
+                             : ui->tree_panel_ratio);
+        float tree_w = avail_w * ratio;
+        if (tree_w < 0.0f) tree_w = 0.0f;
+        root_x += tree_w + SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX;
+        root_w = avail_w - tree_w;
+        if (root_w < 0.0f) root_w = 0.0f;
+    }
+
+    if (out_x) *out_x = root_x;
+    if (out_y) *out_y = root_y;
+    if (out_w) *out_w = root_w;
+    if (out_h) *out_h = root_h;
+    return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Reactive helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -290,7 +344,8 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
 }
 
 static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
-                                     bool is_active, void *user_data)
+                                     bool is_active, const SolBufferRect *rect,
+                                     void *user_data)
 {
     SolWorkspaceVisitorContext *ctx = (SolWorkspaceVisitorContext *)user_data;
     if (!ctx || !ctx->ui) {
@@ -328,6 +383,9 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
             .ui_context  = ui,
             .leaf_id     = leaf_id,
         };
+        if (rect) {
+            args.rect = *rect;
+        }
         sol_buffer_render(buffer, &args);
     }
 
@@ -463,7 +521,17 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     visitor.end_split    = sol_ui_visit_end_split;
     visitor.render_leaf  = sol_ui_visit_render_leaf;
 
-    sol_buffer_workspace_visit(ui->buffers, &visitor, &visitor_context);
+    float root_x = 0.0f, root_y = 0.0f, root_w = 0.0f, root_h = 0.0f;
+    if (!sol_ui_buffer_area_rect_internal(ui, &root_x, &root_y, &root_w, &root_h)) {
+        return;
+    }
+    SolBufferRect root_rect = {
+        .x = root_x,
+        .y = root_y,
+        .w = root_w,
+        .h = root_h,
+    };
+    sol_buffer_workspace_visit(ui->buffers, &root_rect, &visitor, &visitor_context);
 }
 
 static void sol_ui_on_panel_resize(float ratio, void *user_data)
@@ -1242,11 +1310,18 @@ void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h)
     if (out_h) *out_h = ui ? ui->window_h : 0;
 }
 
-/* Causality places its custom title bar at a fixed 30 px height (see
-   causality/src/ui/title_bar.c). The status bar height is whatever sol
-   asked causality to reserve. The tree panel width is the value baked
-   into .tree-panel in style.h. Keep these in sync if either changes. */
-#define SOL_UI_TITLE_BAR_HEIGHT_PX  30
+bool sol_ui_system_buffer_area_rect(const SolUISystem *ui,
+                                    float *out_x,
+                                    float *out_y,
+                                    float *out_w,
+                                    float *out_h)
+{
+    return sol_ui_buffer_area_rect_internal(ui, out_x, out_y, out_w, out_h);
+}
+
+/* The status bar height is whatever sol asked causality to reserve. The
+   tree panel width is the value baked into .tree-panel in style.h. Keep
+   these in sync if either changes. */
 #define SOL_UI_TREE_PANEL_WIDTH_PX  240
 
 int sol_ui_system_title_bar_height(const SolUISystem *ui)

@@ -35,6 +35,8 @@ struct SolInputRouter {
     bool             suppress_next_text_input;
 };
 
+#define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX 1.0f
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -60,10 +62,27 @@ static bool key_is_printable_alpha(SolKeyCode key)
 static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
 {
     if (!r || !tb) return;
+    Ca_Window *win = sol_ui_system_primary_window(r->ui);
+    const float ui_scale = win ? ca_window_get_scale(win) : 1.0f;
+    SolBufferNodeId leaf_id = sol_buffer_active_leaf(r->buffers);
+    SolBufferRect root_rect = {0};
+    SolBufferRect leaf_rect = {0};
+    if (leaf_id != 0u &&
+        sol_ui_system_buffer_area_rect(r->ui, &root_rect.x, &root_rect.y, &root_rect.w, &root_rect.h) &&
+        sol_buffer_leaf_geometry(r->buffers, leaf_id, &root_rect,
+                                 SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {
+        const int viewport_full =
+            sol_text_view_visible_lines_for_height(leaf_rect.h, ui_scale);
+        int viewport = viewport_full - 2;
+        if (viewport < 1) viewport = 1;
+        sol_text_buffer_ensure_cursor_visible(tb, viewport);
+        sol_ui_system_invalidate_buffer_area(r->ui);
+        return;
+    }
+
     int win_h = 0;
     sol_ui_system_window_size(r->ui, NULL, &win_h);
     if (win_h <= 0) win_h = 600;
-    const float ui_scale = ca_window_get_scale(sol_ui_system_primary_window(r->ui));
     const int viewport_full = sol_text_view_visible_lines(win_h, ui_scale);
     int viewport = viewport_full - 2;
     if (viewport < 1) viewport = 1;
@@ -236,34 +255,64 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     sol_ui_system_window_size(r->ui, &win_w, &win_h);
     if (win_w <= 0 || win_h <= 0) return;
 
-    const float title_h  = (float)sol_ui_system_title_bar_height(r->ui);
-    const float status_h = (float)sol_ui_system_status_bar_height(r->ui);
-    const float tree_w   = (float)sol_ui_system_tree_panel_width(r->ui);
-    const float buf_x = tree_w;
-    const float buf_y = title_h;
-    const float buf_w = (float)win_w - tree_w;
-    const float buf_h = (float)win_h - title_h - status_h;
+    SolBufferRect root_rect = {0};
+    if (!sol_ui_system_buffer_area_rect(r->ui, &root_rect.x, &root_rect.y,
+                                        &root_rect.w, &root_rect.h)) {
+        return;
+    }
 
     SolBufferId target = 0u;
+    SolBufferNodeId target_leaf = 0u;
     const double mx = r->mouse_x, my = r->mouse_y;
-    if (mx >= buf_x && mx <= buf_x + buf_w &&
-        my >= buf_y && my <= buf_y + buf_h)
+    if (mx >= root_rect.x && mx <= root_rect.x + root_rect.w &&
+        my >= root_rect.y && my <= root_rect.y + root_rect.h)
     {
-        SolBufferNodeId leaf = sol_buffer_leaf_at_point(
-            r->buffers, buf_x, buf_y, buf_w, buf_h,
-            /* split-bar size — keep in sync with workspace.c */ 1.0f,
+        target_leaf = sol_buffer_leaf_at_point(
+            r->buffers, root_rect.x, root_rect.y, root_rect.w, root_rect.h,
+            SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX,
             (float)mx, (float)my);
-        if (leaf != 0u) target = sol_buffer_leaf_buffer(r->buffers, leaf);
+        if (target_leaf != 0u) target = sol_buffer_leaf_buffer(r->buffers, target_leaf);
     }
     if (target == 0u) target = sol_buffer_active_buffer(r->buffers);
+    if (target_leaf == 0u) target_leaf = sol_buffer_active_leaf(r->buffers);
     if (target == 0u) return;
 
     SolBuffer *buf = sol_buffer_get(r->buffers, target);
     SolTextBuffer *tb = sol_text_buffer_state(buf);
     if (!tb) return;
 
-    const int rendered = sol_text_view_visible_lines(win_h,
-        ca_window_get_scale(sol_ui_system_primary_window(r->ui)));
+    SolBufferRect leaf_rect = {0};
+    Ca_Window *win = sol_ui_system_primary_window(r->ui);
+    const float scale = win ? ca_window_get_scale(win) : 1.0f;
+    if (target_leaf != 0u &&
+        sol_buffer_leaf_geometry(r->buffers, target_leaf, &root_rect,
+                                 SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {
+        const int rendered =
+            sol_text_view_visible_lines_for_height(leaf_rect.h, scale);
+        int viewport = rendered - 2;
+        if (viewport < 1) viewport = 1;
+        const int total = (int)sol_text_buffer_line_count(tb);
+        const int max_top = total > viewport ? total - viewport : 0;
+
+        /* Natural scroll: dy>0 scrolls content up (view moves down). */
+        int delta = (int)(-ev->mouse_scroll.dy * 3.0);
+        if (delta == 0) {
+            delta = ev->mouse_scroll.dy > 0.0 ? -1
+                  : ev->mouse_scroll.dy < 0.0 ? 1 : 0;
+        }
+
+        int new_top = sol_text_buffer_scroll_top(tb) + delta;
+        if (new_top < 0) new_top = 0;
+        if (new_top > max_top) new_top = max_top;
+
+        if (new_top != sol_text_buffer_scroll_top(tb)) {
+            sol_text_buffer_set_scroll_top(tb, new_top);
+            sol_ui_system_invalidate_buffer_area(r->ui);
+        }
+        return;
+    }
+
+    const int rendered = sol_text_view_visible_lines(win_h, scale);
     int viewport = rendered - 2;
     if (viewport < 1) viewport = 1;
     const int total = (int)sol_text_buffer_line_count(tb);

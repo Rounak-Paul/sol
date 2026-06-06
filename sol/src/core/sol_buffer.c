@@ -796,6 +796,76 @@ static SolBufferNodeId sol_layout_hit_test(const SolBufferSystem *system,
                                x, second_y, w, second_h, bar_size, px, py);
 }
 
+static bool sol_layout_leaf_geometry(
+    const SolBufferSystem *system,
+    SolBufferNodeId node_id,
+    float x,
+    float y,
+    float w,
+    float h,
+    float bar_size,
+    SolBufferNodeId target_leaf_id,
+    SolBufferRect *out_rect)
+{
+    const SolLayoutNode *node = sol_layout_find_node_const(system, node_id);
+    if (!node) return false;
+
+    if (node->type == SOL_LAYOUT_NODE_LEAF) {
+        if (node->id != target_leaf_id) return false;
+        if (out_rect) {
+            out_rect->x = x;
+            out_rect->y = y;
+            out_rect->w = w;
+            out_rect->h = h;
+        }
+        return true;
+    }
+
+    const float r = node->as.split.ratio;
+    if (node->as.split.direction == SOL_BUFFER_SPLIT_VERTICAL) {
+        const float avail = w - bar_size;
+        const float first_w  = avail > 0.0f ? avail * r       : 0.0f;
+        const float second_w = avail > 0.0f ? avail - first_w : 0.0f;
+        const float second_x = x + first_w + bar_size;
+        if (sol_layout_leaf_geometry(system, node->as.split.first_id,
+                                     x, y, first_w, h, bar_size,
+                                     target_leaf_id, out_rect)) {
+            return true;
+        }
+        return sol_layout_leaf_geometry(system, node->as.split.second_id,
+                                        second_x, y, second_w, h, bar_size,
+                                        target_leaf_id, out_rect);
+    }
+
+    const float avail = h - bar_size;
+    const float first_h  = avail > 0.0f ? avail * r       : 0.0f;
+    const float second_h = avail > 0.0f ? avail - first_h : 0.0f;
+    const float second_y = y + first_h + bar_size;
+    if (sol_layout_leaf_geometry(system, node->as.split.first_id,
+                                 x, y, w, first_h, bar_size,
+                                 target_leaf_id, out_rect)) {
+        return true;
+    }
+    return sol_layout_leaf_geometry(system, node->as.split.second_id,
+                                    x, second_y, w, second_h, bar_size,
+                                    target_leaf_id, out_rect);
+}
+
+bool sol_buffer_leaf_geometry(const SolBufferSystem *system,
+                              SolBufferNodeId leaf_id,
+                              const SolBufferRect *root_rect,
+                              float bar_size,
+                              SolBufferRect *out_rect)
+{
+    if (!system || system->root_id == 0u || leaf_id == 0u || !root_rect) {
+        return false;
+    }
+    return sol_layout_leaf_geometry(system, system->root_id,
+                                    root_rect->x, root_rect->y,
+                                    root_rect->w, root_rect->h,
+                                    bar_size, leaf_id, out_rect);
+}
+
 SolBufferNodeId sol_buffer_leaf_at_point(const SolBufferSystem *system,
                                          float x, float y,
                                          float w, float h,
@@ -936,8 +1006,10 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
 
 static void sol_buffer_visit_node(
     SolBufferSystem *system,
+    const SolBufferRect *current_rect,
     const SolBufferWorkspaceVisitor *visitor,
     SolBufferNodeId node_id,
+    float bar_size,
     void *user_data
 )
 {
@@ -949,7 +1021,9 @@ static void sol_buffer_visit_node(
     if (node->type == SOL_LAYOUT_NODE_LEAF) {
         SolBuffer *buffer = sol_buffer_find(system, node->as.leaf.buffer_id);
         if (visitor->render_leaf) {
-            visitor->render_leaf(buffer, node->id, node->id == system->active_leaf_id, user_data);
+            visitor->render_leaf(buffer, node->id,
+                                 node->id == system->active_leaf_id,
+                                 current_rect, user_data);
         }
         return;
     }
@@ -958,8 +1032,50 @@ static void sol_buffer_visit_node(
         visitor->begin_split(node->as.split.direction, node->as.split.ratio, node->id, user_data);
     }
 
-    sol_buffer_visit_node(system, visitor, node->as.split.first_id, user_data);
-    sol_buffer_visit_node(system, visitor, node->as.split.second_id, user_data);
+    const float r = node->as.split.ratio;
+    if (node->as.split.direction == SOL_BUFFER_SPLIT_VERTICAL) {
+        const float avail = current_rect->w - bar_size;
+        const float first_w  = avail > 0.0f ? avail * r       : 0.0f;
+        const float second_w = avail > 0.0f ? avail - first_w : 0.0f;
+        const float second_x = current_rect->x + first_w + bar_size;
+        SolBufferRect first_rect = {
+            .x = current_rect->x,
+            .y = current_rect->y,
+            .w = first_w,
+            .h = current_rect->h,
+        };
+        SolBufferRect second_rect = {
+            .x = second_x,
+            .y = current_rect->y,
+            .w = second_w,
+            .h = current_rect->h,
+        };
+        sol_buffer_visit_node(system, &first_rect, visitor, node->as.split.first_id,
+                              bar_size, user_data);
+        sol_buffer_visit_node(system, &second_rect, visitor, node->as.split.second_id,
+                              bar_size, user_data);
+    } else {
+        const float avail = current_rect->h - bar_size;
+        const float first_h  = avail > 0.0f ? avail * r       : 0.0f;
+        const float second_h = avail > 0.0f ? avail - first_h : 0.0f;
+        const float second_y = current_rect->y + first_h + bar_size;
+        SolBufferRect first_rect = {
+            .x = current_rect->x,
+            .y = current_rect->y,
+            .w = current_rect->w,
+            .h = first_h,
+        };
+        SolBufferRect second_rect = {
+            .x = current_rect->x,
+            .y = second_y,
+            .w = current_rect->w,
+            .h = second_h,
+        };
+        sol_buffer_visit_node(system, &first_rect, visitor, node->as.split.first_id,
+                              bar_size, user_data);
+        sol_buffer_visit_node(system, &second_rect, visitor, node->as.split.second_id,
+                              bar_size, user_data);
+    }
 
     if (visitor->end_split) {
         visitor->end_split(user_data);
@@ -968,15 +1084,19 @@ static void sol_buffer_visit_node(
 
 void sol_buffer_workspace_visit(
     SolBufferSystem *system,
+    const SolBufferRect *root_rect,
     const SolBufferWorkspaceVisitor *visitor,
     void *user_data
 )
 {
-    if (!system || !visitor || system->root_id == 0u) {
+    if (!system || !visitor || system->root_id == 0u || !root_rect) {
         return;
     }
 
-    sol_buffer_visit_node(system, visitor, system->root_id, user_data);
+    sol_buffer_visit_node(system, root_rect, visitor, system->root_id,
+                          /* split bar size — keep in sync with workspace.c */
+                          1.0f,
+                          user_data);
 }
 
 void sol_buffer_render(SolBuffer *buffer, const SolBufferRenderArgs *args)

@@ -92,6 +92,15 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id);
  * NULL. Both are 0 until the first resize callback fires. */
 void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h);
 
+/* Root rectangle of the buffer split tree inside the workspace area.
+ * This excludes the title bar, status bar, and the global buffer tab row.
+ * Returns false when the UI is not ready or the workspace is collapsed. */
+bool sol_ui_system_buffer_area_rect(const SolUISystem *ui,
+                                    float *out_x,
+                                    float *out_y,
+                                    float *out_w,
+                                    float *out_h);
+
 /* Geometry of the chrome strips around the buffer area, in CSS pixels.
  * Used by the host application to do its own hit-testing (e.g. routing
  * mouse-wheel events to the pane under the cursor instead of the

@@ -66,8 +66,9 @@ static void visit_begin_split(SolBufferSplitDirection dir, float ratio,
 }
 static void visit_end_split(void *ud) { (void)ud; }
 static void visit_leaf(SolBuffer *buf, SolBufferNodeId leaf_id,
-                        bool active, void *ud)
+                        bool active, const SolBufferRect *rect, void *ud)
 {
+    (void)rect;
     VisitLog *v = (VisitLog *)ud;
     int n = v->leaves;
     if (n < 16) {
@@ -86,6 +87,8 @@ static SolBufferWorkspaceVisitor make_visitor(void)
         .render_leaf = visit_leaf,
     };
 }
+
+static const SolBufferRect kTestRootRect = { 0.f, 0.f, 1000.f, 600.f };
 
 /* Event log */
 typedef struct EvLog {
@@ -214,7 +217,7 @@ static void test_split_vertical(SolTestCtx *T)
     /* Visitor should now see two leaves. */
     VisitLog vlog = {0};
     SolBufferWorkspaceVisitor vis = make_visitor();
-    sol_buffer_workspace_visit(sys, &vis, &vlog);
+    sol_buffer_workspace_visit(sys, &kTestRootRect, &vis, &vlog);
     SOL_CHECK_EQ_INT(T, vlog.leaves, 2);
     SOL_CHECK_EQ_INT(T, vlog.splits, 1);
 
@@ -234,7 +237,7 @@ static void test_split_horizontal(SolTestCtx *T)
 
     VisitLog vlog = {0};
     SolBufferWorkspaceVisitor vis = make_visitor();
-    sol_buffer_workspace_visit(sys, &vis, &vlog);
+    sol_buffer_workspace_visit(sys, &kTestRootRect, &vis, &vlog);
     SOL_CHECK_EQ_INT(T, vlog.leaves, 2);
 
     sol_buffer_system_destroy(sys);
@@ -363,6 +366,35 @@ static void test_leaf_at_point(SolTestCtx *T)
     sol_buffer_system_destroy(sys);
 }
 
+static void test_leaf_geometry(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolBufferId a = make_buffer(sys, "a");
+    SolBufferId b = make_buffer(sys, "b");
+    (void)a;
+
+    SolBufferNodeId leaf_a = sol_buffer_active_leaf(sys);
+    SolBufferNodeId leaf_b = 0u;
+    sol_buffer_split_active(sys, SOL_BUFFER_SPLIT_VERTICAL, 0.5f, b, &leaf_b);
+
+    SolBufferRect left_rect = {0};
+    SolBufferRect right_rect = {0};
+    SOL_CHECK(T, sol_buffer_leaf_geometry(sys, leaf_a,
+                                          &kTestRootRect, 1.0f, &left_rect));
+    SOL_CHECK(T, sol_buffer_leaf_geometry(sys, leaf_b,
+                                          &kTestRootRect, 1.0f, &right_rect));
+    SOL_CHECK_MSG(T, left_rect.w > 0.0f && right_rect.w > 0.0f,
+                  "leaf widths must be positive");
+    SOL_CHECK_MSG(T, left_rect.x != right_rect.x,
+                  "split leaves must not share the same x origin");
+    SOL_CHECK_MSG(T,
+                  (left_rect.x == 0.0f && right_rect.x > 0.0f) ||
+                  (right_rect.x == 0.0f && left_rect.x > 0.0f),
+                  "one leaf should start at the left edge and the other should not");
+
+    sol_buffer_system_destroy(sys);
+}
+
 static void test_workspace_visitor(SolTestCtx *T)
 {
     SolBufferSystem *sys = make_system();
@@ -379,7 +411,7 @@ static void test_workspace_visitor(SolTestCtx *T)
 
     VisitLog vlog = {0};
     SolBufferWorkspaceVisitor vis = make_visitor();
-    sol_buffer_workspace_visit(sys, &vis, &vlog);
+    sol_buffer_workspace_visit(sys, &kTestRootRect, &vis, &vlog);
 
     SOL_CHECK_EQ_INT(T, vlog.leaves, 3);
     SOL_CHECK_EQ_INT(T, vlog.splits, 2);
@@ -444,7 +476,7 @@ static void test_null_safety(SolTestCtx *T)
 
     SolBufferWorkspaceVisitor vis = make_visitor();
     VisitLog vlog = {0};
-    sol_buffer_workspace_visit(NULL, &vis, &vlog);
+    sol_buffer_workspace_visit(NULL, &kTestRootRect, &vis, &vlog);
     SOL_CHECK_EQ_INT(T, vlog.leaves, 0);
 }
 
@@ -498,6 +530,7 @@ int main(void)
     SOL_RUN(s, test_focus_previous_buffer);
     SOL_RUN(s, test_set_leaf_buffer);
     SOL_RUN(s, test_leaf_at_point);
+    SOL_RUN(s, test_leaf_geometry);
     SOL_RUN(s, test_workspace_visitor);
     SOL_RUN(s, test_event_bus_integration);
     SOL_RUN(s, test_null_safety);

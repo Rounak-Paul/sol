@@ -35,10 +35,22 @@ typedef enum SolBufferSplitDirection {
     SOL_BUFFER_SPLIT_VERTICAL,
 } SolBufferSplitDirection;
 
+/* Rectangle in workspace layout pixels. */
+typedef struct SolBufferRect {
+    float x;
+    float y;
+    float w;
+    float h;
+} SolBufferRect;
+
+/* Geometry for a rendered buffer leaf. `rect` is in the same layout
+ * space used by the workspace split tree and excludes the global tab
+ * strip. */
 typedef struct SolBufferRenderArgs {
     bool is_active;
     void *ui_context;
     SolBufferNodeId leaf_id;
+    SolBufferRect rect;
 } SolBufferRenderArgs;
 
 typedef void (*SolBufferDestroyFn)(void *state);
@@ -62,9 +74,16 @@ typedef struct SolBufferSystemConfig {
 } SolBufferSystemConfig;
 
 typedef struct SolBufferWorkspaceVisitor {
-    void (*begin_split)(SolBufferSplitDirection direction, float ratio, SolBufferNodeId node_id, void *user_data);
+    void (*begin_split)(SolBufferSplitDirection direction,
+                        float ratio,
+                        SolBufferNodeId node_id,
+                        void *user_data);
     void (*end_split)(void *user_data);
-    void (*render_leaf)(SolBuffer *buffer, SolBufferNodeId leaf_id, bool is_active, void *user_data);
+    void (*render_leaf)(SolBuffer *buffer,
+                        SolBufferNodeId leaf_id,
+                        bool is_active,
+                        const SolBufferRect *rect,
+                        void *user_data);
 } SolBufferWorkspaceVisitor;
 
 SolBufferSystemConfig sol_buffer_system_config_default(void);
@@ -153,6 +172,13 @@ SolBufferNodeId sol_buffer_leaf_at_point(const SolBufferSystem *system,
                                          float px, float py);
 
 bool sol_buffer_set_split_ratio(SolBufferSystem *system, SolBufferNodeId split_node_id, float ratio);
+/* Resolve the screen-space rectangle for `leaf_id` within a workspace
+ * rooted at `root_rect`. Returns false when the leaf is not present. */
+bool sol_buffer_leaf_geometry(const SolBufferSystem *system,
+                              SolBufferNodeId leaf_id,
+                              const SolBufferRect *root_rect,
+                              float bar_size,
+                              SolBufferRect *out_rect);
 
 SolBufferId sol_buffer_active_buffer(const SolBufferSystem *system);
 SolBufferNodeId sol_buffer_active_leaf(const SolBufferSystem *system);
@@ -170,6 +196,7 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction);
 
 void sol_buffer_workspace_visit(
     SolBufferSystem *system,
+    const SolBufferRect *root_rect,
     const SolBufferWorkspaceVisitor *visitor,
     void *user_data
 );

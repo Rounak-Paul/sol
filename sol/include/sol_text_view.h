@@ -34,6 +34,10 @@ void sol_text_view_render(const SolBuffer *buffer,
    visible math without poking the view's internal constants. */
 int sol_text_view_visible_lines(int window_h, float ui_scale);
 
+/* Number of lines that fit in the viewport for a pane height in CSS px.
+   This is the geometry-aware variant used by split buffer panes. */
+int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale);
+
 #ifdef __cplusplus
 }
 #endif

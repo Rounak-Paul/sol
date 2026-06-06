@@ -45,6 +45,9 @@
    safe (we just over-render and clip). */
 #define SOL_TEXT_PANE_CHROME_PX 100
 
+/* Internal vertical padding inside .buffer-text-col. */
+#define SOL_TEXT_TEXT_PADDING_PX 16
+
 /* Maximum bytes we'll read for a single visible line. Lines longer
    than this are truncated for display; the buffer content is
    untouched. 4 KiB is more than enough for typical source code while
@@ -286,14 +289,24 @@ static void emit_highlighted_line(
 /* Geometry                                                            */
 /* ------------------------------------------------------------------ */
 
+int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale);
+
 int sol_text_view_visible_lines(int window_h, float ui_scale)
+{
+    if (ui_scale <= 0.0f) ui_scale = 1.0f;
+    return sol_text_view_visible_lines_for_height(
+        (float)window_h - (float)SOL_TEXT_PANE_CHROME_PX * ui_scale,
+        ui_scale);
+}
+
+int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale)
 {
     if (ui_scale <= 0.0f) ui_scale = 1.0f;
     /* Scale the CSS constants to layout pixels (= GLFW logical px). */
     int line_h = (int)(SOL_TEXT_LINE_HEIGHT_PX * ui_scale + 0.5f);
     if (line_h < 1) line_h = 1;
-    int chrome = (int)(SOL_TEXT_PANE_CHROME_PX * ui_scale + 0.5f);
-    int avail = window_h - chrome;
+    int chrome = (int)(SOL_TEXT_TEXT_PADDING_PX * ui_scale + 0.5f);
+    int avail = (int)(pane_h + 0.5f) - chrome;
     if (avail < line_h) avail = line_h;
     int n = avail / line_h;
     /* Over-render by two so the pane always looks fully filled even
@@ -402,18 +415,21 @@ void sol_text_view_render(const SolBuffer *buffer,
 
     SolUISystem *ui = args ? (SolUISystem *)args->ui_context : NULL;
 
-    int win_h = 0;
-    if (ui) sol_ui_system_window_size(ui, NULL, &win_h);
-    if (win_h <= 0) win_h = 600;
-
     /* Get current scale so viewport count and geometry are correct. */
     Ca_Window *primary_win = ui ? sol_ui_system_primary_window(ui) : NULL;
-    const float ui_scale = ca_window_get_scale(primary_win);
+    const float ui_scale = primary_win ? ca_window_get_scale(primary_win) : 1.0f;
+    float pane_h = args ? args->rect.h : 0.0f;
+    if (pane_h <= 0.0f) {
+        int win_h = 0;
+        if (ui) sol_ui_system_window_size(ui, NULL, &win_h);
+        if (win_h <= 0) win_h = 600;
+        pane_h = (float)win_h - (float)SOL_TEXT_PANE_CHROME_PX * ui_scale;
+    }
 
     /* `rendered` is what we emit (over-rendered to fill the pane);
        `viewport` is what the user actually sees and drives the
        scrollbar thumb math. */
-    const int rendered = sol_text_view_visible_lines(win_h, ui_scale);
+    const int rendered = sol_text_view_visible_lines_for_height(pane_h, ui_scale);
     int viewport = rendered - 2;
     if (viewport < 1) viewport = 1;
 

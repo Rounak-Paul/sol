@@ -85,6 +85,35 @@ static bool sol_set_explorer_root(SolAppContext *app, const char *path)
     return sol_ui_system_set_file_tree_root(app->ui, path);
 }
 
+static int sol_active_buffer_viewport_lines(SolAppContext *app, SolTextBuffer *tb)
+{
+    if (!app || !app->ui || !app->buffers || !tb) {
+        return 1;
+    }
+
+    Ca_Window *win = sol_ui_system_primary_window(app->ui);
+    const float scale = win ? ca_window_get_scale(win) : 1.0f;
+    SolBufferRect root_rect = {0};
+    if (sol_ui_system_buffer_area_rect(app->ui, &root_rect.x, &root_rect.y,
+                                       &root_rect.w, &root_rect.h)) {
+        SolBufferRect leaf_rect = {0};
+        const SolBufferNodeId leaf = sol_buffer_active_leaf(app->buffers);
+        if (leaf != 0u &&
+            sol_buffer_leaf_geometry(app->buffers, leaf, &root_rect, 1.0f, &leaf_rect)) {
+            int viewport = sol_text_view_visible_lines_for_height(leaf_rect.h, scale) - 2;
+            if (viewport < 1) viewport = 1;
+            return viewport;
+        }
+    }
+
+    int win_h = 0;
+    sol_ui_system_window_size(app->ui, NULL, &win_h);
+    if (win_h <= 0) win_h = 600;
+    int viewport = sol_text_view_visible_lines(win_h, scale) - 2;
+    if (viewport < 1) viewport = 1;
+    return viewport;
+}
+
 /* Install defaults before loading bindings.conf. Config entries with the
    same action replace these, so existing custom keymaps remain authoritative
    while older configs still gain newly-added built-in actions. */
@@ -518,14 +547,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
         if (!tb || !sol_text_buffer_can_undo(tb)) return false;
         sol_text_buffer_undo(tb);
-        int win_h = 0;
-        sol_ui_system_window_size(app->ui, NULL, &win_h);
-        if (win_h <= 0) win_h = 600;
-        Ca_Window *win = sol_ui_system_primary_window(app->ui);
-        const float sc = ca_window_get_scale(win);
-        int vp = sol_text_view_visible_lines(win_h, sc) - 2;
-        if (vp < 1) vp = 1;
-        sol_text_buffer_ensure_cursor_visible(tb, vp);
+        sol_text_buffer_ensure_cursor_visible(tb,
+            sol_active_buffer_viewport_lines(app, tb));
         sol_ui_system_invalidate_buffer_area(app->ui);
         return true;
     }
@@ -535,14 +558,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
         if (!tb || !sol_text_buffer_can_redo(tb)) return false;
         sol_text_buffer_redo(tb);
-        int win_h = 0;
-        sol_ui_system_window_size(app->ui, NULL, &win_h);
-        if (win_h <= 0) win_h = 600;
-        Ca_Window *win = sol_ui_system_primary_window(app->ui);
-        const float sc = ca_window_get_scale(win);
-        int vp = sol_text_view_visible_lines(win_h, sc) - 2;
-        if (vp < 1) vp = 1;
-        sol_text_buffer_ensure_cursor_visible(tb, vp);
+        sol_text_buffer_ensure_cursor_visible(tb,
+            sol_active_buffer_viewport_lines(app, tb));
         sol_ui_system_invalidate_buffer_area(app->ui);
         return true;
     }
