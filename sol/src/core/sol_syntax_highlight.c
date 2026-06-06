@@ -14,7 +14,11 @@
 
 #include <tree_sitter/api.h>
 
+#if defined(_WIN32)
+#include "sol_regex.h"
+#else
 #include <regex.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,7 +43,11 @@ typedef struct SolPred {
     SolPredKind kind;
     uint32_t    capture_idx;   /* which @capture the predicate tests */
     bool        regex_valid;
+#if defined(_WIN32)
+    SolRegex    regex;
+#else
     regex_t     regex;
+#endif
     char       *eq_str;        /* owned; used by PRED_EQ / PRED_NOT_EQ */
 } SolPred;
 
@@ -171,6 +179,42 @@ static void preprocess_pattern(const char *src, char *dst, size_t dst_sz)
     dst[di] = '\0';
 }
 
+static char *sol_syntax_strdup_len(const char *src, size_t len)
+{
+    char *out = (char *)malloc(len + 1u);
+    if (!out) return NULL;
+    memcpy(out, src, len);
+    out[len] = '\0';
+    return out;
+}
+
+static bool sol_syntax_regex_compile(SolPred *pred, const char *pattern)
+{
+#if defined(_WIN32)
+    return sol_regex_compile(&pred->regex, pattern);
+#else
+    return regcomp(&pred->regex, pattern, REG_EXTENDED | REG_NOSUB) == 0;
+#endif
+}
+
+static bool sol_syntax_regex_match(const SolPred *pred, const char *text)
+{
+#if defined(_WIN32)
+    return sol_regex_match(&pred->regex, text);
+#else
+    return regexec(&pred->regex, text, 0, NULL, 0) == 0;
+#endif
+}
+
+static void sol_syntax_regex_destroy(SolPred *pred)
+{
+#if defined(_WIN32)
+    sol_regex_destroy(&pred->regex);
+#else
+    regfree(&pred->regex);
+#endif
+}
+
 /* ------------------------------------------------------------------ */
 /* Build per-pattern predicate table                                  */
 /* ------------------------------------------------------------------ */
@@ -214,11 +258,10 @@ static void build_preds(struct SolSyntaxHighlighter *h)
             char processed[512];
             preprocess_pattern(val, processed, sizeof(processed));
             pred->kind        = is_match ? PRED_MATCH : PRED_NOT_MATCH;
-            pred->regex_valid = (regcomp(&pred->regex, processed,
-                                         REG_EXTENDED | REG_NOSUB) == 0);
+            pred->regex_valid = sol_syntax_regex_compile(pred, processed);
         } else {
             pred->kind   = is_eq ? PRED_EQ : PRED_NOT_EQ;
-            pred->eq_str = strdup(val);
+            pred->eq_str = sol_syntax_strdup_len(val, val_len);
         }
     }
 }
@@ -266,12 +309,10 @@ static bool eval_pred(const SolPred *pred, const TSQueryMatch *match,
     bool result;
     switch (pred->kind) {
         case PRED_MATCH:
-            result = pred->regex_valid &&
-                     regexec(&pred->regex, text, 0, NULL, 0) == 0;
+            result = pred->regex_valid && sol_syntax_regex_match(pred, text);
             break;
         case PRED_NOT_MATCH:
-            result = pred->regex_valid &&
-                     regexec(&pred->regex, text, 0, NULL, 0) != 0;
+            result = pred->regex_valid && !sol_syntax_regex_match(pred, text);
             break;
         case PRED_EQ:
             result = pred->eq_str && strcmp(text, pred->eq_str) == 0;
@@ -552,7 +593,7 @@ void sol_syntax_highlight_destroy(SolSyntaxHighlighter *h)
         for (uint32_t pi = 0u; pi < h->pattern_count; pi++) {
             SolPred *p = &h->pattern_preds[pi];
             if (p->kind == PRED_MATCH || p->kind == PRED_NOT_MATCH)
-                if (p->regex_valid) regfree(&p->regex);
+                if (p->regex_valid) sol_syntax_regex_destroy(p);
             free(p->eq_str);
         }
         free(h->pattern_preds);

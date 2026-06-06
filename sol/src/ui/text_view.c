@@ -23,8 +23,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 
+#include "sol_platform.h"
 #include "sol_rope.h"
 #include "sol_syntax_highlight.h"
 #include "sol_text_buffer.h"
@@ -186,9 +186,7 @@ static size_t   g_caret_prev_col     = (size_t)-1;
 
 static uint64_t monotonic_ms(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)(ts.tv_nsec / 1000000ull);
+    return sol_platform_now_monotonic_ns() / 1000000ull;
 }
 
 /* Call once per frame with the current cursor position.  Returns true

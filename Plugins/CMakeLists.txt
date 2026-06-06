@@ -52,3 +52,19 @@ add_subdirectory(sol-plugin-html)
 add_subdirectory(sol-plugin-markdown)
 add_subdirectory(sol-plugin-css)
 add_subdirectory(sol-plugin-cmake)
+
+if(WIN32)
+    foreach(_sol_plugin_target IN ITEMS
+        sol_plugin_c
+        sol_plugin_cpp
+        sol_plugin_python
+        sol_plugin_javascript
+        sol_plugin_typescript
+        sol_plugin_json
+        sol_plugin_html
+        sol_plugin_markdown
+        sol_plugin_css
+        sol_plugin_cmake)
+        target_link_libraries(${_sol_plugin_target} PRIVATE sol)
+    endforeach()
+endif()

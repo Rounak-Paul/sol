@@ -1,6 +1,11 @@
 file(GLOB_RECURSE SOL_SOURCES CONFIGURE_DEPENDS src/*.c)
 
-add_executable(sol ${SOL_SOURCES})
+set(SOL_PLATFORM_SOURCES)
+if(WIN32)
+    list(APPEND SOL_PLATFORM_SOURCES src/core/sol_regex.cpp)
+endif()
+
+add_executable(sol ${SOL_SOURCES} ${SOL_PLATFORM_SOURCES})
 
 # Export symbols so plugin modules can resolve sol symbols at load time.
 set_target_properties(sol PROPERTIES ENABLE_EXPORTS ON)
@@ -47,11 +52,13 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         src/core/sol_text_buffer.c
         src/core/sol_syntax.c
         src/core/sol_syntax_highlight.c
+        ${SOL_PLATFORM_SOURCES}
     )
 
     # Include path for causality headers (sol_buffer.c includes causality.h).
     # Tests use a signal stub instead of the full causality dylib.
     set(CAUSALITY_INCLUDE ${CMAKE_SOURCE_DIR}/vendors/causality/causality/include)
+    set(CAUSALITY_TEST_INCLUDES ${CAUSALITY_INCLUDE} ${Vulkan_INCLUDE_DIRS})
 
     # ---- File-tree unit tests ------------------------------------------
     add_executable(sol_file_tree_tests
@@ -63,7 +70,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_include_directories(sol_file_tree_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        ${CAUSALITY_INCLUDE}
+        ${CAUSALITY_TEST_INCLUDES}
     )
     target_compile_definitions(sol_file_tree_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_file_tree_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
@@ -106,7 +113,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_include_directories(sol_buffer_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        ${CAUSALITY_INCLUDE}
+        ${CAUSALITY_TEST_INCLUDES}
     )
     target_compile_definitions(sol_buffer_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_buffer_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
@@ -122,7 +129,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_include_directories(sol_text_buffer_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        ${CAUSALITY_INCLUDE}
+        ${CAUSALITY_TEST_INCLUDES}
     )
     target_compile_definitions(sol_text_buffer_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_text_buffer_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
@@ -139,6 +146,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${Vulkan_INCLUDE_DIRS}
     )
     target_compile_definitions(sol_command_flow_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_command_flow_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
@@ -154,7 +162,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_include_directories(sol_integration_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        ${CAUSALITY_INCLUDE}
+        ${CAUSALITY_TEST_INCLUDES}
     )
     target_compile_definitions(sol_integration_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_integration_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
@@ -167,9 +175,9 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     add_executable(sol_plugin_tests
         tests/test_plugin.c
         tests/stubs/sol_ui_bump_stub.c
+        tests/stubs/sol_syntax_stub.c
+        tests/stubs/sol_syntax_highlight_stub.c
         src/core/sol_plugin.c
-        src/core/sol_syntax.c
-        src/core/sol_syntax_highlight.c
         src/core/sol_system_manager.c
         src/core/sol_event.c
         src/core/sol_rope.c
@@ -185,9 +193,9 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
-        ${CAUSALITY_INCLUDE}
+        ${CAUSALITY_TEST_INCLUDES}
     )
     target_compile_definitions(sol_plugin_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_plugin_tests PRIVATE causality tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_plugin_tests COMMAND sol_plugin_tests)
 endif()

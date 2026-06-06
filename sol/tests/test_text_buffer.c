@@ -35,7 +35,15 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>   /* mkstemp, write, close, remove */
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>   /* mkstemp, write, close */
+#endif
 
 /* ------------------------------------------------------------------ */
 /* File-scope types / handlers (C11: no nested functions)              */
@@ -531,12 +539,28 @@ static void test_event_text_edited(SolTestCtx *T)
 static void test_open_file(SolTestCtx *T)
 {
     /* Write a temp file and open it. */
+#if defined(_WIN32)
+    char temp_dir[MAX_PATH];
+    char path[MAX_PATH];
+    if (GetTempPathA((DWORD)sizeof(temp_dir), temp_dir) == 0u ||
+        GetTempFileNameA(temp_dir, "sol", 0u, path) == 0u) {
+        SOL_CHECK_MSG(T, false, "GetTempFileNameA failed");
+        return;
+    }
+
+    const char *content = "line one\nline two\nline three\n";
+    FILE *fp = fopen(path, "wb");
+    if (!fp) { SOL_CHECK_MSG(T, false, "fopen temp file failed"); return; }
+    fwrite(content, 1u, strlen(content), fp);
+    fclose(fp);
+#else
     char path[] = "/tmp/sol_test_XXXXXX";
     int fd = mkstemp(path);
     if (fd < 0) { SOL_CHECK_MSG(T, false, "mkstemp failed"); return; }
     const char *content = "line one\nline two\nline three\n";
     write(fd, content, strlen(content));
     close(fd);
+#endif
 
     SolBufferSystem *sys = make_system();
     const char *err = NULL;

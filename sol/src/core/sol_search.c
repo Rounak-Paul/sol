@@ -36,6 +36,14 @@ static char *search_strdup(const char *text)
     return copy;
 }
 
+static void search_normalize_relative_path(char *path)
+{
+    if (!path) return;
+    for (char *p = path; *p; ++p) {
+        if (*p == '\\') *p = '/';
+    }
+}
+
 static bool search_is_ignored_dir(const char *name)
 {
     if (!name || !name[0]) return true;
@@ -69,6 +77,7 @@ static bool search_index_add_file(SolSearchIndex *index,
         free(file->relative_path);
         return false;
     }
+    search_normalize_relative_path(file->relative_path);
     file->size_bytes = size_bytes;
     index->file_count++;
     return true;

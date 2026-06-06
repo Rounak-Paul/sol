@@ -34,6 +34,34 @@
 #include "sol_input.h"
 #include "sol_job.h"
 
+#ifndef SOL_API
+#if defined(_WIN32) && defined(sol_EXPORTS)
+#define SOL_API __declspec(dllexport)
+#else
+#define SOL_API
+#endif
+#endif
+
+/* Compiler annotations.
+ * MSVC's cl.exe does not understand GCC-style __attribute__ syntax, but
+ * GCC/Clang can still use it to validate printf-style calls at compile time.
+ */
+#ifndef SOL_PRINTF_FORMAT
+#if defined(__has_attribute)
+#if __has_attribute(format)
+#define SOL_PRINTF_FORMAT(format_index, first_arg) \
+    __attribute__((format(printf, format_index, first_arg)))
+#else
+#define SOL_PRINTF_FORMAT(format_index, first_arg)
+#endif
+#elif defined(__GNUC__)
+#define SOL_PRINTF_FORMAT(format_index, first_arg) \
+    __attribute__((format(printf, format_index, first_arg)))
+#else
+#define SOL_PRINTF_FORMAT(format_index, first_arg)
+#endif
+#endif
+
 /* Forward-declare so plugins don't need causality.h in their include path. */
 typedef struct SolUISystem SolUISystem;
 
@@ -49,29 +77,29 @@ typedef void (*SolServiceDestroyFn)(void *service, void *user_data);
 /* Core subsystem access                                               */
 /* ================================================================== */
 
-SolSystemManager *sol_plugin_systems(SolPluginCtx *ctx);
-SolEventBus      *sol_plugin_event_bus(SolPluginCtx *ctx);
-SolBufferSystem  *sol_plugin_buffers(SolPluginCtx *ctx);
-SolJobSystem     *sol_plugin_jobs(SolPluginCtx *ctx);
-SolInputSystem   *sol_plugin_input(SolPluginCtx *ctx);
+SOL_API SolSystemManager *sol_plugin_systems(SolPluginCtx *ctx);
+SOL_API SolEventBus      *sol_plugin_event_bus(SolPluginCtx *ctx);
+SOL_API SolBufferSystem  *sol_plugin_buffers(SolPluginCtx *ctx);
+SOL_API SolJobSystem     *sol_plugin_jobs(SolPluginCtx *ctx);
+SOL_API SolInputSystem   *sol_plugin_input(SolPluginCtx *ctx);
 
 /* Returns the UI system, or NULL if it was not registered before
  * plugins were loaded. Register it with:
  *   sol_system_register_service(systems, "sol.ui", ui, NULL, NULL); */
-SolUISystem      *sol_plugin_ui(SolPluginCtx *ctx);
+SOL_API SolUISystem      *sol_plugin_ui(SolPluginCtx *ctx);
 
 /* ================================================================== */
 /* Plugin metadata                                                     */
 /* ================================================================== */
 
-const char *sol_plugin_id(const SolPluginCtx *ctx);
-const char *sol_plugin_display_name(const SolPluginCtx *ctx);
-const char *sol_plugin_version(const SolPluginCtx *ctx);
+SOL_API const char *sol_plugin_id(const SolPluginCtx *ctx);
+SOL_API const char *sol_plugin_display_name(const SolPluginCtx *ctx);
+SOL_API const char *sol_plugin_version(const SolPluginCtx *ctx);
 
 /* Thread-safe printf-style logger.  Output is prefixed with
  * "[plugin:<id>] " for easy grep.  No trailing newline needed. */
-void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
-    __attribute__((format(printf, 2, 3)));
+SOL_API void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
+    SOL_PRINTF_FORMAT(2, 3);
 
 /* ================================================================== */
 /* Syntax / Language registration                                      */
@@ -87,14 +115,14 @@ void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
 /* registry is full.                                                   */
 /* ================================================================== */
 
-bool sol_plugin_register_language(SolPluginCtx      *ctx,
-                                   const void        *language,
-                                   const char *const *extensions);
+SOL_API bool sol_plugin_register_language(SolPluginCtx      *ctx,
+                                           const void        *language,
+                                           const char *const *extensions);
 
 /* Variant that also supplies the raw highlights.scm query text so Sol
  * can use the full TSQuery pipeline for syntax highlighting.  Pass
  * query_scm=NULL to fall back to the built-in heuristic walker. */
-bool sol_plugin_register_language_with_query(
+SOL_API bool sol_plugin_register_language_with_query(
                                    SolPluginCtx      *ctx,
                                    const void        *language,
                                    const char *const *extensions,
@@ -107,13 +135,13 @@ bool sol_plugin_register_language_with_query(
 /* automatically unsubscribed when the plugin is unloaded.             */
 /* ================================================================== */
 
-SolSubscriptionToken sol_plugin_subscribe(
+SOL_API SolSubscriptionToken sol_plugin_subscribe(
     SolPluginCtx    *ctx,
     const char      *event_name,
     SolEventHandler  handler,
     void            *user_data);
 
-void sol_plugin_unsubscribe(SolPluginCtx *ctx, SolSubscriptionToken token);
+SOL_API void sol_plugin_unsubscribe(SolPluginCtx *ctx, SolSubscriptionToken token);
 
 /* ================================================================== */
 /* Command registration                                                */
@@ -135,8 +163,8 @@ typedef struct SolPluginCommandDesc {
     void                  *user_data;
 } SolPluginCommandDesc;
 
-bool sol_plugin_register_command(SolPluginCtx *ctx, const SolPluginCommandDesc *desc);
-void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action);
+SOL_API bool sol_plugin_register_command(SolPluginCtx *ctx, const SolPluginCommandDesc *desc);
+SOL_API void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action);
 
 /* ================================================================== */
 /* Key binding registration                                            */
@@ -145,9 +173,9 @@ void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action);
 /* Auto-unbound on plugin unload.                                      */
 /* ================================================================== */
 
-SolInputActionToken sol_plugin_bind_key(SolPluginCtx *ctx,
-                                         const SolInputBindingDesc *desc);
-void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token);
+SOL_API SolInputActionToken sol_plugin_bind_key(SolPluginCtx *ctx,
+                                                 const SolInputBindingDesc *desc);
+SOL_API void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token);
 
 /* ================================================================== */
 /* Status bar segments                                                 */
@@ -160,17 +188,17 @@ void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token);
 typedef uint32_t SolPluginStatusToken;
 #define SOL_PLUGIN_STATUS_TOKEN_INVALID 0u
 
-SolPluginStatusToken sol_plugin_add_status_segment(
+SOL_API SolPluginStatusToken sol_plugin_add_status_segment(
     SolPluginCtx *ctx,
     const char   *text,
     const char   *style_class);   /* CSS class, or NULL for default */
 
-void sol_plugin_update_status_segment(SolPluginCtx        *ctx,
-                                       SolPluginStatusToken token,
-                                       const char          *text);
+SOL_API void sol_plugin_update_status_segment(SolPluginCtx        *ctx,
+                                               SolPluginStatusToken token,
+                                               const char          *text);
 
-void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
-                                       SolPluginStatusToken token);
+SOL_API void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
+                                               SolPluginStatusToken token);
 
 /* ================================================================== */
 /* Buffer operations                                                   */
@@ -178,58 +206,58 @@ void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
 
 /* Open a file into a text buffer, deduplicating by source path.
  * Returns the buffer id (may be an existing buffer), or 0 on error. */
-SolBufferId sol_plugin_open_file(SolPluginCtx *ctx, const char *path);
+SOL_API SolBufferId sol_plugin_open_file(SolPluginCtx *ctx, const char *path);
 
 /* Open a scratch (in-memory) text buffer.  `initial_text` may be NULL.
  * `source_path` is optional and used only for dedup (may be NULL). */
-SolBufferId sol_plugin_open_scratch(SolPluginCtx *ctx,
-                                     const char   *name,
-                                     const char   *initial_text,
-                                     size_t        initial_len,
-                                     const char   *source_path);
+SOL_API SolBufferId sol_plugin_open_scratch(SolPluginCtx *ctx,
+                                             const char   *name,
+                                             const char   *initial_text,
+                                             size_t        initial_len,
+                                             const char   *source_path);
 
 /* Open a fully custom plugin buffer with caller-provided ops. */
-SolBufferId sol_plugin_open_custom(SolPluginCtx  *ctx,
-                                    const char    *name,
-                                    void          *state,
-                                    SolBufferOps   ops);
+SOL_API SolBufferId sol_plugin_open_custom(SolPluginCtx  *ctx,
+                                            const char    *name,
+                                            void          *state,
+                                            SolBufferOps   ops);
 
 /* Focus a buffer in the active leaf. */
-bool sol_plugin_focus_buffer(SolPluginCtx *ctx, SolBufferId id);
+SOL_API bool sol_plugin_focus_buffer(SolPluginCtx *ctx, SolBufferId id);
 
 /* Return the currently-focused buffer id (0 if none). */
-SolBufferId sol_plugin_active_buffer(SolPluginCtx *ctx);
+SOL_API SolBufferId sol_plugin_active_buffer(SolPluginCtx *ctx);
 
 /* Text buffer editing — byte-offset based.
  * All three functions return false for non-text buffers. */
-bool   sol_plugin_buf_insert(SolPluginCtx *ctx, SolBufferId id,
-                              size_t byte_offset,
-                              const char *text, size_t len);
-bool   sol_plugin_buf_delete(SolPluginCtx *ctx, SolBufferId id,
-                              size_t byte_offset, size_t byte_count);
+SOL_API bool   sol_plugin_buf_insert(SolPluginCtx *ctx, SolBufferId id,
+                                      size_t byte_offset,
+                                      const char *text, size_t len);
+SOL_API bool   sol_plugin_buf_delete(SolPluginCtx *ctx, SolBufferId id,
+                                      size_t byte_offset, size_t byte_count);
 
 /* Copy up to out_size-1 bytes from the buffer into `out`, NUL-terminating.
  * Returns the number of bytes actually copied (excluding the NUL). */
-size_t sol_plugin_buf_read(SolPluginCtx *ctx, SolBufferId id,
-                            size_t byte_offset,
-                            char *out, size_t out_size);
+SOL_API size_t sol_plugin_buf_read(SolPluginCtx *ctx, SolBufferId id,
+                                    size_t byte_offset,
+                                    char *out, size_t out_size);
 
 /* Total byte length of the buffer content (0 for non-text). */
-size_t sol_plugin_buf_length(SolPluginCtx *ctx, SolBufferId id);
+SOL_API size_t sol_plugin_buf_length(SolPluginCtx *ctx, SolBufferId id);
 
 /* Cursor byte offset in a text buffer. */
-size_t sol_plugin_buf_cursor(SolPluginCtx *ctx, SolBufferId id);
-bool   sol_plugin_buf_set_cursor(SolPluginCtx *ctx, SolBufferId id,
-                                  size_t byte_offset);
+SOL_API size_t sol_plugin_buf_cursor(SolPluginCtx *ctx, SolBufferId id);
+SOL_API bool   sol_plugin_buf_set_cursor(SolPluginCtx *ctx, SolBufferId id,
+                                          size_t byte_offset);
 
 /* ================================================================== */
 /* Async job submission                                                */
 /* ================================================================== */
 
-bool sol_plugin_submit_job(SolPluginCtx *ctx,
-                            SolJobFn      fn,
-                            void         *user_data,
-                            SolJobFence  *fence);
+SOL_API bool sol_plugin_submit_job(SolPluginCtx *ctx,
+                                    SolJobFn      fn,
+                                    void         *user_data,
+                                    SolJobFence  *fence);
 
 /* ================================================================== */
 /* Versioned service registry                                          */
@@ -242,17 +270,17 @@ bool sol_plugin_submit_job(SolPluginCtx *ctx,
 /* if a destroy_fn was provided.                                        */
 /* ================================================================== */
 
-bool sol_plugin_register_service(SolPluginCtx       *ctx,
-                                   const char         *name,
-                                   uint32_t            version,
-                                   void               *service,
-                                   SolServiceDestroyFn destroy_fn,
-                                   void               *destroy_user_data);
+SOL_API bool sol_plugin_register_service(SolPluginCtx       *ctx,
+                                           const char         *name,
+                                           uint32_t            version,
+                                           void               *service,
+                                           SolServiceDestroyFn destroy_fn,
+                                           void               *destroy_user_data);
 
 /* Returns the service pointer, or NULL if not found or version too low. */
-void *sol_plugin_get_service(SolPluginCtx *ctx,
-                               const char   *name,
-                               uint32_t      min_version);
+SOL_API void *sol_plugin_get_service(SolPluginCtx *ctx,
+                                       const char   *name,
+                                       uint32_t      min_version);
 
 #ifdef __cplusplus
 }

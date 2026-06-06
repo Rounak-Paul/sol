@@ -935,7 +935,8 @@ static void test_command_auto_unreg(SolTestCtx *T)
 
 int main(void)
 {
-    SolTestSuite suites[8];
+    SolTestSuite *suites = (SolTestSuite *)calloc(8u, sizeof(SolTestSuite));
+    if (!suites) return 1;
     int si = 0;
 
     /* Suite 1 — manager */
@@ -1008,5 +1009,7 @@ int main(void)
     SOL_RUN(suites[si], test_command_auto_unreg);
     sol_suite_report(&suites[si++]);
 
-    return sol_report_all(suites, si);
+    const int result = sol_report_all(suites, si);
+    free(suites);
+    return result;
 }
