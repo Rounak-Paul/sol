@@ -77,10 +77,12 @@ typedef struct TextClickCtx {
     SolTextBuffer      *tb;
 } TextClickCtx;
 
-/* Count UTF-8 codepoints in the first `byte_len` bytes of `buf`. */
-static size_t tv_cp_count(const char *buf, size_t byte_len)
+/* Count displayed monospace columns in the first `byte_len` bytes of `buf`.
+   Causality renders tabs as four invisible space advances, so editor
+   selection/caret geometry must use the same visual width. */
+static size_t tv_visual_col_count(const char *buf, size_t byte_len)
 {
-    size_t cp = 0u, off = 0u;
+    size_t col = 0u, off = 0u;
     while (off < byte_len) {
         const uint8_t b = (uint8_t)buf[off];
         size_t step;
@@ -90,10 +92,51 @@ static size_t tv_cp_count(const char *buf, size_t byte_len)
         else if ((b & 0xF8u) == 0xF0u) step = 4u;
         else                            step = 1u;
         if (off + step > byte_len) break;
+        if (b == '\t')
+            col += 4u;
+        else if ((b >= 32u && b != 0x7Fu) || b >= 0x80u)
+            col += 1u;
         off += step;
-        ++cp;
     }
-    return cp;
+    return col;
+}
+
+/* Convert a rounded visual monospace column back to the buffer's codepoint
+   column. Tabs are rendered as one wide glyph, so clicks inside a tab choose
+   the nearest editable boundary: before it in the first half, after it in
+   the second half. */
+static size_t tv_cp_col_from_visual_col(const char *buf, size_t byte_len,
+                                        size_t target_visual_col)
+{
+    size_t visual_col = 0u, cp_col = 0u, off = 0u;
+    while (off < byte_len) {
+        const uint8_t b = (uint8_t)buf[off];
+        size_t step;
+        if      ((b & 0x80u) == 0x00u) step = 1u;
+        else if ((b & 0xE0u) == 0xC0u) step = 2u;
+        else if ((b & 0xF0u) == 0xE0u) step = 3u;
+        else if ((b & 0xF8u) == 0xF0u) step = 4u;
+        else                            step = 1u;
+        if (off + step > byte_len) break;
+
+        size_t width = 0u;
+        if (b == '\t')
+            width = 4u;
+        else if ((b >= 32u && b != 0x7Fu) || b >= 0x80u)
+            width = 1u;
+
+        if (width > 0u) {
+            const size_t midpoint = visual_col + width / 2u;
+            if (target_visual_col <= midpoint)
+                return cp_col;
+            if (target_visual_col <= visual_col + width)
+                return cp_col + 1u;
+            visual_col += width;
+        }
+        off += step;
+        cp_col += 1u;
+    }
+    return cp_col;
 }
 
 
@@ -300,11 +343,17 @@ static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
     if (line_idx >= total) line_idx = total - 1;
 
     const float adv = glyph_advance_px_for(win);
-    int cp_col = (int)((local_x / adv) + 0.5f);
-    if (cp_col < 0) cp_col = 0;
+    int visual_col = (int)((local_x / adv) + 0.5f);
+    if (visual_col < 0) visual_col = 0;
+
+    char line_buf[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+    const size_t line_bytes = sol_text_buffer_copy_line(
+        cb->tb, (size_t)line_idx, line_buf, sizeof(line_buf));
+    const size_t cp_col = tv_cp_col_from_visual_col(
+        line_buf, line_bytes, (size_t)visual_col);
 
     *out_line   = line_idx;
-    *out_cp_col = cp_col;
+    *out_cp_col = (int)cp_col;
 }
 
 /* on_drag_start — click or start of drag.  Set cursor and store anchor
@@ -472,9 +521,9 @@ void sol_text_view_render(const SolBuffer *buffer,
                 size_t col_b_end   = sel_end   < lb_end
                     ? sel_end   - lb_start : line_bytes;
                 if (col_b_end > line_bytes) col_b_end = line_bytes;
-                /* Convert byte offsets → codepoint columns. */
-                const float cp_s = (float)tv_cp_count(line_buf, col_b_start);
-                const float cp_e = (float)tv_cp_count(line_buf, col_b_end);
+                /* Convert byte offsets → rendered monospace columns. */
+                const float cp_s = (float)tv_visual_col_count(line_buf, col_b_start);
+                const float cp_e = (float)tv_visual_col_count(line_buf, col_b_end);
                 float x1 = cp_s * sel_adv;
                 float x2 = cp_e * sel_adv;
                 /* If selection extends past this line, add a bit of
@@ -518,20 +567,9 @@ void sol_text_view_render(const SolBuffer *buffer,
         }
 
         if (is_cursor_line) {
-            /* Count codepoints in the byte prefix [0, cur_col). */
-            size_t cp_count = 0u;
-            for (size_t off = 0u; off < cur_col && off < line_bytes; ) {
-                const uint8_t b = (uint8_t)line_buf[off];
-                size_t step;
-                if ((b & 0x80u) == 0x00u) step = 1u;
-                else if ((b & 0xE0u) == 0xC0u) step = 2u;
-                else if ((b & 0xF0u) == 0xE0u) step = 3u;
-                else if ((b & 0xF8u) == 0xF0u) step = 4u;
-                else step = 1u;
-                if (off + step > cur_col || off + step > line_bytes) break;
-                off += step;
-                ++cp_count;
-            }
+            /* Count rendered columns in the byte prefix [0, cur_col). */
+            const size_t cp_count = tv_visual_col_count(
+                line_buf, cur_col < line_bytes ? cur_col : line_bytes);
             Ca_Window *const caret_win = sol_ui_system_primary_window(ui);
 
             /* ca_measure_text_px and ca_font_line_metrics both return
