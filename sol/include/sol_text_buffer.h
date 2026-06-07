@@ -108,9 +108,20 @@ size_t sol_text_buffer_cursor_col  (const SolTextBuffer *tb);
 int  sol_text_buffer_scroll_top    (const SolTextBuffer *tb);
 void sol_text_buffer_set_scroll_top(SolTextBuffer *tb, int line);
 
+/* First visible visual column in the text viewport. Columns use the
+   renderer's monospace/tab expansion metrics rather than bytes. */
+int  sol_text_buffer_scroll_left    (const SolTextBuffer *tb);
+void sol_text_buffer_set_scroll_left(SolTextBuffer *tb, int col);
+
 /* Force scroll_top so that the cursor sits inside `viewport_lines`. */
 void sol_text_buffer_ensure_cursor_visible(SolTextBuffer *tb,
                                            int viewport_lines);
+
+/* Force vertical and horizontal scroll so the cursor sits inside the
+   visible viewport. `viewport_cols` is measured in visual columns. */
+void sol_text_buffer_ensure_cursor_visible_2d(SolTextBuffer *tb,
+                                              int viewport_lines,
+                                              int viewport_cols);
 
 /* Total visible line count (always >= 1 — an empty buffer has one
    logical empty line). */

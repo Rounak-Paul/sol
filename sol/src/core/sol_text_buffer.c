@@ -54,6 +54,7 @@ struct SolTextBuffer {
     size_t                cursor_byte;     /* absolute byte offset into the rope */
     size_t                preferred_col_cp;
     int                   scroll_top_line; /* first visible line                 */
+    int                   scroll_left_col; /* first visible visual column        */
     char                 *source_path;     /* owned; NULL for unsaved/scratch    */
 
     SolEventBus          *events;
@@ -231,6 +232,36 @@ static size_t tb_line_cp_count(const SolRope *r, size_t line, size_t byte_len)
         ++cp_count;
     }
     return cp_count;
+}
+
+/* Rendered visual-column count of the first `byte_len` bytes of `line`.
+   Tabs occupy four columns, printable codepoints occupy one, and controls
+   occupy zero so cursor settling matches the text view geometry. */
+static size_t tb_line_visual_col_count(const SolRope *r, size_t line,
+                                       size_t byte_len)
+{
+    if (!r) return 0u;
+    const size_t start = sol_rope_byte_of_line(r, line);
+    const size_t line_bytes = tb_line_byte_len(r, line);
+    if (byte_len > line_bytes) byte_len = line_bytes;
+
+    size_t visual = 0u;
+    size_t off = 0u;
+    while (off < byte_len) {
+        uint8_t b = 0;
+        if (tb_rope_read_at(r, start + off, &b, 1u) != 1u) break;
+        size_t step = tb_utf8_lead_len(b);
+        if (step == 0u) step = 1u;
+        if (off + step > byte_len) break;
+
+        if (b == (uint8_t)'\t') {
+            visual += 4u;
+        } else if ((b >= 32u && b != 0x7Fu) || b >= 0x80u) {
+            visual += 1u;
+        }
+        off += step;
+    }
+    return visual;
 }
 
 /* Byte offset within `line` corresponding to codepoint column `cp_col`,
@@ -617,6 +648,18 @@ void sol_text_buffer_set_scroll_top(SolTextBuffer *tb, int line)
     tb->scroll_top_line = line;
 }
 
+int sol_text_buffer_scroll_left(const SolTextBuffer *tb)
+{
+    return tb ? tb->scroll_left_col : 0;
+}
+
+void sol_text_buffer_set_scroll_left(SolTextBuffer *tb, int col)
+{
+    if (!tb) return;
+    if (col < 0) col = 0;
+    tb->scroll_left_col = col;
+}
+
 size_t sol_text_buffer_line_count(const SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return 1u;
@@ -666,6 +709,31 @@ void sol_text_buffer_ensure_cursor_visible(SolTextBuffer *tb, int viewport)
         tb->scroll_top_line = cur_line - viewport + 1;
     }
     if (tb->scroll_top_line < 0) tb->scroll_top_line = 0;
+}
+
+void sol_text_buffer_ensure_cursor_visible_2d(SolTextBuffer *tb,
+                                              int viewport_lines,
+                                              int viewport_cols)
+{
+    if (!tb || !tb->rope) return;
+    sol_text_buffer_ensure_cursor_visible(tb, viewport_lines);
+    if (viewport_cols <= 0) return;
+
+    const size_t line = sol_text_buffer_cursor_line(tb);
+    const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
+    size_t col_bytes = tb->cursor_byte >= line_start
+        ? tb->cursor_byte - line_start : 0u;
+    const size_t line_bytes = tb_line_byte_len(tb->rope, line);
+    if (col_bytes > line_bytes) col_bytes = line_bytes;
+
+    const int cursor_col = (int)tb_line_visual_col_count(
+        tb->rope, line, col_bytes);
+    if (cursor_col < tb->scroll_left_col) {
+        tb->scroll_left_col = cursor_col;
+    } else if (cursor_col >= tb->scroll_left_col + viewport_cols) {
+        tb->scroll_left_col = cursor_col - viewport_cols + 1;
+    }
+    if (tb->scroll_left_col < 0) tb->scroll_left_col = 0;
 }
 
 /* ------------------------------------------------------------------ */

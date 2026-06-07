@@ -116,6 +116,7 @@ static void test_empty_buffer(SolTestCtx *T)
     SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_line(tb), 0);
     SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_col(tb), 0);
     SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_top(tb), 0);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 0);
 
     char out[64];
     size_t n = sol_text_buffer_copy_line(tb, 0, out, sizeof(out));
@@ -464,6 +465,47 @@ static void test_ensure_cursor_visible(SolTestCtx *T)
     sol_buffer_system_destroy(sys);
 }
 
+static void test_scroll_left(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolTextBuffer *tb = open_empty_tb(sys);
+
+    sol_text_buffer_set_scroll_left(tb, 12);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 12);
+
+    sol_text_buffer_set_scroll_left(tb, -8);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 0);
+
+    sol_buffer_system_destroy(sys);
+}
+
+static void test_ensure_cursor_visible_2d(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolBufferId id = sol_text_buffer_open_string(
+        sys, "wide", "abcdef\n\txyz", strlen("abcdef\n\txyz"), NULL, NULL);
+    SolTextBuffer *tb = sol_text_buffer_state(sol_buffer_get(sys, id));
+
+    sol_text_buffer_set_cursor_to(tb, 0, 5);
+    sol_text_buffer_ensure_cursor_visible_2d(tb, 3, 4);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_top(tb), 0);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 2);
+
+    sol_text_buffer_set_cursor_to(tb, 0, 1);
+    sol_text_buffer_ensure_cursor_visible_2d(tb, 3, 4);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 1);
+
+    sol_text_buffer_set_cursor_to(tb, 1, 2);
+    sol_text_buffer_ensure_cursor_visible_2d(tb, 3, 4);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 2);
+
+    sol_text_buffer_set_cursor_to(tb, 0, 0);
+    sol_text_buffer_ensure_cursor_visible_2d(tb, 3, 4);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(tb), 0);
+
+    sol_buffer_system_destroy(sys);
+}
+
 static void test_copy_line(SolTestCtx *T)
 {
     SolBufferSystem *sys = make_system();
@@ -587,6 +629,9 @@ static void test_null_safety(SolTestCtx *T)
     SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_line(NULL), 0);
     SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_col(NULL), 0);
     SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_top(NULL), 0);
+    SOL_CHECK_EQ_INT(T, sol_text_buffer_scroll_left(NULL), 0);
+    sol_text_buffer_set_scroll_left(NULL, 1);
+    sol_text_buffer_ensure_cursor_visible_2d(NULL, 1, 1);
     SOL_CHECK(T, !sol_text_buffer_insert_codepoint(NULL, 'A'));
     SOL_CHECK(T, !sol_text_buffer_insert_newline(NULL));
     SOL_CHECK(T, !sol_text_buffer_backspace(NULL));
@@ -654,6 +699,8 @@ int main(void)
     SOL_RUN(s, test_set_cursor_to);
     SOL_RUN(s, test_scroll_top);
     SOL_RUN(s, test_ensure_cursor_visible);
+    SOL_RUN(s, test_scroll_left);
+    SOL_RUN(s, test_ensure_cursor_visible_2d);
     SOL_RUN(s, test_copy_line);
     SOL_RUN(s, test_find_by_path);
     SOL_RUN(s, test_event_text_edited);

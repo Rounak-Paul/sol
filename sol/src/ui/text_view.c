@@ -47,6 +47,10 @@
 
 /* Internal vertical padding inside .buffer-text-col. */
 #define SOL_TEXT_TEXT_PADDING_PX 16
+#define SOL_TEXT_TEXT_PADDING_X_PX 16
+#define SOL_TEXT_GUTTER_WIDTH_PX 56
+#define SOL_TEXT_SCROLLBAR_WIDTH_PX 14
+#define SOL_TEXT_HSCROLLBAR_HEIGHT_PX 14
 
 /* Maximum bytes we'll read for a single visible line. Lines longer
    than this are truncated for display; the buffer content is
@@ -79,6 +83,16 @@ typedef struct TextClickCtx {
     SolBufferNodeId     leaf_id;
     SolTextBuffer      *tb;
 } TextClickCtx;
+
+typedef struct ScrollbarDragCtx {
+    SolUISystem    *ui;
+    SolTextBuffer  *tb;
+    bool            is_vertical;
+    int             max_scroll;
+    float           track_len;
+    float           thumb_len;
+    float           grab_offset;
+} ScrollbarDragCtx;
 
 /* Count displayed monospace columns in the first `byte_len` bytes of `buf`.
    Causality renders tabs as four invisible space advances, so editor
@@ -147,6 +161,15 @@ static size_t tv_cp_col_from_visual_col(const char *buf, size_t byte_len,
 static TextClickCtx g_click_ring[SOL_TEXT_VIEW_CLICK_RING];
 static int          g_click_ring_cursor = 0;
 
+#define SOL_TEXT_VIEW_SCROLLBAR_RING 64
+static ScrollbarDragCtx g_scrollbar_ring[SOL_TEXT_VIEW_SCROLLBAR_RING];
+static int              g_scrollbar_ring_cursor = 0;
+
+static SolTextBuffer *g_scrollbar_drag_tb = NULL;
+static bool           g_scrollbar_drag_vertical = false;
+static float          g_scrollbar_drag_grab_offset = 0.0f;
+static bool           g_scrollbar_drag_active = false;
+
 static char *acquire_line_slot(void)
 {
     return g_line_ring[g_line_ring_cursor++ & (SOL_TEXT_VIEW_LINE_RING - 1)];
@@ -158,6 +181,11 @@ static char *acquire_num_slot(void)
 static TextClickCtx *acquire_click_slot(void)
 {
     return &g_click_ring[g_click_ring_cursor++ & (SOL_TEXT_VIEW_CLICK_RING - 1)];
+}
+static ScrollbarDragCtx *acquire_scrollbar_slot(void)
+{
+    return &g_scrollbar_ring[
+        g_scrollbar_ring_cursor++ & (SOL_TEXT_VIEW_SCROLLBAR_RING - 1)];
 }
 
 /* Per-frame token-segment storage.
@@ -317,6 +345,24 @@ int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale)
     return n;
 }
 
+int sol_text_view_visible_cols_for_width(float pane_w, float ui_scale,
+                                         float glyph_advance_layout_px)
+{
+    if (ui_scale <= 0.0f) ui_scale = 1.0f;
+    float adv = glyph_advance_layout_px / ui_scale;
+    if (adv <= 0.0f) adv = SOL_UI_BOOT_FONT_SIZE_PX_FLOAT * 0.6f;
+
+    float avail = pane_w
+        - (float)SOL_TEXT_GUTTER_WIDTH_PX
+        - (float)SOL_TEXT_SCROLLBAR_WIDTH_PX
+        - (float)SOL_TEXT_TEXT_PADDING_X_PX;
+    if (avail < adv) avail = adv;
+
+    int cols = (int)(avail / adv);
+    if (cols < 1) cols = 1;
+    return cols;
+}
+
 /* Resolve the monospace glyph advance for caret / click math. Falls
    back to a 60% ratio of the font size when the window can't measure
    yet (no font atlas warmed up). */
@@ -326,6 +372,24 @@ static float glyph_advance_px_for(Ca_Window *win)
                   : 0.0f;
     if (w <= 0.0f) w = SOL_UI_BOOT_FONT_SIZE_PX_FLOAT * 0.6f;
     return w;
+}
+
+static size_t visible_max_line_cols(const SolTextBuffer *tb, int scroll_top,
+                                    int rendered)
+{
+    if (!tb || rendered <= 0) return 0u;
+    const int total = (int)sol_text_buffer_line_count(tb);
+    size_t max_cols = 0u;
+    for (int i = 0; i < rendered; ++i) {
+        const int line_idx = scroll_top + i;
+        if (line_idx < 0 || line_idx >= total) continue;
+        char line_buf[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+        const size_t line_bytes = sol_text_buffer_copy_line(
+            tb, (size_t)line_idx, line_buf, sizeof(line_buf));
+        const size_t cols = tv_visual_col_count(line_buf, line_bytes);
+        if (cols > max_cols) max_cols = cols;
+    }
+    return max_cols;
 }
 
 /* ------------------------------------------------------------------ */
@@ -354,7 +418,8 @@ static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
     if (line_idx >= total) line_idx = total - 1;
 
     const float adv = glyph_advance_px_for(win);
-    int visual_col = (int)((local_x / adv) + 0.5f);
+    int visual_col = sol_text_buffer_scroll_left(cb->tb)
+        + (int)((local_x / adv) + 0.5f);
     if (visual_col < 0) visual_col = 0;
 
     char line_buf[SOL_TEXT_VIEW_MAX_LINE_BYTES];
@@ -401,6 +466,72 @@ static void on_text_col_drag_move(const Ca_DragEvent *ev, void *user_data)
     sol_ui_system_invalidate_buffer_area(cb->ui);
 }
 
+static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
+{
+    ScrollbarDragCtx *ctx = (ScrollbarDragCtx *)user_data;
+    if (!ev || !ctx || !ctx->tb) return;
+
+    const int current = ctx->is_vertical
+        ? sol_text_buffer_scroll_top(ctx->tb)
+        : sol_text_buffer_scroll_left(ctx->tb);
+    const float travel = ctx->track_len - ctx->thumb_len;
+    const float pct = (ctx->max_scroll > 0 && travel > 0.0f)
+        ? (float)current / (float)ctx->max_scroll : 0.0f;
+    const float thumb_pos = pct * travel;
+    const float pointer = ctx->is_vertical ? ev->local_y : ev->local_x;
+
+    if (pointer >= thumb_pos && pointer <= thumb_pos + ctx->thumb_len) {
+        ctx->grab_offset = pointer - thumb_pos;
+    } else {
+        ctx->grab_offset = ctx->thumb_len * 0.5f;
+    }
+    g_scrollbar_drag_tb = ctx->tb;
+    g_scrollbar_drag_vertical = ctx->is_vertical;
+    g_scrollbar_drag_grab_offset = ctx->grab_offset;
+    g_scrollbar_drag_active = true;
+}
+
+static void on_scrollbar_drag(const Ca_DragEvent *ev, void *user_data)
+{
+    ScrollbarDragCtx *ctx = (ScrollbarDragCtx *)user_data;
+    if (!ev || !ctx || !ctx->tb || ctx->max_scroll <= 0) return;
+
+    const float travel = ctx->track_len - ctx->thumb_len;
+    if (travel <= 0.0f) return;
+
+    const float pointer = ctx->is_vertical ? ev->local_y : ev->local_x;
+    float grab_offset = ctx->grab_offset;
+    if (g_scrollbar_drag_active &&
+        g_scrollbar_drag_tb == ctx->tb &&
+        g_scrollbar_drag_vertical == ctx->is_vertical) {
+        grab_offset = g_scrollbar_drag_grab_offset;
+    }
+    float pct = (pointer - grab_offset) / travel;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 1.0f) pct = 1.0f;
+
+    int scroll = (int)(pct * (float)ctx->max_scroll + 0.5f);
+    if (scroll < 0) scroll = 0;
+    if (scroll > ctx->max_scroll) scroll = ctx->max_scroll;
+
+    if (ctx->is_vertical) {
+        sol_text_buffer_set_scroll_top(ctx->tb, scroll);
+    } else {
+        sol_text_buffer_set_scroll_left(ctx->tb, scroll);
+    }
+    if (ctx->ui) sol_ui_system_invalidate_buffer_area(ctx->ui);
+}
+
+static void on_scrollbar_drag_end(const Ca_DragEvent *ev, void *user_data)
+{
+    (void)ev;
+    (void)user_data;
+    g_scrollbar_drag_tb = NULL;
+    g_scrollbar_drag_vertical = false;
+    g_scrollbar_drag_grab_offset = 0.0f;
+    g_scrollbar_drag_active = false;
+}
+
 /* ------------------------------------------------------------------ */
 /* Render                                                              */
 /* ------------------------------------------------------------------ */
@@ -445,6 +576,34 @@ void sol_text_view_render(const SolBuffer *buffer,
 
     const size_t cur_line = sol_text_buffer_cursor_line(tb);
     const size_t cur_col  = sol_text_buffer_cursor_col(tb);
+    const float adv_css = glyph_advance_px_for(primary_win) / ui_scale;
+    const int viewport_cols = sol_text_view_visible_cols_for_width(
+        args ? args->rect.w : 0.0f, ui_scale, adv_css * ui_scale);
+    const size_t max_line_cols = visible_max_line_cols(tb, scroll_top, rendered);
+    const int max_left = max_line_cols > (size_t)viewport_cols
+        ? (int)(max_line_cols - (size_t)viewport_cols) : 0;
+    int scroll_left = sol_text_buffer_scroll_left(tb);
+    if (scroll_left > max_left) scroll_left = max_left;
+    if (scroll_left < 0) scroll_left = 0;
+    if (scroll_left != sol_text_buffer_scroll_left(tb)) {
+        sol_text_buffer_set_scroll_left(tb, scroll_left);
+    }
+    const float scroll_x = (float)scroll_left * adv_css;
+    float line_content_w = (float)(max_line_cols + 1u) * adv_css;
+    if (line_content_w < (float)(viewport_cols + 1) * adv_css) {
+        line_content_w = (float)(viewport_cols + 1) * adv_css;
+    }
+    float pane_w = args ? args->rect.w : 0.0f;
+    if (pane_w <= 0.0f) {
+        int win_w = 0;
+        if (ui) sol_ui_system_window_size(ui, &win_w, NULL);
+        if (win_w <= 0) win_w = 800;
+        pane_w = (float)win_w;
+    }
+    float text_track_w = pane_w
+        - (float)SOL_TEXT_GUTTER_WIDTH_PX
+        - (float)SOL_TEXT_SCROLLBAR_WIDTH_PX;
+    if (text_track_w < adv_css) text_track_w = (float)viewport_cols * adv_css;
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
@@ -496,7 +655,7 @@ void sol_text_view_render(const SolBuffer *buffer,
         sol_text_buffer_selection_range(tb, &sel_start, &sel_end);
 
     /* CSS-px glyph advance used for selection geometry (pre-scaled). */
-    const float sel_adv = glyph_advance_px_for(primary_win) / ui_scale;
+    const float sel_adv = adv_css;
     /* Rope reference for per-line byte offset queries. */
     const SolRope *rope_ref = sol_text_buffer_rope((SolBuffer *)buffer);
     /* Selection highlight colour — dark steel blue. */
@@ -521,6 +680,16 @@ void sol_text_view_render(const SolBuffer *buffer,
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_HORIZONTAL,
             .style     = "buffer-line-row",
+        });
+
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .position  = CA_POSITION_ABSOLUTE,
+            .pos_x     = -scroll_x,
+            .pos_y     = 0.0f,
+            .width     = line_content_w,
+            .height    = (float)SOL_TEXT_LINE_HEIGHT_PX,
+            .style     = "buffer-line-content",
         });
 
         /* ---- Selection highlight (behind text, z_index = -1) ---- */
@@ -617,7 +786,58 @@ void sol_text_view_render(const SolBuffer *buffer,
             ca_div_end();
         }
 
+        ca_div_end();   /* buffer-line-content */
         ca_div_end();   /* buffer-line-row */
+    }
+
+    if (max_left > 0) {
+        const float track_w = text_track_w;
+        float thumb_w = track_w * (float)viewport_cols / (float)max_line_cols;
+        if (thumb_w < 24.0f) thumb_w = 24.0f;
+        if (thumb_w > track_w) thumb_w = track_w;
+        const float free_w = track_w - thumb_w;
+        const float left_spacer = free_w * (float)scroll_left / (float)max_left;
+        float hbar_y = pane_h - (float)SOL_TEXT_HSCROLLBAR_HEIGHT_PX;
+        if (hbar_y < 0.0f) hbar_y = 0.0f;
+
+        ScrollbarDragCtx *hctx = acquire_scrollbar_slot();
+        hctx->ui = ui;
+        hctx->tb = tb;
+        hctx->is_vertical = false;
+        hctx->max_scroll = max_left;
+        hctx->track_len = track_w;
+        hctx->thumb_len = thumb_w;
+        hctx->grab_offset = 0.0f;
+
+        ca_div_begin(&(Ca_DivDesc){
+            .direction     = CA_HORIZONTAL,
+            .position      = CA_POSITION_ABSOLUTE,
+            .pos_x         = 0.0f,
+            .pos_y         = hbar_y,
+            .width         = track_w,
+            .height        = (float)SOL_TEXT_HSCROLLBAR_HEIGHT_PX,
+            .style         = "buffer-hscrollbar",
+            .on_drag_start = on_scrollbar_drag_start,
+            .on_drag       = on_scrollbar_drag,
+            .on_drag_end   = on_scrollbar_drag_end,
+            .drag_data     = hctx,
+        });
+        if (left_spacer >= 0.5f) {
+            ca_div_begin(&(Ca_DivDesc){
+                .style = "buffer-hscrollbar-spacer",
+                .width = left_spacer,
+            });
+            ca_div_end();
+        }
+        ca_div_begin(&(Ca_DivDesc){
+            .style = args && args->is_active
+                ? "buffer-hscrollbar-thumb buffer-hscrollbar-thumb-active"
+                : "buffer-hscrollbar-thumb",
+            .width = thumb_w,
+            .height = (float)SOL_TEXT_HSCROLLBAR_HEIGHT_PX,
+        });
+        ca_div_end();
+        ca_div_end();   /* buffer-hscrollbar */
     }
     ca_div_end();   /* buffer-text-col */
 
@@ -630,16 +850,29 @@ void sol_text_view_render(const SolBuffer *buffer,
          * SOL_TEXT_LINE_HEIGHT_PX directly — do NOT multiply by ui_scale
          * here, otherwise at ui_scale > 1.0 the thumb would be double-scaled
          * and appear oversized / mispositioned. */
-        const float track_h     = (float)viewport * (float)SOL_TEXT_LINE_HEIGHT_PX;
+        const float track_h     = pane_h;
         float thumb_h           = track_h * (float)viewport / (float)total;
         if (thumb_h < 16.0f) thumb_h = 16.0f;
         if (thumb_h > track_h) thumb_h = track_h;
         const float free_h      = track_h - thumb_h;
         const float top_spacer  = free_h * (float)scroll_top / (float)max_top;
 
+        ScrollbarDragCtx *vctx = acquire_scrollbar_slot();
+        vctx->ui = ui;
+        vctx->tb = tb;
+        vctx->is_vertical = true;
+        vctx->max_scroll = max_top;
+        vctx->track_len = track_h;
+        vctx->thumb_len = thumb_h;
+        vctx->grab_offset = 0.0f;
+
         ca_div_begin(&(Ca_DivDesc){
-            .direction = CA_VERTICAL,
-            .style     = "buffer-scrollbar",
+            .direction     = CA_VERTICAL,
+            .style         = "buffer-scrollbar",
+            .on_drag_start = on_scrollbar_drag_start,
+            .on_drag       = on_scrollbar_drag,
+            .on_drag_end   = on_scrollbar_drag_end,
+            .drag_data     = vctx,
         });
         /* Skip a zero-height spacer — causality treats .height == 0 as
            auto/flex which would push the thumb to the bottom. */

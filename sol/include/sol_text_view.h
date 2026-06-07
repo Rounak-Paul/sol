@@ -38,6 +38,12 @@ int sol_text_view_visible_lines(int window_h, float ui_scale);
    This is the geometry-aware variant used by split buffer panes. */
 int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale);
 
+/* Number of visual monospace columns that fit in the text viewport for
+   a pane width in CSS px. `glyph_advance_layout_px` is the measured
+   monospace advance in layout pixels; pass 0 to use the fallback. */
+int sol_text_view_visible_cols_for_width(float pane_w, float ui_scale,
+                                         float glyph_advance_layout_px);
+
 #ifdef __cplusplus
 }
 #endif

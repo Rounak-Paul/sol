@@ -19,6 +19,7 @@
 #include "sol_input.h"
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
+#include "sol_ui_constants.h"
 #include "sol_ui_system.h"
 
 /* ------------------------------------------------------------------ */
@@ -32,6 +33,7 @@ struct SolInputRouter {
     SolBufferSystem *buffers;
     double           mouse_x;
     double           mouse_y;
+    double           horizontal_scroll_remainder;
     bool             suppress_next_text_input;
 };
 
@@ -49,6 +51,36 @@ static SolModifierMask modifiers_from_ca(int mods)
     if (mods & 0x0004) out |= SOL_MOD_ALT;
     if (mods & 0x0008) out |= SOL_MOD_SUPER;
     return out;
+}
+
+/* Resolve the monospace advance used by the text view, in layout pixels. */
+static float router_glyph_advance_px(Ca_Window *win)
+{
+    float w = win ? ca_measure_text_px(win, "M", SOL_UI_BOOT_FONT_SIZE_PX_FLOAT)
+                  : 0.0f;
+    if (w <= 0.0f) w = SOL_UI_BOOT_FONT_SIZE_PX_FLOAT * 0.6f;
+    return w;
+}
+
+/* Convert one wheel axis to editor scroll columns/rows. */
+static int scroll_delta_from_axis(double amount)
+{
+    int delta = (int)(amount * 3.0);
+    if (delta == 0) {
+        delta = amount > 0.0 ? 1 : amount < 0.0 ? -1 : 0;
+    }
+    return delta;
+}
+
+static int horizontal_scroll_delta(SolInputRouter *r, double dx)
+{
+    if (!r || dx == 0.0) return 0;
+    r->horizontal_scroll_remainder += -dx * 3.0;
+    const int delta = (int)r->horizontal_scroll_remainder;
+    if (delta != 0) {
+        r->horizontal_scroll_remainder -= (double)delta;
+    }
+    return delta;
 }
 
 /* Printable keys arrive twice from GLFW — once as KEY and again decoded
@@ -75,18 +107,23 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
             sol_text_view_visible_lines_for_height(leaf_rect.h, ui_scale);
         int viewport = viewport_full - 2;
         if (viewport < 1) viewport = 1;
-        sol_text_buffer_ensure_cursor_visible(tb, viewport);
+        const int viewport_cols = sol_text_view_visible_cols_for_width(
+            leaf_rect.w, ui_scale, router_glyph_advance_px(win));
+        sol_text_buffer_ensure_cursor_visible_2d(tb, viewport, viewport_cols);
         sol_ui_system_invalidate_buffer_area(r->ui);
         return;
     }
 
-    int win_h = 0;
-    sol_ui_system_window_size(r->ui, NULL, &win_h);
+    int win_w = 0, win_h = 0;
+    sol_ui_system_window_size(r->ui, &win_w, &win_h);
+    if (win_w <= 0) win_w = 800;
     if (win_h <= 0) win_h = 600;
     const int viewport_full = sol_text_view_visible_lines(win_h, ui_scale);
     int viewport = viewport_full - 2;
     if (viewport < 1) viewport = 1;
-    sol_text_buffer_ensure_cursor_visible(tb, viewport);
+    const int viewport_cols = sol_text_view_visible_cols_for_width(
+        (float)win_w, ui_scale, router_glyph_advance_px(win));
+    sol_text_buffer_ensure_cursor_visible_2d(tb, viewport, viewport_cols);
     sol_ui_system_invalidate_buffer_area(r->ui);
 }
 
@@ -305,8 +342,20 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
         if (new_top < 0) new_top = 0;
         if (new_top > max_top) new_top = max_top;
 
-        if (new_top != sol_text_buffer_scroll_top(tb)) {
+        int new_left = sol_text_buffer_scroll_left(tb);
+        if (ev->mouse_scroll.dx != 0.0) {
+            const int dx = horizontal_scroll_delta(r, ev->mouse_scroll.dx);
+            new_left += dx;
+            if (new_left < 0) {
+                new_left = 0;
+                r->horizontal_scroll_remainder = 0.0;
+            }
+        }
+
+        if (new_top != sol_text_buffer_scroll_top(tb) ||
+            new_left != sol_text_buffer_scroll_left(tb)) {
             sol_text_buffer_set_scroll_top(tb, new_top);
+            sol_text_buffer_set_scroll_left(tb, new_left);
             sol_ui_system_invalidate_buffer_area(r->ui);
         }
         return;
@@ -329,8 +378,20 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     if (new_top < 0) new_top = 0;
     if (new_top > max_top) new_top = max_top;
 
-    if (new_top != sol_text_buffer_scroll_top(tb)) {
+    int new_left = sol_text_buffer_scroll_left(tb);
+    if (ev->mouse_scroll.dx != 0.0) {
+        const int dx = horizontal_scroll_delta(r, ev->mouse_scroll.dx);
+        new_left += dx;
+        if (new_left < 0) {
+            new_left = 0;
+            r->horizontal_scroll_remainder = 0.0;
+        }
+    }
+
+    if (new_top != sol_text_buffer_scroll_top(tb) ||
+        new_left != sol_text_buffer_scroll_left(tb)) {
         sol_text_buffer_set_scroll_top(tb, new_top);
+        sol_text_buffer_set_scroll_left(tb, new_left);
         sol_ui_system_invalidate_buffer_area(r->ui);
     }
 }
