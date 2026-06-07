@@ -34,6 +34,7 @@ struct SolInputRouter {
     double           mouse_x;
     double           mouse_y;
     double           horizontal_scroll_remainder;
+    bool             buffer_input_active;
     bool             suppress_next_text_input;
 };
 
@@ -81,6 +82,42 @@ static int horizontal_scroll_delta(SolInputRouter *r, double dx)
         r->horizontal_scroll_remainder -= (double)delta;
     }
     return delta;
+}
+
+static bool event_is_from_primary_window(const SolInputRouter *r,
+                                         const Ca_Event *ev)
+{
+    if (!r || !r->ui || !ev || !ev->window) return false;
+    return ev->window == sol_ui_system_primary_window(r->ui);
+}
+
+static bool point_in_active_buffer_leaf(SolInputRouter *r,
+                                        double x, double y,
+                                        SolBufferRect *out_root,
+                                        SolBufferNodeId *out_leaf)
+{
+    if (out_leaf) *out_leaf = 0u;
+    if (!r || !r->ui || !r->buffers) return false;
+
+    SolBufferRect root = {0};
+    if (!sol_ui_system_buffer_area_rect(r->ui, &root.x, &root.y,
+                                        &root.w, &root.h)) {
+        return false;
+    }
+    if (out_root) *out_root = root;
+
+    if (x < root.x || x > root.x + root.w ||
+        y < root.y || y > root.y + root.h) {
+        return false;
+    }
+
+    const SolBufferNodeId leaf = sol_buffer_leaf_at_point(
+        r->buffers, root.x, root.y, root.w, root.h,
+        SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX,
+        (float)x, (float)y);
+    if (leaf == 0u) return false;
+    if (out_leaf) *out_leaf = leaf;
+    return true;
 }
 
 /* Printable keys arrive twice from GLFW — once as KEY and again decoded
@@ -180,6 +217,11 @@ static void on_key(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
     if (!ev || !r) return;
+    if (!event_is_from_primary_window(r, ev)) {
+        r->buffer_input_active = false;
+        r->suppress_next_text_input = false;
+        return;
+    }
 
     SolInputEvent ie = {0};
     if (ev->key.action == CA_RELEASE) {
@@ -208,6 +250,7 @@ static void on_key(const Ca_Event *ev, void *user_data)
     if (ie.type != SOL_INPUT_EVENT_KEY_DOWN) return;
     if (ui_consumed) return;
     if (sol_ui_system_is_leader_active(r->ui)) return;
+    if (!r->buffer_input_active) return;
     if (key_is_printable_alpha(ie.data.key.key)) return;
     handle_text_buffer_key(r, ie.data.key.key, ie.data.key.modifiers);
 }
@@ -216,6 +259,11 @@ static void on_char(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
     if (!ev || !r) return;
+    if (!event_is_from_primary_window(r, ev)) {
+        r->buffer_input_active = false;
+        r->suppress_next_text_input = false;
+        return;
+    }
 
     SolInputEvent ie = {0};
     ie.type = SOL_INPUT_EVENT_TEXT_INPUT;
@@ -228,6 +276,7 @@ static void on_char(const Ca_Event *ev, void *user_data)
     }
 
     if (sol_ui_system_is_leader_active(r->ui)) return;
+    if (!r->buffer_input_active) return;
     const uint32_t cp = ev->character.codepoint;
     if (cp == 0u) return;
     if (cp < 0x20u && cp != 0x09u) return;  /* C0 controls except TAB */
@@ -244,6 +293,10 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
     if (!ev || !r) return;
+    if (!event_is_from_primary_window(r, ev)) {
+        r->buffer_input_active = false;
+        return;
+    }
 
     SolInputEvent ie = {0};
     if (ev->mouse_button.action == CA_RELEASE) {
@@ -258,12 +311,21 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
     ie.data.mouse_button.modifiers = modifiers_from_ca(ev->mouse_button.mods);
     ie.data.mouse_button.repeated  = (ev->mouse_button.action == CA_REPEAT);
     sol_input_system_process_event(r->input, &ie);
+
+    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN) {
+        r->buffer_input_active = point_in_active_buffer_leaf(
+            r, r->mouse_x, r->mouse_y, NULL, NULL);
+        if (!r->buffer_input_active) {
+            r->horizontal_scroll_remainder = 0.0;
+        }
+    }
 }
 
 static void on_mouse_move(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
     if (!ev || !r) return;
+    if (!event_is_from_primary_window(r, ev)) return;
 
     r->mouse_x = ev->mouse_pos.x;
     r->mouse_y = ev->mouse_pos.y;
@@ -279,6 +341,11 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
     if (!ev || !r) return;
+    if (!event_is_from_primary_window(r, ev)) {
+        r->buffer_input_active = false;
+        r->horizontal_scroll_remainder = 0.0;
+        return;
+    }
 
     SolInputEvent ie = {0};
     ie.type = SOL_INPUT_EVENT_MOUSE_SCROLL;
@@ -293,25 +360,14 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     if (win_w <= 0 || win_h <= 0) return;
 
     SolBufferRect root_rect = {0};
-    if (!sol_ui_system_buffer_area_rect(r->ui, &root_rect.x, &root_rect.y,
-                                        &root_rect.w, &root_rect.h)) {
+    SolBufferNodeId target_leaf = 0u;
+    const double mx = r->mouse_x, my = r->mouse_y;
+    if (!point_in_active_buffer_leaf(r, mx, my, &root_rect, &target_leaf)) {
+        r->horizontal_scroll_remainder = 0.0;
         return;
     }
 
-    SolBufferId target = 0u;
-    SolBufferNodeId target_leaf = 0u;
-    const double mx = r->mouse_x, my = r->mouse_y;
-    if (mx >= root_rect.x && mx <= root_rect.x + root_rect.w &&
-        my >= root_rect.y && my <= root_rect.y + root_rect.h)
-    {
-        target_leaf = sol_buffer_leaf_at_point(
-            r->buffers, root_rect.x, root_rect.y, root_rect.w, root_rect.h,
-            SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX,
-            (float)mx, (float)my);
-        if (target_leaf != 0u) target = sol_buffer_leaf_buffer(r->buffers, target_leaf);
-    }
-    if (target == 0u) target = sol_buffer_active_buffer(r->buffers);
-    if (target_leaf == 0u) target_leaf = sol_buffer_active_leaf(r->buffers);
+    SolBufferId target = sol_buffer_leaf_buffer(r->buffers, target_leaf);
     if (target == 0u) return;
 
     SolBuffer *buf = sol_buffer_get(r->buffers, target);
@@ -407,6 +463,7 @@ static void on_window_resize(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
     if (!ev || !r) return;
+    if (!event_is_from_primary_window(r, ev)) return;
     sol_ui_system_on_window_resize(r->ui, ev->resize.width, ev->resize.height);
 }
 
@@ -425,6 +482,7 @@ SolInputRouter *sol_input_router_create(Ca_Instance *instance, SolUISystem *ui,
     r->ui       = ui;
     r->input    = input;
     r->buffers  = buffers;
+    r->buffer_input_active = sol_buffer_active_buffer(buffers) != 0u;
 
     ca_event_set_handler(instance, CA_EVENT_KEY,           on_key,           r);
     ca_event_set_handler(instance, CA_EVENT_CHAR,          on_char,          r);
