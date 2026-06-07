@@ -51,6 +51,10 @@ bool sol_platform_get_cwd(char *buffer, size_t buffer_size);
 char *sol_platform_config_home_dir(void);
 bool sol_platform_get_path_info(const char *path, SolPathInfo *out_info);
 bool sol_platform_mkdir_p(const char *path);
+bool sol_platform_create_empty_file(const char *path, bool fail_if_exists);
+bool sol_platform_remove_path_recursive(const char *path);
+bool sol_platform_copy_path_recursive(const char *source_path, const char *dest_path);
+bool sol_platform_move_path(const char *source_path, const char *dest_path);
 
 uint32_t sol_platform_cpu_count(void);
 uint64_t sol_platform_now_monotonic_ns(void);

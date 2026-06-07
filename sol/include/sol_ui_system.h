@@ -23,6 +23,58 @@ typedef struct SolUISystem SolUISystem;
 typedef bool (*SolUIFileOpenFn)(const char *path, void *user_data);
 typedef void (*SolUIFocusRegionFn)(bool in_explorer, void *user_data);
 
+typedef enum SolUIContextSurface {
+    SOL_UI_CONTEXT_SURFACE_WORKSPACE = 0,
+    SOL_UI_CONTEXT_SURFACE_EXPLORER_ROOT,
+    SOL_UI_CONTEXT_SURFACE_EXPLORER_ITEM,
+    SOL_UI_CONTEXT_SURFACE_EXPLORER_EMPTY,
+    SOL_UI_CONTEXT_SURFACE_BUFFER_TEXT,
+    SOL_UI_CONTEXT_SURFACE_BUFFER_BODY,
+    SOL_UI_CONTEXT_SURFACE_BUFFER_TAB,
+} SolUIContextSurface;
+
+typedef enum SolUIContextAction {
+    SOL_UI_CONTEXT_ACTION_NONE = 0,
+    SOL_UI_CONTEXT_ACTION_OPEN,
+    SOL_UI_CONTEXT_ACTION_OPEN_FILE_PICKER,
+    SOL_UI_CONTEXT_ACTION_OPEN_FOLDER_PICKER,
+    SOL_UI_CONTEXT_ACTION_NEW_BUFFER,
+    SOL_UI_CONTEXT_ACTION_CLOSE_BUFFER,
+    SOL_UI_CONTEXT_ACTION_SPLIT_VERTICAL,
+    SOL_UI_CONTEXT_ACTION_SPLIT_HORIZONTAL,
+    SOL_UI_CONTEXT_ACTION_NEW_FILE,
+    SOL_UI_CONTEXT_ACTION_NEW_FOLDER,
+    SOL_UI_CONTEXT_ACTION_DELETE_PATH,
+    SOL_UI_CONTEXT_ACTION_COPY_PATH,
+    SOL_UI_CONTEXT_ACTION_CUT_PATH,
+    SOL_UI_CONTEXT_ACTION_PASTE_PATH,
+    SOL_UI_CONTEXT_ACTION_COPY_TEXT,
+    SOL_UI_CONTEXT_ACTION_COPY_LINE,
+    SOL_UI_CONTEXT_ACTION_CUT_TEXT,
+    SOL_UI_CONTEXT_ACTION_PASTE_TEXT,
+    SOL_UI_CONTEXT_ACTION_PASTE_LINE,
+    SOL_UI_CONTEXT_ACTION_SELECT_ALL_TEXT,
+    SOL_UI_CONTEXT_ACTION_DELETE_TEXT,
+    SOL_UI_CONTEXT_ACTION_DELETE_LINE,
+} SolUIContextAction;
+
+typedef struct SolUIContextActionRequest {
+    SolUIContextAction action;
+    SolUIContextSurface surface;
+    const char *path;
+    bool path_is_dir;
+    SolBufferNodeId leaf_id;
+    SolBufferId buffer_id;
+    bool has_local_point;
+    float local_x;
+    float local_y;
+    float screen_x;
+    float screen_y;
+} SolUIContextActionRequest;
+
+typedef bool (*SolUIContextActionFn)(const SolUIContextActionRequest *request,
+                                     void *user_data);
+
 typedef struct SolCommandFlowDesc {
 	const char *action;
 	const char *label;
@@ -76,6 +128,13 @@ void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
 											 SolUIFocusRegionFn callback,
 											 void *user_data);
 
+/* Install the callback used by Causality-backed context menus.
+ * The UI only reports typed target/action requests; the application
+ * owns command dispatch and filesystem mutation policy. */
+void sol_ui_system_set_context_action_callback(SolUISystem *ui,
+                                               SolUIContextActionFn callback,
+                                               void *user_data);
+
 /* Force the buffer split-tree area to rebuild on the next reactive
  * flush. Call this after externally swapping the active buffer (e.g.
  * from a file-picker callback) so the new contents render immediately
@@ -114,6 +173,10 @@ int  sol_ui_system_tree_panel_width(const SolUISystem *ui);
  * arrows, backspace, …) while a flow is in progress, so e.g. pressing
  * Ctrl+W,V doesn't also insert characters into the active buffer. */
 bool sol_ui_system_is_leader_active(const SolUISystem *ui);
+
+void sol_ui_system_attach_buffer_text_context_menu(SolUISystem *ui,
+                                                   SolBufferNodeId leaf_id,
+                                                   SolBufferId buffer_id);
 
 /* Title-bar menu integration. The callbacks fire when the user
  * picks items from the "File" menu or clicks welcome-screen buttons.

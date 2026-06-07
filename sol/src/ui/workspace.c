@@ -339,6 +339,7 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
         });
         ca_btn_end();  /* buffer-tab-close */
         ca_btn_end();  /* buffer-tab */
+        sol_ui_attach_buffer_tab_context_menu(ui, active_leaf, tab_id);
     }
     ca_div_end();   /* buffer-tabs-row */
 }
@@ -390,6 +391,8 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
     }
 
     ca_btn_end();  /* buffer-body */
+    sol_ui_attach_buffer_body_context_menu(
+        ui, leaf_id, buffer ? sol_buffer_id(buffer) : 0u);
     ca_div_end();  /* buffer-pane */
 }
 
@@ -504,6 +507,7 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
         ca_div_end(); /* welcome-cols */
 
         ca_div_end(); /* welcome-pane */
+        sol_ui_attach_workspace_context_menu(ui);
         return;
     }
 
@@ -551,6 +555,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
     if (!ui) {
         return;
     }
+    sol_ui_reset_context_menu_ctxs(ui);
 
     /* Subscribe this effect to every signal whose state this builder
        reads. Causality re-runs us exactly when one of them changes:
@@ -599,6 +604,8 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         });
         sol_ui_render_file_tree_panel_body(ui);
         ca_div_end();   /* tree-panel (left pane) */
+        sol_ui_attach_explorer_empty_context_menu(
+            ui, sol_file_tree_root(ui->file_tree));
 
         /* Right pane — buffer area */
         ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
@@ -609,6 +616,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         sol_ui_render_global_tab_strip(ui);
         sol_ui_render_workspace_tree(ui);
         ca_div_end();   /* workspace-buffer-area (right pane) */
+        sol_ui_attach_workspace_context_menu(ui);
 
         ca_split_end();
     } else {
@@ -622,6 +630,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         sol_ui_render_global_tab_strip(ui);
         sol_ui_render_workspace_tree(ui);
         ca_div_end();   /* workspace-buffer-area */
+        sol_ui_attach_workspace_context_menu(ui);
     }
 
     ca_div_end();   /* workspace-main-content */
@@ -917,6 +926,13 @@ void sol_ui_system_destroy(SolUISystem *ui)
     ui->file_tree_click_ctxs = NULL;
     free(ui->pane_click_ctxs);
     ui->pane_click_ctxs = NULL;
+    if (ui->context_menu_ctxs) {
+        for (size_t i = 0u; i < ui->context_menu_ctx_capacity; ++i) {
+            free(ui->context_menu_ctxs[i]);
+        }
+    }
+    free(ui->context_menu_ctxs);
+    ui->context_menu_ctxs = NULL;
 
     if (ui->primary_window) {
         ca_window_destroy(ui->primary_window);
@@ -1365,4 +1381,13 @@ void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
     if (!ui) return;
     ui->focus_region_callback = callback;
     ui->focus_region_user_data = user_data;
+}
+
+void sol_ui_system_set_context_action_callback(SolUISystem *ui,
+                                               SolUIContextActionFn callback,
+                                               void *user_data)
+{
+    if (!ui) return;
+    ui->context_action_callback = callback;
+    ui->context_action_user_data = user_data;
 }

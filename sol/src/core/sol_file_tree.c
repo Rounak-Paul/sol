@@ -436,3 +436,18 @@ bool sol_file_tree_toggle(SolFileTree *tree, size_t index)
     bump_rev(tree);
     return true;
 }
+
+bool sol_file_tree_refresh(SolFileTree *tree)
+{
+    if (!tree || !tree->root_path) {
+        return false;
+    }
+
+    char *root = xstrdup(tree->root_path);
+    if (!root) {
+        return false;
+    }
+    const bool ok = sol_file_tree_set_root(tree, root);
+    free(root);
+    return ok;
+}

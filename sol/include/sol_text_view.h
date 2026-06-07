@@ -19,6 +19,9 @@
 
 #include "sol_buffer.h"
 
+typedef struct SolUISystem SolUISystem;
+typedef struct SolTextBuffer SolTextBuffer;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,6 +46,15 @@ int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale);
    monospace advance in layout pixels; pass 0 to use the fallback. */
 int sol_text_view_visible_cols_for_width(float pane_w, float ui_scale,
                                          float glyph_advance_layout_px);
+
+/* Convert text-view-local coordinates into a buffer line and codepoint column.
+   `ui` supplies current scale/window metrics; `tb` supplies scroll offsets. */
+bool sol_text_view_local_point_to_line_col(SolUISystem *ui,
+                                           SolTextBuffer *tb,
+                                           float local_x,
+                                           float local_y,
+                                           size_t *out_line,
+                                           size_t *out_cp_col);
 
 #ifdef __cplusplus
 }

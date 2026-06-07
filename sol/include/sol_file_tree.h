@@ -74,4 +74,9 @@ const SolFileEntry   *sol_file_tree_visible(const SolFileTree *tree, size_t inde
  * indices. Returns true if the visible list changed. */
 bool sol_file_tree_toggle(SolFileTree *tree, size_t index);
 
+/* Re-read the mounted root after external filesystem mutations.
+ * Expansion state is rebuilt from the root; callers that need stable
+ * expansion should add that policy above this pure tree layer. */
+bool sol_file_tree_refresh(SolFileTree *tree);
+
 #endif /* SOL_FILE_TREE_H */

@@ -72,8 +72,15 @@ typedef struct SolAppContext {
     SolInputRouter       *router;
     bool                  explorer_focused;
     SolBufferNodeId       focus_before_explorer;
+    char                  file_clipboard_path[4096];
+    bool                  file_clipboard_cut;
     SolSettings           settings;
 } SolAppContext;
+
+typedef struct SolDeletePathRequest {
+    SolAppContext *app;
+    char path[4096];
+} SolDeletePathRequest;
 
 /* ------------------------------------------------------------------ */
 /* Buffer-open glue                                                    */
@@ -162,6 +169,435 @@ static bool sol_open_path_in_active_leaf(SolAppContext *app, const char *path)
         fprintf(stderr, "sol: failed to focus buffer for '%s'\n", path);
     }
     return true;
+}
+
+static bool sol_path_starts_with_dir(const char *path, const char *dir)
+{
+    if (!path || !dir || dir[0] == '\0') return false;
+    const size_t n = strlen(dir);
+    if (strncmp(path, dir, n) != 0) return false;
+    return path[n] == '\0' || sol_platform_is_path_separator(path[n]) ||
+           (n > 0u && sol_platform_is_path_separator(dir[n - 1u]));
+}
+
+static bool sol_parent_dir_of(const char *path, char *out, size_t out_size)
+{
+    if (!path || !out || out_size == 0u) return false;
+    const char *last_sep = NULL;
+    for (const char *p = path; *p != '\0'; ++p) {
+        if (sol_platform_is_path_separator(*p)) last_sep = p;
+    }
+    if (!last_sep || last_sep == path) {
+        if (out_size < 2u) return false;
+        out[0] = last_sep ? path[0] : '.';
+        out[1] = '\0';
+        return true;
+    }
+    const size_t len = (size_t)(last_sep - path);
+    if (len + 1u > out_size) return false;
+    memcpy(out, path, len);
+    out[len] = '\0';
+    return true;
+}
+
+static bool sol_context_target_dir(const SolUIContextActionRequest *request,
+                                   char *out, size_t out_size)
+{
+    if (!request || !request->path || !out || out_size == 0u) return false;
+    if (request->path_is_dir) {
+        const size_t len = strlen(request->path);
+        if (len + 1u > out_size) return false;
+        memcpy(out, request->path, len + 1u);
+        return true;
+    }
+    return sol_parent_dir_of(request->path, out, out_size);
+}
+
+static bool sol_make_unique_child_path(const char *dir,
+                                       const char *stem,
+                                       const char *extension,
+                                       char *out,
+                                       size_t out_size)
+{
+    if (!dir || !stem || !out || out_size == 0u) return false;
+    const char *ext = extension ? extension : "";
+    for (int i = 0; i < 10000; ++i) {
+        char name[512];
+        if (i == 0) {
+            snprintf(name, sizeof(name), "%s%s", stem, ext);
+        } else {
+            snprintf(name, sizeof(name), "%s %d%s", stem, i + 1, ext);
+        }
+        char *joined = sol_platform_path_join(dir, name);
+        if (!joined) return false;
+        const size_t len = strlen(joined);
+        bool fits = len + 1u <= out_size;
+        SolPathInfo info;
+        const bool exists = sol_platform_get_path_info(joined, &info);
+        if (fits && !exists) {
+            memcpy(out, joined, len + 1u);
+            free(joined);
+            return true;
+        }
+        free(joined);
+    }
+    return false;
+}
+
+static bool sol_make_unique_copy_path(const char *dir,
+                                      const char *basename,
+                                      char *out,
+                                      size_t out_size)
+{
+    if (!dir || !basename || !out || out_size == 0u) return false;
+    char stem[384];
+    char ext[128];
+    const char *dot = strrchr(basename, '.');
+    if (dot && dot != basename) {
+        const size_t stem_len = (size_t)(dot - basename);
+        if (stem_len >= sizeof(stem) || strlen(dot) >= sizeof(ext)) return false;
+        memcpy(stem, basename, stem_len);
+        stem[stem_len] = '\0';
+        snprintf(ext, sizeof(ext), "%s", dot);
+    } else {
+        if (strlen(basename) >= sizeof(stem)) return false;
+        snprintf(stem, sizeof(stem), "%s", basename);
+        ext[0] = '\0';
+    }
+
+    char *joined = sol_platform_path_join(dir, basename);
+    if (!joined) return false;
+    const size_t direct_len = strlen(joined);
+    SolPathInfo info;
+    if (!sol_platform_get_path_info(joined, &info)) {
+        if (direct_len + 1u > out_size) {
+            free(joined);
+            return false;
+        }
+        memcpy(out, joined, direct_len + 1u);
+        free(joined);
+        return true;
+    }
+    free(joined);
+
+    char copy_stem[512];
+    snprintf(copy_stem, sizeof(copy_stem), "%s copy", stem);
+    return sol_make_unique_child_path(dir, copy_stem, ext, out, out_size);
+}
+
+static void sol_refresh_explorer(SolAppContext *app)
+{
+    if (!app || !app->ui) return;
+    const char *root = sol_ui_system_file_tree_root(app->ui);
+    if (root) {
+        char root_copy[4096];
+        const size_t len = strlen(root);
+        if (len < sizeof(root_copy)) {
+            memcpy(root_copy, root, len + 1u);
+            (void)sol_ui_system_set_file_tree_root(app->ui, root_copy);
+        }
+    }
+}
+
+static bool sol_publish_command(SolAppContext *app, const char *action)
+{
+    if (!app || !app->events || !action) return false;
+    SolCommandInvokedPayload payload;
+    payload.action = action;
+    sol_event_publish(app->events, SOL_EVENT_COMMAND_INVOKED,
+                      &payload, sizeof(payload), app->ui);
+    return true;
+}
+
+static void sol_focus_context_target(SolAppContext *app,
+                                     const SolUIContextActionRequest *request)
+{
+    if (!app || !app->ui || !app->buffers || !request) return;
+    if (request->leaf_id != 0u) {
+        (void)sol_ui_system_focus_leaf(app->ui, request->leaf_id);
+    }
+    if (request->buffer_id != 0u) {
+        (void)sol_buffer_set_active_leaf_buffer(app->buffers, request->buffer_id);
+    }
+}
+
+static SolTextBuffer *sol_prepare_context_text_target(
+    SolAppContext *app,
+    const SolUIContextActionRequest *request,
+    bool preserve_selection)
+{
+    if (!app || !request) return NULL;
+    sol_focus_context_target(app, request);
+
+    SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+    if (!tb) return NULL;
+
+    if (!request->has_local_point) {
+        return tb;
+    }
+    if (preserve_selection && sol_text_buffer_has_selection(tb)) {
+        return tb;
+    }
+
+    size_t line = 0u;
+    size_t cp_col = 0u;
+    if (sol_text_view_local_point_to_line_col(app->ui, tb,
+                                              request->local_x,
+                                              request->local_y,
+                                              &line, &cp_col)) {
+        sol_text_buffer_set_cursor_to(tb, line, cp_col);
+        sol_ui_system_invalidate_buffer_area(app->ui);
+    }
+    return tb;
+}
+
+static void sol_close_buffers_under_path(SolAppContext *app, const char *path)
+{
+    if (!app || !app->buffers || !path) return;
+    for (;;) {
+        bool closed = false;
+        const size_t count = sol_buffer_count(app->buffers);
+        for (size_t i = 0u; i < count; ++i) {
+            const SolBufferId id = sol_buffer_at(app->buffers, i);
+            SolBuffer *buf = sol_buffer_get(app->buffers, id);
+            SolTextBuffer *tb = sol_text_buffer_state(buf);
+            const char *source = sol_text_buffer_source_path(tb);
+            if (source && sol_path_starts_with_dir(source, path)) {
+                (void)sol_buffer_close(app->buffers, id);
+                closed = true;
+                break;
+            }
+        }
+        if (!closed) break;
+    }
+}
+
+static void sol_show_error(SolAppContext *app, const char *message)
+{
+    if (!app || !app->instance || !message) return;
+    (void)ca_popup_show(app->instance, &(Ca_PopupDesc){
+        .title = "Sol",
+        .message = message,
+        .buttons = CA_POPUP_BUTTONS_OK,
+        .replace_active = true,
+    });
+}
+
+static bool sol_context_create_file(SolAppContext *app,
+                                    const SolUIContextActionRequest *request)
+{
+    char dir[4096];
+    char path[4096];
+    if (!sol_context_target_dir(request, dir, sizeof(dir)) ||
+        !sol_make_unique_child_path(dir, "untitled", ".txt", path, sizeof(path))) {
+        sol_show_error(app, "Could not choose a path for the new file.");
+        return false;
+    }
+    if (!sol_platform_create_empty_file(path, true)) {
+        sol_show_error(app, "Could not create the file.");
+        return false;
+    }
+    sol_refresh_explorer(app);
+    return sol_open_path_in_active_leaf(app, path);
+}
+
+static bool sol_context_create_folder(SolAppContext *app,
+                                      const SolUIContextActionRequest *request)
+{
+    char dir[4096];
+    char path[4096];
+    if (!sol_context_target_dir(request, dir, sizeof(dir)) ||
+        !sol_make_unique_child_path(dir, "New Folder", "", path, sizeof(path))) {
+        sol_show_error(app, "Could not choose a path for the new folder.");
+        return false;
+    }
+    if (!sol_platform_mkdir_p(path)) {
+        sol_show_error(app, "Could not create the folder.");
+        return false;
+    }
+    sol_refresh_explorer(app);
+    return true;
+}
+
+static bool sol_context_copy_or_cut_path(SolAppContext *app,
+                                         const SolUIContextActionRequest *request,
+                                         bool cut)
+{
+    if (!app || !request || !request->path) return false;
+    const size_t len = strlen(request->path);
+    if (len >= sizeof(app->file_clipboard_path)) return false;
+    memcpy(app->file_clipboard_path, request->path, len + 1u);
+    app->file_clipboard_cut = cut;
+    return true;
+}
+
+static bool sol_context_paste_path(SolAppContext *app,
+                                   const SolUIContextActionRequest *request)
+{
+    if (!app || !request || app->file_clipboard_path[0] == '\0') {
+        return false;
+    }
+
+    char dir[4096];
+    if (!sol_context_target_dir(request, dir, sizeof(dir))) {
+        sol_show_error(app, "Could not choose a paste destination.");
+        return false;
+    }
+
+    const char *base = sol_platform_basename(app->file_clipboard_path);
+    char dest[4096];
+    if (!sol_make_unique_copy_path(dir, base, dest, sizeof(dest))) {
+        sol_show_error(app, "Could not choose a paste path.");
+        return false;
+    }
+
+    if (sol_path_starts_with_dir(dest, app->file_clipboard_path)) {
+        sol_show_error(app, "Cannot paste a folder inside itself.");
+        return false;
+    }
+
+    bool ok = app->file_clipboard_cut
+        ? sol_platform_move_path(app->file_clipboard_path, dest)
+        : sol_platform_copy_path_recursive(app->file_clipboard_path, dest);
+    if (!ok) {
+        sol_show_error(app, "Paste failed.");
+        return false;
+    }
+
+    if (app->file_clipboard_cut) {
+        app->file_clipboard_path[0] = '\0';
+        app->file_clipboard_cut = false;
+    }
+    sol_refresh_explorer(app);
+    return true;
+}
+
+static void sol_confirm_delete_result(Ca_PopupResult result, void *user_data)
+{
+    SolDeletePathRequest *pending = (SolDeletePathRequest *)user_data;
+    if (!pending) return;
+    SolAppContext *app = pending->app;
+    if (result == CA_POPUP_RESULT_YES && app) {
+        sol_close_buffers_under_path(app, pending->path);
+        if (!sol_platform_remove_path_recursive(pending->path)) {
+            sol_show_error(app, "Delete failed.");
+        } else {
+            sol_refresh_explorer(app);
+        }
+    }
+    free(pending);
+}
+
+static bool sol_context_delete_path(SolAppContext *app,
+                                    const SolUIContextActionRequest *request)
+{
+    if (!app || !app->instance || !request || !request->path) return false;
+    SolDeletePathRequest *pending =
+        (SolDeletePathRequest *)calloc(1u, sizeof(SolDeletePathRequest));
+    if (!pending) return false;
+    pending->app = app;
+    const size_t len = strlen(request->path);
+    if (len >= sizeof(pending->path)) {
+        free(pending);
+        return false;
+    }
+    memcpy(pending->path, request->path, len + 1u);
+
+    char message[4608];
+    snprintf(message, sizeof(message), "Delete \"%s\"?", request->path);
+    if (!ca_popup_show(app->instance, &(Ca_PopupDesc){
+            .title = "Delete",
+            .message = message,
+            .buttons = CA_POPUP_BUTTONS_YES_NO,
+            .replace_active = false,
+            .queue_if_busy = true,
+            .on_result = sol_confirm_delete_result,
+            .result_data = pending,
+        })) {
+        free(pending);
+        return false;
+    }
+    return true;
+}
+
+static bool sol_on_context_action(const SolUIContextActionRequest *request,
+                                  void *user_data)
+{
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !request) return false;
+
+    switch (request->action) {
+    case SOL_UI_CONTEXT_ACTION_OPEN:
+        if (!request->path) return false;
+        if (request->path_is_dir) {
+            return sol_set_explorer_root(app, request->path);
+        }
+        return sol_open_path_in_active_leaf(app, request->path);
+    case SOL_UI_CONTEXT_ACTION_OPEN_FILE_PICKER:
+        return sol_publish_command(app, "buffer.open");
+    case SOL_UI_CONTEXT_ACTION_OPEN_FOLDER_PICKER:
+        return sol_publish_command(app, "explorer.open");
+    case SOL_UI_CONTEXT_ACTION_NEW_BUFFER:
+        return sol_publish_command(app, "buffer.new");
+    case SOL_UI_CONTEXT_ACTION_CLOSE_BUFFER:
+        sol_focus_context_target(app, request);
+        return sol_publish_command(app, "buffer.close");
+    case SOL_UI_CONTEXT_ACTION_SPLIT_VERTICAL:
+        sol_focus_context_target(app, request);
+        return sol_publish_command(app, "pane.split.vertical");
+    case SOL_UI_CONTEXT_ACTION_SPLIT_HORIZONTAL:
+        sol_focus_context_target(app, request);
+        return sol_publish_command(app, "pane.split.horizontal");
+    case SOL_UI_CONTEXT_ACTION_NEW_FILE:
+        return sol_context_create_file(app, request);
+    case SOL_UI_CONTEXT_ACTION_NEW_FOLDER:
+        return sol_context_create_folder(app, request);
+    case SOL_UI_CONTEXT_ACTION_DELETE_PATH:
+        return sol_context_delete_path(app, request);
+    case SOL_UI_CONTEXT_ACTION_COPY_PATH:
+        return sol_context_copy_or_cut_path(app, request, false);
+    case SOL_UI_CONTEXT_ACTION_CUT_PATH:
+        return sol_context_copy_or_cut_path(app, request, true);
+    case SOL_UI_CONTEXT_ACTION_PASTE_PATH:
+        return sol_context_paste_path(app, request);
+    case SOL_UI_CONTEXT_ACTION_COPY_TEXT: {
+        SolTextBuffer *tb = sol_prepare_context_text_target(app, request, true);
+        if (!tb) return false;
+        return sol_publish_command(app, sol_text_buffer_has_selection(tb)
+                                          ? "edit.copy"
+                                          : "edit.copy_line");
+    }
+    case SOL_UI_CONTEXT_ACTION_COPY_LINE:
+        if (!sol_prepare_context_text_target(app, request, false)) return false;
+        return sol_publish_command(app, "edit.copy_line");
+    case SOL_UI_CONTEXT_ACTION_CUT_TEXT: {
+        SolTextBuffer *tb = sol_prepare_context_text_target(app, request, true);
+        if (!tb) return false;
+        if (sol_text_buffer_has_selection(tb)) {
+            return sol_publish_command(app, "edit.cut");
+        }
+        if (!sol_publish_command(app, "edit.copy_line")) return false;
+        return sol_publish_command(app, "edit.delete_line");
+    }
+    case SOL_UI_CONTEXT_ACTION_PASTE_TEXT:
+        if (!sol_prepare_context_text_target(app, request, true)) return false;
+        return sol_publish_command(app, "edit.paste");
+    case SOL_UI_CONTEXT_ACTION_PASTE_LINE:
+        if (!sol_prepare_context_text_target(app, request, false)) return false;
+        return sol_publish_command(app, "edit.paste_line");
+    case SOL_UI_CONTEXT_ACTION_SELECT_ALL_TEXT:
+        sol_focus_context_target(app, request);
+        return sol_publish_command(app, "edit.select_all");
+    case SOL_UI_CONTEXT_ACTION_DELETE_TEXT:
+        if (!sol_prepare_context_text_target(app, request, true)) return false;
+        return sol_publish_command(app, "edit.delete_char");
+    case SOL_UI_CONTEXT_ACTION_DELETE_LINE:
+        if (!sol_prepare_context_text_target(app, request, false)) return false;
+        return sol_publish_command(app, "edit.delete_line");
+    case SOL_UI_CONTEXT_ACTION_NONE:
+    default:
+        return false;
+    }
 }
 
 /* File-tree click → open. */
@@ -716,6 +1152,7 @@ int main(int argc, char **argv)
 
     sol_ui_system_set_file_open_callback(app.ui, sol_on_tree_file_open, &app);
     sol_ui_system_set_focus_region_callback(app.ui, sol_on_ui_focus_region, &app);
+    sol_ui_system_set_context_action_callback(app.ui, sol_on_context_action, &app);
     if (cli_is_dir && cli_path) {
         if (!sol_set_explorer_root(&app, cli_path)) {
             fprintf(stderr, "sol: cannot open directory '%s'\n", cli_path);

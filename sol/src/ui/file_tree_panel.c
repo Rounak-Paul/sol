@@ -227,6 +227,7 @@ static void render_row(SolUISystem *ui, const SolFileEntry *entry,
     });
 
     ca_btn_end();
+    sol_ui_attach_explorer_item_context_menu(ui, entry->full_path, entry->is_dir);
 }
 
 /* Emits header + rows directly into the current widget context. The
@@ -285,6 +286,7 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
     ca_text(&(Ca_TextDesc){ .text = TREE_DIR_OPEN, .style = "tree-icon tree-icon-dir-open" });
     ca_text(&(Ca_TextDesc){ .text = basename,       .style = "tree-name tree-name-dir" });
     ca_div_end();
+    sol_ui_attach_explorer_root_context_menu(ui, root);
 
     /* ---- Scrollable file list ---- */
     ca_div_begin(&(Ca_DivDesc){
@@ -300,6 +302,7 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
     }
 
     ca_div_end(); /* tree-scroll-area */
+    sol_ui_attach_explorer_empty_context_menu(ui, root);
 }
 
 /* Standalone variant: opens its own "tree-panel" container. Kept for

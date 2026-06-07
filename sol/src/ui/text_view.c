@@ -396,39 +396,76 @@ static size_t visible_max_line_cols(const SolTextBuffer *tb, int scroll_top,
 /* Pointer handler                                                     */
 /* ------------------------------------------------------------------ */
 
-/* Convert pane-local drag event coordinates → (line, codepoint_col). */
-static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
-                               int *out_line, int *out_cp_col)
+static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
+                                 float event_local_x, float event_local_y,
+                                 size_t *out_line, size_t *out_cp_col)
 {
-    Ca_Window *win = sol_ui_system_primary_window(cb->ui);
+    if (!ui || !tb || !out_line || !out_cp_col) {
+        return false;
+    }
+
+    Ca_Window *win = sol_ui_system_primary_window(ui);
     const float scale = ca_window_get_scale(win);
     const float pad_x = 8.0f * scale;
     const float pad_y = 8.0f * scale;
-    float local_x = ev->local_x - pad_x;
-    float local_y = ev->local_y - pad_y;
+    float local_x = event_local_x - pad_x;
+    float local_y = event_local_y - pad_y;
     if (local_x < 0.0f) local_x = 0.0f;
     if (local_y < 0.0f) local_y = 0.0f;
 
     const float line_h = (float)SOL_TEXT_LINE_HEIGHT_PX * scale;
     const int   row    = (int)(local_y / line_h);
-    const int   scroll = sol_text_buffer_scroll_top(cb->tb);
+    const int   scroll = sol_text_buffer_scroll_top(tb);
     int line_idx = scroll + row;
     if (line_idx < 0) line_idx = 0;
-    const int total = (int)sol_text_buffer_line_count(cb->tb);
+    const int total = (int)sol_text_buffer_line_count(tb);
+    if (total <= 0) {
+        *out_line = 0u;
+        *out_cp_col = 0u;
+        return true;
+    }
     if (line_idx >= total) line_idx = total - 1;
 
     const float adv = glyph_advance_px_for(win);
-    int visual_col = sol_text_buffer_scroll_left(cb->tb)
+    int visual_col = sol_text_buffer_scroll_left(tb)
         + (int)((local_x / adv) + 0.5f);
     if (visual_col < 0) visual_col = 0;
 
     char line_buf[SOL_TEXT_VIEW_MAX_LINE_BYTES];
     const size_t line_bytes = sol_text_buffer_copy_line(
-        cb->tb, (size_t)line_idx, line_buf, sizeof(line_buf));
+        tb, (size_t)line_idx, line_buf, sizeof(line_buf));
     const size_t cp_col = tv_cp_col_from_visual_col(
         line_buf, line_bytes, (size_t)visual_col);
 
-    *out_line   = line_idx;
+    *out_line = (size_t)line_idx;
+    *out_cp_col = cp_col;
+    return true;
+}
+
+bool sol_text_view_local_point_to_line_col(SolUISystem *ui,
+                                           SolTextBuffer *tb,
+                                           float local_x,
+                                           float local_y,
+                                           size_t *out_line,
+                                           size_t *out_cp_col)
+{
+    return tv_local_to_line_col(ui, tb, local_x, local_y,
+                                out_line, out_cp_col);
+}
+
+/* Convert pane-local drag event coordinates to line/codepoint column. */
+static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
+                               int *out_line, int *out_cp_col)
+{
+    size_t line = 0u;
+    size_t cp_col = 0u;
+    if (!tv_local_to_line_col(cb->ui, cb->tb, ev->local_x, ev->local_y,
+                              &line, &cp_col)) {
+        *out_line = 0;
+        *out_cp_col = 0;
+        return;
+    }
+    *out_line = (int)line;
     *out_cp_col = (int)cp_col;
 }
 
@@ -840,6 +877,8 @@ void sol_text_view_render(const SolBuffer *buffer,
         ca_div_end();   /* buffer-hscrollbar */
     }
     ca_div_end();   /* buffer-text-col */
+    sol_ui_system_attach_buffer_text_context_menu(
+        ui, args ? args->leaf_id : 0u, buffer ? sol_buffer_id(buffer) : 0u);
 
     /* Blink redraws are driven by sol_ui_on_frame (workspace.c), which
      * bumps sig_buffer_rev and posts a wake event every tick while an

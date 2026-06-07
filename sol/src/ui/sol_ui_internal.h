@@ -36,6 +36,8 @@
 #define SOL_UI_MAX_SUGGESTIONS        32u
 #define SOL_UI_STATUS_TEXT_MAX_LEN    127u
 #define SOL_UI_MAX_STATUS_SEGMENTS    16u
+#define SOL_UI_MAX_CONTEXT_ACTIONS    16u
+#define SOL_UI_CONTEXT_PATH_MAX       4096u
 
 /* Causality manages the title and status strips; sol only declares the
    status-bar height it wants reserved. The title bar height is fixed by
@@ -122,6 +124,14 @@ typedef struct SolPaneClickCtx {
     SolBufferNodeId     leaf_id;
     SolBufferId         tab_buffer_id;
 } SolPaneClickCtx;
+
+typedef struct SolContextMenuCtx {
+    struct SolUISystem          *ui;
+    SolUIContextActionRequest    request;
+    SolUIContextAction           actions[SOL_UI_MAX_CONTEXT_ACTIONS];
+    int                          action_count;
+    char                         path[SOL_UI_CONTEXT_PATH_MAX];
+} SolContextMenuCtx;
 
 struct SolUISystem {
     Ca_Instance      *instance;
@@ -243,10 +253,16 @@ struct SolUISystem {
     size_t                      pane_click_ctx_count;
     size_t                      pane_click_ctx_capacity;
 
+    SolContextMenuCtx          **context_menu_ctxs;
+    size_t                       context_menu_ctx_count;
+    size_t                       context_menu_ctx_capacity;
+
     SolUIFileOpenFn  file_open_callback;
     void            *file_open_user_data;
-   SolUIFocusRegionFn focus_region_callback;
-   void              *focus_region_user_data;
+    SolUIFocusRegionFn focus_region_callback;
+    void              *focus_region_user_data;
+    SolUIContextActionFn context_action_callback;
+    void                *context_action_user_data;
 
     /* Title-bar menu callbacks. Installed via
        sol_ui_system_install_menu(); the trampolines defined in
@@ -330,6 +346,22 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui);
 /* Sticky-scroll ancestor builder — registered as the reactive builder
    on tree_sticky_host in workspace.c; defined in file_tree_panel.c. */
 void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data);
+
+/* Context menus (context_menu.c). */
+SolContextMenuCtx *sol_ui_acquire_context_menu_ctx(SolUISystem *ui);
+void sol_ui_reset_context_menu_ctxs(SolUISystem *ui);
+void sol_ui_attach_workspace_context_menu(SolUISystem *ui);
+void sol_ui_attach_explorer_root_context_menu(SolUISystem *ui, const char *root_path);
+void sol_ui_attach_explorer_empty_context_menu(SolUISystem *ui, const char *root_path);
+void sol_ui_attach_explorer_item_context_menu(SolUISystem *ui,
+                                              const char *path,
+                                              bool is_dir);
+void sol_ui_attach_buffer_body_context_menu(SolUISystem *ui,
+                                            SolBufferNodeId leaf_id,
+                                            SolBufferId buffer_id);
+void sol_ui_attach_buffer_tab_context_menu(SolUISystem *ui,
+                                           SolBufferNodeId leaf_id,
+                                           SolBufferId buffer_id);
 
 /* Plugin Manager window — open/tick called from workspace.c;
    defined in plugin_window.c.                                        */

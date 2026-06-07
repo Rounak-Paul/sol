@@ -199,6 +199,212 @@ bool sol_platform_mkdir_p(const char *path)
 #undef SOL_MKDIR
 }
 
+bool sol_platform_create_empty_file(const char *path, bool fail_if_exists)
+{
+    if (!path || *path == '\0') {
+        return false;
+    }
+
+#if defined(_WIN32)
+    DWORD disposition = fail_if_exists ? CREATE_NEW : OPEN_ALWAYS;
+    HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, NULL, disposition,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    CloseHandle(file);
+    return true;
+#else
+    int flags = O_WRONLY | O_CREAT;
+    if (fail_if_exists) {
+        flags |= O_EXCL;
+    }
+    int fd = open(path, flags, 0644);
+    if (fd < 0) {
+        return false;
+    }
+    close(fd);
+    return true;
+#endif
+}
+
+static bool sol_platform_is_root_path(const char *path)
+{
+    if (!path || path[0] == '\0') {
+        return true;
+    }
+    if (path[1] == '\0' && sol_platform_is_path_separator(path[0])) {
+        return true;
+    }
+#if defined(_WIN32)
+    if (((path[0] >= 'A' && path[0] <= 'Z') ||
+         (path[0] >= 'a' && path[0] <= 'z')) &&
+        path[1] == ':' &&
+        (path[2] == '\0' ||
+         (sol_platform_is_path_separator(path[2]) && path[3] == '\0'))) {
+        return true;
+    }
+#endif
+    return false;
+}
+
+bool sol_platform_remove_path_recursive(const char *path)
+{
+    if (sol_platform_is_root_path(path)) {
+        return false;
+    }
+
+    SolPathInfo info;
+    if (!sol_platform_get_path_info(path, &info)) {
+        return false;
+    }
+
+    if (!info.is_directory) {
+#if defined(_WIN32)
+        return DeleteFileA(path) != 0;
+#else
+        return unlink(path) == 0;
+#endif
+    }
+
+    SolDirectoryIter iter;
+    if (!sol_platform_dir_open(&iter, path)) {
+        return false;
+    }
+
+    bool ok = true;
+    SolDirectoryEntry entry;
+    while (sol_platform_dir_next(&iter, &entry)) {
+        char *child = sol_platform_path_join(path, entry.name);
+        if (!child) {
+            ok = false;
+            continue;
+        }
+        if (!sol_platform_remove_path_recursive(child)) {
+            ok = false;
+        }
+        free(child);
+    }
+    sol_platform_dir_close(&iter);
+    if (!ok) {
+        return false;
+    }
+
+#if defined(_WIN32)
+    return RemoveDirectoryA(path) != 0;
+#else
+    return rmdir(path) == 0;
+#endif
+}
+
+static bool sol_platform_copy_file(const char *source_path, const char *dest_path)
+{
+    FILE *src = fopen(source_path, "rb");
+    if (!src) {
+        return false;
+    }
+
+    FILE *dst = fopen(dest_path, "wb");
+    if (!dst) {
+        fclose(src);
+        return false;
+    }
+
+    bool ok = true;
+    unsigned char buffer[64 * 1024];
+    for (;;) {
+        size_t n = fread(buffer, 1u, sizeof(buffer), src);
+        if (n > 0u && fwrite(buffer, 1u, n, dst) != n) {
+            ok = false;
+            break;
+        }
+        if (n < sizeof(buffer)) {
+            if (ferror(src)) {
+                ok = false;
+            }
+            break;
+        }
+    }
+
+    if (fclose(dst) != 0) {
+        ok = false;
+    }
+    fclose(src);
+    if (!ok) {
+#if defined(_WIN32)
+        DeleteFileA(dest_path);
+#else
+        unlink(dest_path);
+#endif
+    }
+    return ok;
+}
+
+bool sol_platform_copy_path_recursive(const char *source_path, const char *dest_path)
+{
+    if (!source_path || !dest_path || source_path[0] == '\0' ||
+        dest_path[0] == '\0' || strcmp(source_path, dest_path) == 0) {
+        return false;
+    }
+
+    SolPathInfo info;
+    if (!sol_platform_get_path_info(source_path, &info)) {
+        return false;
+    }
+
+    if (!info.is_directory) {
+        return sol_platform_copy_file(source_path, dest_path);
+    }
+
+    if (!sol_platform_mkdir_p(dest_path)) {
+        return false;
+    }
+
+    SolDirectoryIter iter;
+    if (!sol_platform_dir_open(&iter, source_path)) {
+        return false;
+    }
+
+    bool ok = true;
+    SolDirectoryEntry entry;
+    while (sol_platform_dir_next(&iter, &entry)) {
+        char *child_src = sol_platform_path_join(source_path, entry.name);
+        char *child_dst = sol_platform_path_join(dest_path, entry.name);
+        if (!child_src || !child_dst ||
+            !sol_platform_copy_path_recursive(child_src, child_dst)) {
+            ok = false;
+        }
+        free(child_src);
+        free(child_dst);
+    }
+    sol_platform_dir_close(&iter);
+    if (!ok) {
+        (void)sol_platform_remove_path_recursive(dest_path);
+    }
+    return ok;
+}
+
+bool sol_platform_move_path(const char *source_path, const char *dest_path)
+{
+    if (!source_path || !dest_path || source_path[0] == '\0' ||
+        dest_path[0] == '\0' || strcmp(source_path, dest_path) == 0) {
+        return false;
+    }
+
+    if (rename(source_path, dest_path) == 0) {
+        return true;
+    }
+
+    if (!sol_platform_copy_path_recursive(source_path, dest_path)) {
+        return false;
+    }
+    if (!sol_platform_remove_path_recursive(source_path)) {
+        (void)sol_platform_remove_path_recursive(dest_path);
+        return false;
+    }
+    return true;
+}
+
 uint32_t sol_platform_cpu_count(void)
 {
 #if defined(_WIN32)
