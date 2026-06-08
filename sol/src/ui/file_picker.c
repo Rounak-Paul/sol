@@ -57,8 +57,6 @@
 #define FP_ICON_EYE          "\xef\x81\xae"  /* U+F06E  fa-eye             */
 #define FP_ICON_EYE_SLASH    "\xef\x81\xb0"  /* U+F070  fa-eye-slash       */
 #define FP_ICON_FOLDER_PLUS  "\xef\x99\x9d"  /* U+F65D  nf-mdi-folder_plus */
-#define FP_ICON_SORT_ASC     "\xef\x83\x9e"  /* U+F0DE  fa-sort-asc        */
-#define FP_ICON_SORT_DESC    "\xef\x83\x9d"  /* U+F0DD  fa-sort-desc       */
 
 /* ---------------------------------------------------------------- */
 /* Types                                                             */
@@ -789,6 +787,17 @@ static void fp_render_colhdr_cell(
     ctx->kind   = FP_CTX_SORT;
     ctx->index  = sort_col;
 
+    char display[64];
+    if (active) {
+        const char *arrow = p->sort_asc ? "\xe2\x86\x91" : "\xe2\x86\x93";
+        if (justify_end)
+            snprintf(display, sizeof(display), "%s %s", arrow, label);
+        else
+            snprintf(display, sizeof(display), "%s %s", label, arrow);
+    } else {
+        snprintf(display, sizeof(display), "%s", label);
+    }
+
     /* Wrapper div owns the column width so the button can be width:100%. */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = cell_style });
 
@@ -801,23 +810,11 @@ static void fp_render_colhdr_cell(
         .on_click   = fp_on_sort_click,
         .click_data = ctx,
     });
-    if (active && justify_end) {
-        ca_text(&(Ca_TextDesc){
-            .text  = p->sort_asc ? FP_ICON_SORT_ASC : FP_ICON_SORT_DESC,
-            .style = "fp-colhdr-sort-arrow",
-        });
-    }
     ca_text(&(Ca_TextDesc){
-        .text  = label,
+        .text  = display,
         .style = active ? "fp-colhdr-text fp-colhdr-text-active"
                         : "fp-colhdr-text",
     });
-    if (active && !justify_end) {
-        ca_text(&(Ca_TextDesc){
-            .text  = p->sort_asc ? FP_ICON_SORT_ASC : FP_ICON_SORT_DESC,
-            .style = "fp-colhdr-sort-arrow",
-        });
-    }
     ca_btn_end();
 
     ca_div_end();

@@ -10,15 +10,15 @@ Relevant paths:
 - `sol/src/main.c`: creates `Ca_Instance` without a font override, so renderer defaults matter.
 
 Findings:
-- The app uses embedded `RobotoMonoNerdFontMono-Regular.ttf` and `RobotoMonoNerdFontMono-Bold.ttf`.
+- The app now uses embedded `DepartureMonoNerdFontMono-Regular.otf` for both regular and bold slots; no bold Departure Mono face is currently bundled.
 - Causality should not default to platform fonts; the desired product direction is deterministic embedded-font rendering across Windows, macOS, Linux, and screen densities.
 - Unhinted high supersampling fixed cut edges but made 1x Windows text too blurry.
 - Windows-like output needs native TrueType hinting plus LCD subpixel coverage for small low-DPI text, with grayscale fallback for HiDPI, icons, and larger text.
 
 Implemented:
 - Removed renderer-side platform font auto-detection from the default path.
-- Replaced the embedded Departure Mono font with Roboto Mono Nerd Font Mono Regular/Bold from `C:\Users\Duke\Downloads\RobotoMono`.
-- Updated embedded font metadata and vendor notice to point to the Roboto Mono Apache-2.0 source and the Nerd Fonts patcher.
+- Replaced the embedded Roboto Mono font with Departure Mono Nerd Font Mono from `/Users/duke/Downloads/DepartureMono`.
+- Updated embedded font metadata and vendor notice to point to the Departure Mono OFL source and the Nerd Fonts patcher.
 - Added `display_scale` to the font object so output pixel snapping is separate from glyph rasterization.
 - Small low-DPI regular text uses `FT_LOAD_TARGET_LCD` with native font hinting and FreeType's default LCD filter, then stores RGB subpixel coverage in the RGBA atlas.
 - The text shader consumes RGB atlas coverage instead of sampling only the red channel, preserving subpixel coverage without platform font rendering.
