@@ -10,15 +10,17 @@ Relevant paths:
 - `sol/src/main.c`: creates `Ca_Instance` without a font override, so renderer defaults matter.
 
 Findings:
-- The app now uses embedded `DepartureMonoNerdFontMono-Regular.otf` for both regular and bold slots; no bold Departure Mono face is currently bundled.
+- The app now uses embedded `RobotoMonoNerdFontMono-Regular.ttf` and `RobotoMonoNerdFontMono-Bold.ttf` for text, plus `SymbolsNerdFontMono-Regular.ttf` for icon ranges.
 - Causality should not default to platform fonts; the desired product direction is deterministic embedded-font rendering across Windows, macOS, Linux, and screen densities.
 - Unhinted high supersampling fixed cut edges but made 1x Windows text too blurry.
 - Windows-like output needs native TrueType hinting plus LCD subpixel coverage for small low-DPI text, with grayscale fallback for HiDPI, icons, and larger text.
 
 Implemented:
 - Removed renderer-side platform font auto-detection from the default path.
-- Replaced the embedded Roboto Mono font with Departure Mono Nerd Font Mono from `/Users/duke/Downloads/DepartureMono`.
-- Updated embedded font metadata and vendor notice to point to the Departure Mono OFL source and the Nerd Fonts patcher.
+- Restored Roboto Mono Nerd Font Mono from `/Users/duke/Downloads/RobotoMono` and added Symbols Nerd Font Mono from `/Users/duke/Downloads/NerdFontsSymbolsOnly`.
+- Updated embedded font metadata and vendor notice to cover Roboto Mono, Symbols Nerd Font, and the Nerd Fonts patcher.
+- Added `ca_icons.h` as the shared named-glyph surface for bundled icon usage in Sol/Causality UI. It is generated from Nerd Fonts `glyphnames.json` version 3.4.0 and filtered to the glyphs available in the embedded Roboto/Symbols font layer.
+- `causality.h` includes `ca_icons.h`; custom text font overrides keep the embedded Symbols icon face active.
 - Added `display_scale` to the font object so output pixel snapping is separate from glyph rasterization.
 - Small low-DPI regular text uses `FT_LOAD_TARGET_LCD` with native font hinting and FreeType's default LCD filter, then stores RGB subpixel coverage in the RGBA atlas.
 - The text shader consumes RGB atlas coverage instead of sampling only the red channel, preserving subpixel coverage without platform font rendering.

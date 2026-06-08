@@ -78,6 +78,10 @@ typedef struct SolWorkspaceVisitorContext {
 #define SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX 28.0f
 #define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX    1.0f
 
+#define SOL_UI_LABEL_NEW_BUFFER  CA_ICON_NF_COD_NEW_FILE " New Buffer"
+#define SOL_UI_LABEL_OPEN_FILE   CA_ICON_NF_COD_FILE " Open File..."
+#define SOL_UI_LABEL_OPEN_FOLDER CA_ICON_NF_COD_FOLDER_OPENED " Open Folder..."
+
 static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
                                              float *out_x,
                                              float *out_y,
@@ -333,7 +337,7 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
             .click_data = close_cb,
         });
         ca_text(&(Ca_TextDesc){
-            .text  = "\xc3\x97",   /* U+00D7 × */
+            .text  = CA_ICON_NF_COD_CLOSE,
             .style = tab_active ? "buffer-tab-close-icon buffer-tab-close-icon-active"
                                 : "buffer-tab-close-icon",
         });
@@ -415,21 +419,21 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
         /* Action buttons */
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "welcome-actions" });
         ca_btn_begin(&(Ca_BtnDesc){
-            .text       = "New Buffer",
+            .text       = SOL_UI_LABEL_NEW_BUFFER,
             .style      = "welcome-btn-primary",
             .on_click   = sol_ui_welcome_click_new_buffer,
             .click_data = ui,
         });
         ca_btn_end();
         ca_btn_begin(&(Ca_BtnDesc){
-            .text       = "Open File\xe2\x80\xa6",
+            .text       = SOL_UI_LABEL_OPEN_FILE,
             .style      = "welcome-btn",
             .on_click   = sol_ui_welcome_click_open_file,
             .click_data = ui,
         });
         ca_btn_end();
         ca_btn_begin(&(Ca_BtnDesc){
-            .text       = "Open Folder\xe2\x80\xa6",
+            .text       = SOL_UI_LABEL_OPEN_FOLDER,
             .style      = "welcome-btn",
             .on_click   = sol_ui_welcome_click_open_folder,
             .click_data = ui,

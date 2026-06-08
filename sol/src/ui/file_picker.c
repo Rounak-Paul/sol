@@ -40,23 +40,28 @@
 /* Nerd Font glyphs (same as file_tree_panel.c)                     */
 /* ---------------------------------------------------------------- */
 
-#define FP_ICON_DIR_CLOSED   "\xef\x81\xbb"  /* U+F07B  fa-folder          */
-#define FP_ICON_FILE_GENERIC "\xef\x80\x96"  /* U+F016  fa-file-o          */
-#define FP_ICON_FILE_C       "\xee\x98\x9e"  /* U+E61E  nf-dev-c           */
-#define FP_ICON_FILE_CPP     "\xee\x98\x9d"  /* U+E61D  nf-dev-cplusplus   */
-#define FP_ICON_FILE_PY      "\xee\x98\x86"  /* U+E606  nf-dev-python      */
-#define FP_ICON_FILE_JS      "\xee\x98\x8c"  /* U+E60C  nf-dev-javascript  */
-#define FP_ICON_FILE_TS      "\xee\x98\xa8"  /* U+E628  nf-seti-typescript */
-#define FP_ICON_FILE_HTML    "\xee\x98\x8e"  /* U+E60E  nf-dev-html5       */
-#define FP_ICON_FILE_CSS     "\xee\x98\x8a"  /* U+E60A  nf-dev-css3        */
-#define FP_ICON_FILE_JSON    "\xee\x98\x8b"  /* U+E60B  nf-dev-json        */
-#define FP_ICON_FILE_MD      "\xef\x92\x8a"  /* U+F48A  nf-fa-markdown     */
-#define FP_ICON_FILE_COG     "\xef\x80\x93"  /* U+F013  fa-cog (cmake)     */
-#define FP_ICON_HOME         "\xef\x80\x95"  /* U+F015  fa-home            */
-#define FP_ICON_REFRESH      "\xef\x80\xa1"  /* U+F021  fa-refresh         */
-#define FP_ICON_EYE          "\xef\x81\xae"  /* U+F06E  fa-eye             */
-#define FP_ICON_EYE_SLASH    "\xef\x81\xb0"  /* U+F070  fa-eye-slash       */
-#define FP_ICON_FOLDER_PLUS  "\xef\x99\x9d"  /* U+F65D  nf-mdi-folder_plus */
+#define FP_ICON_DIR_CLOSED   CA_ICON_FA_FOLDER
+#define FP_ICON_FILE_GENERIC CA_ICON_FA_FILE_O
+#define FP_ICON_FILE_C       CA_ICON_NF_DEV_C
+#define FP_ICON_FILE_CPP     CA_ICON_NF_DEV_CPP
+#define FP_ICON_FILE_PY      CA_ICON_NF_DEV_PYTHON
+#define FP_ICON_FILE_JS      CA_ICON_NF_DEV_JAVASCRIPT
+#define FP_ICON_FILE_TS      CA_ICON_NF_SETI_TYPESCRIPT
+#define FP_ICON_FILE_HTML    CA_ICON_NF_DEV_HTML5
+#define FP_ICON_FILE_CSS     CA_ICON_NF_DEV_CSS3
+#define FP_ICON_FILE_JSON    CA_ICON_NF_DEV_JSON
+#define FP_ICON_FILE_MD      CA_ICON_NF_FA_MARKDOWN
+#define FP_ICON_FILE_COG     CA_ICON_FA_COG
+#define FP_ICON_HOME         CA_ICON_FA_HOME
+#define FP_ICON_REFRESH      CA_ICON_FA_REFRESH
+#define FP_ICON_ARROW_UP     CA_ICON_FA_ARROW_UP
+#define FP_ICON_EYE          CA_ICON_FA_EYE
+#define FP_ICON_EYE_SLASH    CA_ICON_FA_EYE_SLASH
+
+#define FP_LABEL_CREATE_FOLDER "Create"
+#define FP_LABEL_NEW_FOLDER    "+ New Folder"
+#define FP_LABEL_SELECT_FOLDER "Select Folder"
+#define FP_LABEL_CANCEL        "Cancel"
 
 /* ---------------------------------------------------------------- */
 /* Types                                                             */
@@ -787,17 +792,6 @@ static void fp_render_colhdr_cell(
     ctx->kind   = FP_CTX_SORT;
     ctx->index  = sort_col;
 
-    char display[64];
-    if (active) {
-        const char *arrow = p->sort_asc ? "\xe2\x86\x91" : "\xe2\x86\x93";
-        if (justify_end)
-            snprintf(display, sizeof(display), "%s %s", arrow, label);
-        else
-            snprintf(display, sizeof(display), "%s %s", label, arrow);
-    } else {
-        snprintf(display, sizeof(display), "%s", label);
-    }
-
     /* Wrapper div owns the column width so the button can be width:100%. */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = cell_style });
 
@@ -810,11 +804,23 @@ static void fp_render_colhdr_cell(
         .on_click   = fp_on_sort_click,
         .click_data = ctx,
     });
+    if (active && justify_end) {
+        ca_text(&(Ca_TextDesc){
+            .text  = p->sort_asc ? CA_ICON_FA_SORT_ASC : CA_ICON_FA_SORT_DESC,
+            .style = "fp-colhdr-sort-arrow",
+        });
+    }
     ca_text(&(Ca_TextDesc){
-        .text  = display,
+        .text  = label,
         .style = active ? "fp-colhdr-text fp-colhdr-text-active"
                         : "fp-colhdr-text",
     });
+    if (active && !justify_end) {
+        ca_text(&(Ca_TextDesc){
+            .text  = p->sort_asc ? CA_ICON_FA_SORT_ASC : CA_ICON_FA_SORT_DESC,
+            .style = "fp-colhdr-sort-arrow",
+        });
+    }
     ca_btn_end();
 
     ca_div_end();
@@ -855,8 +861,7 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
             .on_click   = fp_on_up_click,
             .click_data = p,
         });
-        /* U+F062  fa-arrow-up */
-        ca_text(&(Ca_TextDesc){ .text = "\xef\x81\xa2", .style = "fp-up-icon" });
+        ca_text(&(Ca_TextDesc){ .text = FP_ICON_ARROW_UP, .style = "fp-up-icon" });
         ca_btn_end();
 
         fp_render_breadcrumb(p);
@@ -914,14 +919,14 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
                 .change_data = p,
             });
             ca_btn_begin(&(Ca_BtnDesc){
-                .text       = "Create",
+                .text       = FP_LABEL_CREATE_FOLDER,
                 .style      = "fp-nf-create",
                 .on_click   = fp_on_create_folder_click,
                 .click_data = p,
             });
             ca_btn_end();
             ca_btn_begin(&(Ca_BtnDesc){
-                .text       = "Cancel",
+                .text       = FP_LABEL_CANCEL,
                 .style      = "fp-nf-cancel",
                 .on_click   = fp_on_cancel_new_folder_click,
                 .click_data = p,
@@ -979,7 +984,7 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
 
         /* New Folder button — reliable placement in footer. */
         ca_btn_begin(&(Ca_BtnDesc){
-            .text       = "+ New Folder",
+            .text       = FP_LABEL_NEW_FOLDER,
             .style      = p->show_new_folder_bar
                               ? "fp-action-new-folder fp-action-new-folder-active"
                               : "fp-action-new-folder",
@@ -994,7 +999,7 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
 
         if (p->mode == SOL_FILE_PICKER_FOLDER) {
             ca_btn_begin(&(Ca_BtnDesc){
-                .text       = "Select Folder",
+                .text       = FP_LABEL_SELECT_FOLDER,
                 .style      = "fp-action-primary",
                 .on_click   = fp_on_select_folder,
                 .click_data = p,
@@ -1003,7 +1008,7 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
         }
 
         ca_btn_begin(&(Ca_BtnDesc){
-            .text       = "Cancel",
+            .text       = FP_LABEL_CANCEL,
             .style      = "fp-action-cancel",
             .on_click   = fp_on_cancel,
             .click_data = p,

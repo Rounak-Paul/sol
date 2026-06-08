@@ -37,26 +37,21 @@ static int sol_ascii_casecmp(const char *a, const char *b)
    set programmatically via Ca_DivDesc.width. */
 #define SOL_UI_TREE_INDENT_PX  16.0f
 
-/* FontAwesome 4 glyphs — directory chrome, cmake cog, and generic fallback. */
-#define TREE_ARROW_RIGHT  "\xef\x81\x94"   /* U+F054  fa-chevron-right        */
-#define TREE_ARROW_DOWN   "\xef\x81\xb8"   /* U+F078  fa-chevron-down         */
-#define TREE_DIR_CLOSED   "\xef\x81\xbb"   /* U+F07B  fa-folder               */
-#define TREE_DIR_OPEN     "\xef\x81\xbc"   /* U+F07C  fa-folder-open          */
-#define TREE_FILE_CODE    "\xef\x87\x89"   /* U+F1C9  fa-file-code-o (fallback) */
-#define TREE_FILE_COG     "\xef\x80\x93"   /* U+F013  fa-cog          (cmake)  */
-#define TREE_FILE_GENERIC "\xef\x80\x96"   /* U+F016  fa-file-o       (unknown) */
-
-/* Language-specific devicons (nf-dev-* / nf-seti-*).
- * Present in any Nerd Fonts-patched monospace font v2 or v3. */
-#define TREE_FILE_C_LANG  "\xee\x98\x9e"   /* U+E61E  nf-dev-c            */
-#define TREE_FILE_CPP     "\xee\x98\x9d"   /* U+E61D  nf-dev-cplusplus    */
-#define TREE_FILE_PYTHON  "\xee\x98\x86"   /* U+E606  nf-dev-python       */
-#define TREE_FILE_JS      "\xee\x98\x8c"   /* U+E60C  nf-dev-javascript   */
-#define TREE_FILE_TS      "\xee\x98\xa8"   /* U+E628  nf-seti-typescript  */
-#define TREE_FILE_HTML    "\xee\x98\x8e"   /* U+E60E  nf-dev-html5        */
-#define TREE_FILE_CSS     "\xee\x98\x8a"   /* U+E60A  nf-dev-css3         */
-#define TREE_FILE_JSON    "\xee\x98\x8b"   /* U+E60B  nf-dev-json         */
-#define TREE_FILE_MD      "\xef\x92\x8a"   /* U+F48A  nf-fa-markdown      */
+#define TREE_ARROW_RIGHT  CA_ICON_FA_CHEVRON_RIGHT
+#define TREE_ARROW_DOWN   CA_ICON_FA_CHEVRON_DOWN
+#define TREE_DIR_CLOSED   CA_ICON_FA_FOLDER
+#define TREE_DIR_OPEN     CA_ICON_FA_FOLDER_OPEN
+#define TREE_FILE_COG     CA_ICON_FA_COG
+#define TREE_FILE_GENERIC CA_ICON_FA_FILE_O
+#define TREE_FILE_C_LANG  CA_ICON_NF_DEV_C
+#define TREE_FILE_CPP     CA_ICON_NF_DEV_CPP
+#define TREE_FILE_PYTHON  CA_ICON_NF_DEV_PYTHON
+#define TREE_FILE_JS      CA_ICON_NF_DEV_JAVASCRIPT
+#define TREE_FILE_TS      CA_ICON_NF_SETI_TYPESCRIPT
+#define TREE_FILE_HTML    CA_ICON_NF_DEV_HTML5
+#define TREE_FILE_CSS     CA_ICON_NF_DEV_CSS3
+#define TREE_FILE_JSON    CA_ICON_NF_DEV_JSON
+#define TREE_FILE_MD      CA_ICON_NF_FA_MARKDOWN
 
 /* Pick the right icon glyph and CSS class for a file based on extension. */
 static const char *tree_file_icon(const char *name, const char **out_style)

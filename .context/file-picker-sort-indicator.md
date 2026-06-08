@@ -7,5 +7,12 @@ Runtime facts:
 
 Self-contained font fix:
 - The atlas already has an extra-glyph hash path for codepoints outside the hot fixed ranges, so the correct fix is not to expand the eager range table indefinitely.
-- The embedded default font is now Departure Mono Nerd Font Mono, which contains U+2191/U+2193.
-- The file picker keeps using normal Unicode arrows for sort state; the glyphs come from the bundled font.
+- The embedded default text font is Roboto Mono Nerd Font Mono, with Symbols Nerd Font Mono as the icon layer.
+- Roboto/Symbols do not provide the U+2191/U+2193 text arrows needed by the previous label string path, so the file picker uses named Symbols-layer sort icons (`CA_ICON_FA_SORT_ASC` / `CA_ICON_FA_SORT_DESC`) for sort state.
+- Shared glyph names live in `vendors/causality/causality/include/ca_icons.h`; UI code should use those names rather than raw private-use byte strings.
+- `ca_icons.h` includes 10,764 generated canonical `CA_ICON_NF_*` names from Nerd Fonts metadata, filtered to glyphs available in the bundled font layer.
+
+Verification:
+- `cmake --build build -j 8` passes.
+- The Symbols font contains both sort icon codepoints used by the file picker.
+- File picker keeps icons for file types, navigation toolbar controls, and sort state. Dialog-style actions such as Create, Select Folder, and Cancel stay text-only for a cleaner professional look.

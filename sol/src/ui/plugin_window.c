@@ -37,6 +37,10 @@
 #define PM_DEFAULT_HEIGHT  520
 #define PM_LIST_MAX        64u
 
+#define PM_LABEL_DISABLE CA_ICON_NF_FA_TOGGLE_OFF " Disable"
+#define PM_LABEL_ENABLE  CA_ICON_NF_FA_TOGGLE_ON " Enable"
+#define PM_LABEL_RELOAD  CA_ICON_NF_COD_DEBUG_RESTART " Reload"
+
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
@@ -353,7 +357,7 @@ static void pm_content_builder(Ca_Div *div, void *user_data)
                 .click_data = w,
             });
             ca_text(&(Ca_TextDesc){
-                .text  = "Disable",
+                .text  = PM_LABEL_DISABLE,
                 .style = "pm-btn-text pm-btn-disable-text",
             });
             ca_btn_end();
@@ -364,7 +368,7 @@ static void pm_content_builder(Ca_Div *div, void *user_data)
                 .click_data = w,
             });
             ca_text(&(Ca_TextDesc){
-                .text  = "Enable",
+                .text  = PM_LABEL_ENABLE,
                 .style = "pm-btn-text pm-btn-enable-text",
             });
             ca_btn_end();
@@ -378,7 +382,7 @@ static void pm_content_builder(Ca_Div *div, void *user_data)
                 .disabled   = !sel.enabled,
             });
             ca_text(&(Ca_TextDesc){
-                .text  = "Reload",
+                .text  = PM_LABEL_RELOAD,
                 .style = "pm-btn-text",
             });
             ca_btn_end();
