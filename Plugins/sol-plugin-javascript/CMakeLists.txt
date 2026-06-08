@@ -18,8 +18,8 @@ add_library(sol_plugin_javascript MODULE
 set_target_properties(sol_plugin_javascript PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-javascript"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_javascript)
 
 target_include_directories(sol_plugin_javascript PRIVATE
     ${GRAMMAR_DIR}

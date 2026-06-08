@@ -48,6 +48,14 @@ char *sol_platform_path_join(const char *a, const char *b);
 const char *sol_platform_basename(const char *path);
 
 bool sol_platform_get_cwd(char *buffer, size_t buffer_size);
+
+/* Write the absolute path of the running executable into `buffer`.
+ * Parameters:
+ *   buffer      - destination buffer for a null-terminated path.
+ *   buffer_size - total number of bytes available in `buffer`.
+ */
+bool sol_platform_get_executable_path(char *buffer, size_t buffer_size);
+
 char *sol_platform_config_home_dir(void);
 bool sol_platform_get_path_info(const char *path, SolPathInfo *out_info);
 bool sol_platform_mkdir_p(const char *path);

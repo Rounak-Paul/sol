@@ -45,8 +45,8 @@ add_library(sol_plugin_typescript MODULE
 set_target_properties(sol_plugin_typescript PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-typescript"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_typescript)
 
 target_include_directories(sol_plugin_typescript PRIVATE
     ${TS_ROOT}/typescript/src

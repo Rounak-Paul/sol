@@ -49,6 +49,81 @@
 #include "sol_ui_constants.h"
 #include "sol_ui_system.h"
 
+/* Write the directory portion of `path` into `buffer`.
+ * Parameters:
+ *   path        - source path to split.
+ *   buffer      - destination for the null-terminated directory path.
+ *   buffer_size - total bytes available in `buffer`.
+ */
+static bool sol_path_dirname(const char *path, char *buffer, size_t buffer_size)
+{
+    if (!path || !buffer || buffer_size == 0u) {
+        return false;
+    }
+
+    const char *sep = NULL;
+    for (const char *p = path; *p != '\0'; ++p) {
+        if (sol_platform_is_path_separator(*p)) {
+            sep = p;
+        }
+    }
+    if (!sep || sep == path) {
+        return false;
+    }
+
+    const size_t len = (size_t)(sep - path);
+    if (len >= buffer_size) {
+        return false;
+    }
+    memcpy(buffer, path, len);
+    buffer[len] = '\0';
+    return true;
+}
+
+/* Resolve the plugin directory located beside the running executable.
+ * Parameters:
+ *   argv0       - process argv[0], used only if the OS executable path fails.
+ *   buffer      - destination for the null-terminated plugin directory path.
+ *   buffer_size - total bytes available in `buffer`.
+ */
+static bool sol_resolve_plugin_directory(const char *argv0,
+                                         char       *buffer,
+                                         size_t      buffer_size)
+{
+    if (!buffer || buffer_size == 0u) {
+        return false;
+    }
+
+    char exe_path[1024];
+    char exe_dir[1024];
+    bool have_dir = false;
+
+    if (sol_platform_get_executable_path(exe_path, sizeof(exe_path))) {
+        have_dir = sol_path_dirname(exe_path, exe_dir, sizeof(exe_dir));
+    }
+    if (!have_dir && argv0 && argv0[0] != '\0') {
+        have_dir = sol_path_dirname(argv0, exe_dir, sizeof(exe_dir));
+    }
+    if (!have_dir) {
+        exe_dir[0] = '.';
+        exe_dir[1] = '\0';
+    }
+
+    char *joined = sol_platform_path_join(exe_dir, "plugins");
+    if (!joined) {
+        return false;
+    }
+
+    const size_t len = strlen(joined);
+    if (len >= buffer_size) {
+        free(joined);
+        return false;
+    }
+    memcpy(buffer, joined, len + 1u);
+    free(joined);
+    return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
@@ -1235,20 +1310,9 @@ int main(int argc, char **argv)
     const bool warmup_ok = sol_job_system_parallel_for(
         app.jobs, 100000u, 256u, sol_warmup_range, &warmup);
 
-    /* Resolve plugin directory relative to the executable so the app works
-     * regardless of the current working directory.
-     * argv[0] = ".../bin/sol"  → plugin dir = ".../bin/plugins"          */
-    char plugin_dir[1024] = "bin/plugins";  /* fallback if argv[0] unusable */
-    if (argv[0] && argv[0][0] != '\0') {
-        const char *sep = strrchr(argv[0], '/');
-        if (sep) {
-            size_t dir_len = (size_t)(sep - argv[0]);
-            if (dir_len + sizeof("/plugins") < sizeof(plugin_dir)) {
-                memcpy(plugin_dir, argv[0], dir_len);
-                memcpy(plugin_dir + dir_len, "/plugins", sizeof("/plugins"));
-            }
-        }
-    }
+    char plugin_dir[1024] = "plugins";
+    (void)sol_resolve_plugin_directory(
+        argc > 0 ? argv[0] : NULL, plugin_dir, sizeof(plugin_dir));
     const uint32_t loaded_plugins =
         (uint32_t)sol_system_load_plugins_from_directory(app.systems, plugin_dir);
 

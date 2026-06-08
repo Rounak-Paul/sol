@@ -20,8 +20,8 @@ add_library(sol_plugin_cpp MODULE
 set_target_properties(sol_plugin_cpp PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-cpp"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_cpp)
 
 target_include_directories(sol_plugin_cpp PRIVATE
     ${GRAMMAR_DIR}

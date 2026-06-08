@@ -42,6 +42,13 @@ function(sol_embed_highlights_scm TARGET SCM_FILE CALLER_BINARY_DIR)
     target_include_directories(${TARGET} PRIVATE "${CALLER_BINARY_DIR}")
 endfunction()
 
+function(sol_configure_plugin_output TARGET)
+    set_target_properties(${TARGET} PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:sol>/plugins"
+        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:sol>/plugins"
+    )
+endfunction()
+
 add_subdirectory(sol-plugin-c)
 add_subdirectory(sol-plugin-cpp)
 add_subdirectory(sol-plugin-python)

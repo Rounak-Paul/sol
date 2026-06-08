@@ -47,8 +47,8 @@ add_library(sol_plugin_markdown MODULE
 set_target_properties(sol_plugin_markdown PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-markdown"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_markdown)
 
 target_include_directories(sol_plugin_markdown PRIVATE
     ${MD_ROOT}/tree-sitter-markdown/src

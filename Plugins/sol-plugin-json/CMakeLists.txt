@@ -18,8 +18,8 @@ add_library(sol_plugin_json MODULE
 set_target_properties(sol_plugin_json PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-json"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_json)
 
 target_include_directories(sol_plugin_json PRIVATE
     ${GRAMMAR_DIR}

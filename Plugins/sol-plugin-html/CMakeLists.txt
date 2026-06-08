@@ -18,8 +18,8 @@ add_library(sol_plugin_html MODULE
 set_target_properties(sol_plugin_html PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-html"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_html)
 
 target_include_directories(sol_plugin_html PRIVATE
     ${GRAMMAR_DIR}

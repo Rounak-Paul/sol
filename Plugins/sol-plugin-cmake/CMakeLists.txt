@@ -18,8 +18,8 @@ add_library(sol_plugin_cmake MODULE
 set_target_properties(sol_plugin_cmake PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-cmake"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_cmake)
 
 target_include_directories(sol_plugin_cmake PRIVATE
     ${GRAMMAR_DIR}

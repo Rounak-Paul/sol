@@ -18,8 +18,8 @@ add_library(sol_plugin_css MODULE
 set_target_properties(sol_plugin_css PROPERTIES
     PREFIX    ""
     OUTPUT_NAME "sol-plugin-css"
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin/plugins
 )
+sol_configure_plugin_output(sol_plugin_css)
 
 target_include_directories(sol_plugin_css PRIVATE
     ${GRAMMAR_DIR}

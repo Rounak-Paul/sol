@@ -12,6 +12,15 @@
 #include <direct.h>
 #include <io.h>
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <dirent.h>
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 #else
 #include <dirent.h>
 #include <dlfcn.h>
@@ -97,6 +106,42 @@ bool sol_platform_get_cwd(char *buffer, size_t buffer_size)
     return _getcwd(buffer, (int)buffer_size) != NULL;
 #else
     return getcwd(buffer, buffer_size) != NULL;
+#endif
+}
+
+bool sol_platform_get_executable_path(char *buffer, size_t buffer_size)
+{
+    if (!buffer || buffer_size == 0u) {
+        return false;
+    }
+    buffer[0] = '\0';
+
+#if defined(_WIN32)
+    const DWORD len = GetModuleFileNameA(NULL, buffer, (DWORD)buffer_size);
+    if (len == 0u || len >= buffer_size) {
+        buffer[0] = '\0';
+        return false;
+    }
+    return true;
+#elif defined(__APPLE__)
+    if (buffer_size > UINT32_MAX) {
+        buffer_size = UINT32_MAX;
+    }
+    uint32_t len = (uint32_t)buffer_size;
+    if (_NSGetExecutablePath(buffer, &len) != 0) {
+        buffer[0] = '\0';
+        return false;
+    }
+    buffer[buffer_size - 1u] = '\0';
+    return true;
+#else
+    const ssize_t len = readlink("/proc/self/exe", buffer, buffer_size - 1u);
+    if (len <= 0 || (size_t)len >= buffer_size) {
+        buffer[0] = '\0';
+        return false;
+    }
+    buffer[len] = '\0';
+    return true;
 #endif
 }
 
