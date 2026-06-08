@@ -21,6 +21,7 @@ Fix:
 - `causality.h` publicly includes `ca_icons.h`, so Causality users can use these names directly after including the main public header.
 - `font_path` / `bold_font_path` override only the regular/bold text faces. The embedded Symbols icon layer remains active for `CA_ICON_*` glyphs when text faces are overridden.
 - The embedded font bytes remain internal renderer assets, not a public raw-font-data API.
+- Symbols Nerd Font Mono icon glyphs use full-em advances while Roboto Nerd Font Mono icons use about 0.60em. The renderer normalizes Symbols icons with a 0.78 scale and slight baseline raise, giving a middle-ground visual size that is smaller than raw Symbols but not as small as Roboto-patched icons.
 
 Boundary:
 - True "all possible Unicode" coverage cannot be achieved self-contained unless the project embeds a broad fallback font asset such as a Noto family font.
