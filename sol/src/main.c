@@ -205,14 +205,14 @@ static void sol_register_search_command_defaults(SolUISystem *ui)
     const SolKeyCode file_sequence[] = { 'F', 'F' };
     const SolKeyCode content_sequence[] = { 'F', 'G' };
     (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
-        .action = "search.find_files",
+        .action = "find.files",
         .label = "Find files",
         .sequence = file_sequence,
         .sequence_length = 2u,
     });
     (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
-        .action = "search.live_grep",
-        .label = "Search file contents",
+        .action = "find.grep",
+        .label = "Find in files",
         .sequence = content_sequence,
         .sequence_length = 2u,
     });
@@ -968,11 +968,11 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return true;
     }
 
-    if (strcmp(p->action, "search.find_files") == 0) {
+    if (strcmp(p->action, "find.files") == 0) {
         sol_ui_system_open_file_search(app->ui);
         return true;
     }
-    if (strcmp(p->action, "search.live_grep") == 0) {
+    if (strcmp(p->action, "find.grep") == 0) {
         sol_ui_system_open_content_search(app->ui);
         return true;
     }
@@ -983,6 +983,29 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         if (!tb || !sol_text_buffer_has_selection(tb)) return false;
         char buf[65536];
         const size_t n = sol_text_buffer_copy_selection_bytes(tb, buf, sizeof(buf) - 1u);
+        if (n == 0u) return false;
+        buf[n] = '\0';
+        Ca_Window *win = sol_ui_system_primary_window(app->ui);
+        ca_clipboard_set_text(win, buf);
+        return true;
+    }
+
+    /* ---- edit.copy_word : copy word at cursor (or selection) to clipboard. */
+    if (strcmp(p->action, "edit.copy_word") == 0) {
+        SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+        if (!tb) return false;
+        char buf[65536];
+        size_t n;
+        if (sol_text_buffer_has_selection(tb)) {
+            n = sol_text_buffer_copy_selection_bytes(tb, buf, sizeof(buf) - 1u);
+        } else {
+            const size_t saved = sol_text_buffer_cursor_byte(tb);
+            sol_text_buffer_move_word(tb, -1, false);
+            sol_text_buffer_move_word(tb, +1, true);
+            n = sol_text_buffer_copy_selection_bytes(tb, buf, sizeof(buf) - 1u);
+            sol_text_buffer_clear_selection(tb);
+            sol_text_buffer_set_cursor_byte(tb, saved);
+        }
         if (n == 0u) return false;
         buf[n] = '\0';
         Ca_Window *win = sol_ui_system_primary_window(app->ui);
@@ -1084,11 +1107,13 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return true;
     }
 
-    /* ---- edit.delete_char : delete one character forward (or selection). --- */
+    /* ---- edit.delete_char : delete selection if active, else one char forward. */
     if (strcmp(p->action, "edit.delete_char") == 0) {
         SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
         if (!tb) return false;
-        const bool changed = sol_text_buffer_delete_forward(tb);
+        const bool changed = sol_text_buffer_has_selection(tb)
+            ? sol_text_buffer_delete_selection(tb)
+            : sol_text_buffer_delete_forward(tb);
         if (changed) sol_ui_system_invalidate_buffer_area(app->ui);
         return changed;
     }

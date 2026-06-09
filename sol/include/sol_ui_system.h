@@ -81,8 +81,9 @@ typedef struct SolCommandFlowDesc {
 	const SolKeyCode *sequence;
 	/* Optional parallel array of per-step modifier masks. NULL means
 	 * every step has no modifier (the leader modifier is implicit and
-	 * MUST NOT be included here). Only Shift / Alt / Super are
-	 * meaningful — Ctrl is the leader and is consumed by the popup. */
+	 * MUST NOT be included here). Only the non-leader modifiers are
+	 * meaningful at each step — the leader modifier is consumed by the
+	 * popup and stripped before matching. */
 	const SolModifierMask *step_modifiers;
 	size_t sequence_length;
 	SolKeyCode key;
@@ -171,8 +172,18 @@ int  sol_ui_system_tree_panel_width(const SolUISystem *ui);
 /* True while the leader-key popup is visible / a flow chord is being
  * captured. Hosts use this to suppress raw editing input (typing,
  * arrows, backspace, …) while a flow is in progress, so e.g. pressing
- * Ctrl+W,V doesn't also insert characters into the active buffer. */
+ * L,W,V doesn't also insert characters into the active buffer. */
 bool sol_ui_system_is_leader_active(const SolUISystem *ui);
+
+/* Get / set the leader modifier. The leader is the modifier key that
+ * opens the command-flow popup (default: SOL_MOD_CTRL). Changing it
+ * takes effect immediately; call before registering flows so that the
+ * leader-stripping pass in sol_ui_system_register_command_flow uses the
+ * correct mask. Typically called by the config loader when it processes
+ * the `leader` directive. */
+SolModifierMask sol_ui_system_leader_modifier(const SolUISystem *ui);
+void            sol_ui_system_set_leader_modifier(SolUISystem *ui,
+                                                  SolModifierMask mod);
 
 void sol_ui_system_attach_buffer_text_context_menu(SolUISystem *ui,
                                                    SolBufferNodeId leaf_id,

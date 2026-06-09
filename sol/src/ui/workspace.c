@@ -1287,6 +1287,16 @@ void sol_ui_system_set_plugin_manager(SolUISystem *ui, SolPluginManager *pm)
     if (ui) ui->plugin_manager = pm;
 }
 
+SolModifierMask sol_ui_system_leader_modifier(const SolUISystem *ui)
+{
+    return ui ? ui->leader_modifier : SOL_MOD_NONE;
+}
+
+void sol_ui_system_set_leader_modifier(SolUISystem *ui, SolModifierMask mod)
+{
+    if (ui) ui->leader_modifier = mod;
+}
+
 void sol_ui_system_open_plugin_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance) return;

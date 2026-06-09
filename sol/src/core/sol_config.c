@@ -3,18 +3,23 @@
 
 /* sol_config.c — Loader for $HOME/.sol/bindings.conf.
  *
- * Hand-rolled parser (no external deps). Grammar is a single line shape:
+ * Hand-rolled parser (no external deps). Two directive shapes:
  *
- *     bind <key1> <key2> ... <keyN> <action>
+ *     leader <modifier>
+ *         Set the leader key.  <modifier> is one of: ctrl  alt  super  shift.
+ *         Must appear before any `bind` lines.  Default is ctrl.
  *
- * where <key1> MUST be `ctrl` (leader) and is stripped; each remaining
- * key may be prefixed by `shift+`, `alt+`, `super+` (case-insensitive,
- * any combination). The last token on a `bind` line is the action.
+ *     bind L <key1> ... <keyN> <action>
+ *         Bind a chord to an action.  L is the leader placeholder; you may
+ *         also write the literal modifier name (e.g. `ctrl`) as long as it
+ *         matches the declared leader.  Each key may carry `shift+`, `alt+`,
+ *         or `super+` prefix (case-insensitive, any combination).  The last
+ *         token is the action name.
  *
- * All other line shapes (comments, blank, unknown keyword) are
- * silently ignored. Per-line parse errors print a single
- * `bindings.conf: line N:` warning to stderr and skip the line — the
- * loader keeps going so a typo doesn't kill the whole keymap.
+ * All other line shapes (comments, blank, unknown keyword) are silently
+ * ignored.  Per-line parse errors print a single `bindings.conf: line N:`
+ * warning to stderr and skip the line — the loader keeps going so a typo
+ * doesn't kill the whole keymap.
  */
 
 #include "sol_config.h"
@@ -38,12 +43,16 @@
 static const char *const SOL_DEFAULT_BINDINGS_CONF =
     "# Sol key bindings.\n"
     "#\n"
-    "# Format: bind <chord> <action>\n"
+    "# leader <modifier>          Declare the leader key (ctrl / alt / super / shift).\n"
+    "# bind L <key>... <action>   Bind a chord to an action.\n"
     "#\n"
-    "# A chord is a whitespace-separated sequence of keys. Each key may\n"
-    "# be prefixed by 'shift+', 'alt+', or 'super+' (case-insensitive).\n"
-    "# The first key MUST be 'ctrl' (the leader); it is implicit on the\n"
-    "# remaining steps.\n"
+    "# 'L' is the leader placeholder — it expands to whichever modifier was\n"
+    "# declared with 'leader'. You may also write the modifier name directly\n"
+    "# (e.g. 'ctrl') as long as it matches the declared leader. Put 'leader'\n"
+    "# before any 'bind' lines.\n"
+    "#\n"
+    "# Each step key after L may carry 'shift+', 'alt+', or 'super+' prefix\n"
+    "# (case-insensitive). The last token on a bind line is the action.\n"
     "#\n"
     "# Available actions (each publishes sol.command.invoked):\n"
     "#\n"
@@ -67,55 +76,59 @@ static const char *const SOL_DEFAULT_BINDINGS_CONF =
     "#   explorer.focus.toggle   Toggle explorer panel focus/visibility.\n"
     "#   explorer.open           Open a folder in the explorer panel.\n"
     "#\n"
-    "# Search\n"
-    "#   search.find_files       Fuzzy-search files in the workspace.\n"
-    "#   search.live_grep        Search text across workspace files.\n"
+    "# Find\n"
+    "#   find.files              Fuzzy-search files in the workspace.\n"
+    "#   find.grep               Search text across workspace files.\n"
     "#\n"
-    "# Edit\n"
-    "#   edit.copy               Copy selected text to clipboard.\n"
+    "# Edit  (scope prefixes: w = word, l = line; none = char / selection)\n"
+    "#   edit.copy               Copy selection to clipboard.\n"
+    "#   edit.copy_word          Copy word at cursor to clipboard.\n"
     "#   edit.copy_line          Copy current line to clipboard.\n"
+    "#   edit.cut                Cut selection to clipboard.\n"
     "#   edit.paste              Paste clipboard at cursor.\n"
     "#   edit.paste_line         Paste clipboard as a new line below cursor.\n"
-    "#   edit.cut                Cut selection to clipboard.\n"
     "#   edit.undo               Undo last edit.\n"
     "#   edit.redo               Redo last undone edit.\n"
     "#   edit.select_all         Select entire buffer.\n"
-    "#   edit.delete_char        Delete one character forward.\n"
-    "#   edit.delete_word        Delete one word forward.\n"
-    "#   edit.delete_word_back   Delete one word backward.\n"
+    "#   edit.delete_char        Delete char forward (or selection if active).\n"
+    "#   edit.delete_word        Delete word forward.\n"
+    "#   edit.delete_word_back   Delete word backward.\n"
     "#   edit.delete_line        Delete current line.\n"
     "#\n"
     "# Plugins may register additional actions. Add bindings here to wire\n"
     "# them to chords without touching Sol's source.\n"
     "\n"
-    "bind ctrl b c            buffer.new\n"
-    "bind ctrl b o            buffer.open\n"
-    "bind ctrl b x            buffer.close\n"
-    "bind ctrl b b            buffer.focus.previous\n"
-    "bind ctrl b n            buffer.cycle.next\n"
-    "bind ctrl b p            buffer.cycle.prev\n"
-    "bind ctrl b shift+n      buffer.focus.last\n"
-    "bind ctrl b shift+p      buffer.focus.first\n"
-    "bind ctrl p v            pane.split.vertical\n"
-    "bind ctrl p h            pane.split.horizontal\n"
-    "bind ctrl p n            pane.focus.next\n"
-    "bind ctrl p p            pane.focus.prev\n"
-    "bind ctrl e e            explorer.focus.toggle\n"
-    "bind ctrl e o            explorer.open\n"
-    "bind ctrl f f            search.find_files\n"
-    "bind ctrl f g            search.live_grep\n"
-    "bind ctrl c              edit.copy\n"
-    "bind ctrl shift+c        edit.copy_line\n"
-    "bind ctrl v              edit.paste\n"
-    "bind ctrl shift+v        edit.paste_line\n"
-    "bind ctrl x              edit.cut\n"
-    "bind ctrl z              edit.undo\n"
-    "bind ctrl shift+z        edit.redo\n"
-    "bind ctrl a              edit.select_all\n"
-    "bind ctrl d d            edit.delete_char\n"
-    "bind ctrl d shift+d      edit.delete_word\n"
-    "bind ctrl backspace       edit.delete_word_back\n"
-    "bind ctrl shift+d        edit.delete_line\n";
+    "leader ctrl\n"
+    "\n"
+    "bind L b c            buffer.new\n"
+    "bind L b o            buffer.open\n"
+    "bind L b x            buffer.close\n"
+    "bind L b b            buffer.focus.previous\n"
+    "bind L b n            buffer.cycle.next\n"
+    "bind L b p            buffer.cycle.prev\n"
+    "bind L b shift+n      buffer.focus.last\n"
+    "bind L b shift+p      buffer.focus.first\n"
+    "bind L p v            pane.split.vertical\n"
+    "bind L p h            pane.split.horizontal\n"
+    "bind L p n            pane.focus.next\n"
+    "bind L p p            pane.focus.prev\n"
+    "bind L e e            explorer.focus.toggle\n"
+    "bind L e o            explorer.open\n"
+    "bind L f f            find.files\n"
+    "bind L f g            find.grep\n"
+    "bind L e c            edit.copy\n"
+    "bind L e w c          edit.copy_word\n"
+    "bind L e l c          edit.copy_line\n"
+    "bind L e x            edit.cut\n"
+    "bind L e p            edit.paste\n"
+    "bind L e l p          edit.paste_line\n"
+    "bind L e u            edit.undo\n"
+    "bind L e r            edit.redo\n"
+    "bind L e a            edit.select_all\n"
+    "bind L e d            edit.delete_char\n"
+    "bind L e w d          edit.delete_word\n"
+    "bind L e w backspace  edit.delete_word_back\n"
+    "bind L e l d          edit.delete_line\n";
 
 /* ------------------------------------------------------------------ */
 /* Path helpers                                                        */
@@ -301,19 +314,40 @@ static size_t sol_tokenise_inplace(char *line, char **tokens, size_t max_tokens)
 /* Line handler                                                        */
 /* ------------------------------------------------------------------ */
 
+/* Return the canonical lowercase name of a modifier mask (leader key). */
+static const char *sol_modifier_name(SolModifierMask mod)
+{
+    switch (mod) {
+    case SOL_MOD_CTRL:  return "ctrl";
+    case SOL_MOD_ALT:   return "alt";
+    case SOL_MOD_SUPER: return "super";
+    case SOL_MOD_SHIFT: return "shift";
+    default:            return "ctrl";
+    }
+}
+
 static bool sol_register_bind_line(SolUISystem *ui, char **tokens, size_t ntokens,
                                    size_t line_no)
 {
-    /* Expect: bind <ctrl> <step1> ... <stepK> <action>
-       So ntokens >= 4 (bind + ctrl + at-least-one-step + action). */
+    /* Expect: bind <L|leader-name> <step1> ... <stepK> <action>
+       So ntokens >= 4 (bind + leader + at-least-one-step + action). */
     if (ntokens < 4u) {
         fprintf(stderr, "bindings.conf: line %zu: too few tokens for `bind`\n",
                 line_no);
         return false;
     }
-    if (!sol_streq_ci(tokens[1], "ctrl")) {
-        fprintf(stderr, "bindings.conf: line %zu: leader must be `ctrl`\n",
-                line_no);
+    /* Accept "L" (portable leader placeholder) or the literal name of the
+       configured leader modifier.  The literal name allows old configs written
+       before the `leader` directive existed to keep working unchanged. */
+    const SolModifierMask leader_mod = sol_ui_system_leader_modifier(ui);
+    const bool leader_ok =
+        sol_streq_ci(tokens[1], "L") ||
+        sol_streq_ci(tokens[1], sol_modifier_name(leader_mod));
+    if (!leader_ok) {
+        fprintf(stderr,
+                "bindings.conf: line %zu: second token must be `L` "
+                "(leader placeholder) or `%s` (current leader name)\n",
+                line_no, sol_modifier_name(leader_mod));
         return false;
     }
 
@@ -406,6 +440,31 @@ int sol_config_load_bindings(SolUISystem *ui)
         const size_t n = sol_tokenise_inplace(
             line, tokens, sizeof(tokens) / sizeof(tokens[0]));
         if (n == 0u) continue;
+
+        if (sol_streq_ci(tokens[0], "leader")) {
+            if (n < 2u) {
+                fprintf(stderr,
+                        "bindings.conf: line %zu: `leader` requires a modifier name\n",
+                        line_no);
+            } else {
+                SolModifierMask mod = SOL_MOD_NONE;
+                if      (sol_streq_ci(tokens[1], "ctrl"))  mod = SOL_MOD_CTRL;
+                else if (sol_streq_ci(tokens[1], "alt"))   mod = SOL_MOD_ALT;
+                else if (sol_streq_ci(tokens[1], "super")) mod = SOL_MOD_SUPER;
+                else if (sol_streq_ci(tokens[1], "shift")) mod = SOL_MOD_SHIFT;
+                else {
+                    fprintf(stderr,
+                            "bindings.conf: line %zu: unknown leader `%s` "
+                            "(expected ctrl / alt / super / shift)\n",
+                            line_no, tokens[1]);
+                    mod = SOL_MOD_NONE;
+                }
+                if (mod != SOL_MOD_NONE) {
+                    sol_ui_system_set_leader_modifier(ui, mod);
+                }
+            }
+            continue;
+        }
 
         if (sol_streq_ci(tokens[0], "bind")) {
             if (sol_register_bind_line(ui, tokens, n, line_no)) {
