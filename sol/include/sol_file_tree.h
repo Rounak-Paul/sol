@@ -35,9 +35,12 @@ typedef struct SolEventBus SolEventBus;
 typedef struct SolFileTree  SolFileTree;
 typedef struct SolFileEntry SolFileEntry;
 
-/* A single row in the visible projection. The pointers are owned by
- * the tree and remain valid until the next mutation (set_root,
- * toggle, refresh). */
+/*
+ * A single row in the visible depth-first projection of the tree.
+ *
+ * All pointers are owned by the tree and remain valid until the next
+ * mutation (set_root, toggle, refresh).
+ */
 struct SolFileEntry {
     const char *name;       /* basename (no slash)            */
     const char *full_path;  /* absolute path                  */
@@ -46,37 +49,71 @@ struct SolFileEntry {
     bool        expanded;   /* meaningful when is_dir         */
 };
 
+/* Create a new, empty file tree with no root mounted. */
 SolFileTree *sol_file_tree_create(void);
+
+/* Destroy the tree and free all internal resources. */
 void         sol_file_tree_destroy(SolFileTree *tree);
 
-/* Attach (or detach with NULL) a u32 revision signal that the tree
- * bumps on every mutation (set_root, toggle, refresh). Same contract
- * as sol_buffer_attach_revision_signal. */
+/*
+ * Attach (or detach with NULL) a u32 revision signal bumped on every mutation.
+ *
+ * tree  The file tree.
+ * sig   Signal to bump, or NULL to detach. Same contract as
+ *       sol_buffer_attach_revision_signal.
+ */
 void sol_file_tree_attach_revision_signal(SolFileTree *tree, Ca_Signal *sig);
 
-/* Attach (or detach with NULL) an event bus. When attached, the tree
- * publishes sol.file_tree.root_changed on every set_root success. */
+/*
+ * Attach (or detach with NULL) an event bus.
+ *
+ * When attached, publishes sol.file_tree.root_changed on every successful
+ * sol_file_tree_set_root call.
+ *
+ * tree  The file tree.
+ * bus   Event bus to attach, or NULL to detach.
+ */
 void sol_file_tree_attach_event_bus(SolFileTree *tree, SolEventBus *bus);
 
-/* Set (or replace) the root directory. Returns false if the path is
- * not a directory or could not be read; in that case the tree is
- * cleared. */
+/*
+ * Mount a root directory, replacing any previously mounted root.
+ *
+ * tree       The file tree.
+ * root_path  Absolute path of the directory to mount.
+ * Returns    false if the path is not a directory or could not be read;
+ *            in that case the tree is cleared.
+ */
 bool         sol_file_tree_set_root(SolFileTree *tree, const char *root_path);
 
-/* Returns NULL if no root is set. */
+/* Returns the currently mounted root path, or NULL if no root is set. */
 const char  *sol_file_tree_root(const SolFileTree *tree);
 
-/* Visible projection. */
+/* Returns the number of rows in the current visible projection. */
 size_t                sol_file_tree_visible_count(const SolFileTree *tree);
+
+/*
+ * Return the visible entry at the given row index.
+ *
+ * tree   The file tree.
+ * index  Zero-based row index in [0, sol_file_tree_visible_count()).
+ * Returns  Pointer to the entry, or NULL when index is out of range.
+ */
 const SolFileEntry   *sol_file_tree_visible(const SolFileTree *tree, size_t index);
 
-/* Toggle expansion on a directory row. No-op for files or invalid
- * indices. Returns true if the visible list changed. */
+/*
+ * Toggle the expansion state of a directory row.
+ *
+ * tree   The file tree.
+ * index  Row index of the directory entry to toggle.
+ * Returns  true if the visible list changed; false for file rows or bad index.
+ */
 bool sol_file_tree_toggle(SolFileTree *tree, size_t index);
 
-/* Re-read the mounted root after external filesystem mutations.
- * Expansion state is rebuilt from the root; callers that need stable
- * expansion should add that policy above this pure tree layer. */
+/*
+ * Re-read the mounted root after external filesystem changes.
+ *
+ * Expansion state is rebuilt from the root. Returns true on success.
+ */
 bool sol_file_tree_refresh(SolFileTree *tree);
 
 #endif /* SOL_FILE_TREE_H */

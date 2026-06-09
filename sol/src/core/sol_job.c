@@ -38,6 +38,12 @@ struct SolJobSystem {
     bool shutting_down;
 };
 
+/*
+ * Initialise a fence's mutex and condition variable in place.
+ *
+ * fence   Fence to initialise.
+ * Returns true on success, false if pthread initialisation fails.
+ */
 static bool sol_job_fence_init(SolJobFence *fence)
 {
     if (!fence) {
@@ -56,6 +62,7 @@ static bool sol_job_fence_init(SolJobFence *fence)
     return true;
 }
 
+/* Destroy the mutex and condition variable of a fence initialised with sol_job_fence_init. */
 static void sol_job_fence_deinit(SolJobFence *fence)
 {
     if (!fence) {
@@ -66,6 +73,7 @@ static void sol_job_fence_deinit(SolJobFence *fence)
     pthread_mutex_destroy(&fence->lock);
 }
 
+/* Atomically increment the fence's pending counter when a job is enqueued. */
 static void sol_job_fence_increment(SolJobFence *fence)
 {
     if (!fence) {
@@ -77,6 +85,13 @@ static void sol_job_fence_increment(SolJobFence *fence)
     pthread_mutex_unlock(&fence->lock);
 }
 
+/*
+ * Decrement the fence's pending counter and signal waiters if it reaches zero.
+ *
+ * Called by the worker thread after each job completes.
+ *
+ * fence  Fence associated with the completed job.
+ */
 static void sol_job_fence_complete(SolJobFence *fence)
 {
     if (!fence) {
@@ -94,6 +109,16 @@ static void sol_job_fence_complete(SolJobFence *fence)
     pthread_mutex_unlock(&fence->lock);
 }
 
+/*
+ * Entry point for each worker thread.
+ *
+ * Loops dequeuing and executing jobs until the system signals shutdown with an
+ * empty queue. Signals the idle condition variable when both the queue is empty
+ * and no workers are active.
+ *
+ * arg  Pointer to the owning SolJobSystem.
+ * Returns NULL.
+ */
 static void *sol_job_worker_main(void *arg)
 {
     SolJobSystem *system = (SolJobSystem *)arg;
@@ -138,6 +163,7 @@ static void *sol_job_worker_main(void *arg)
     return NULL;
 }
 
+/* Return the default number of worker threads: max(1, CPU count - 1). */
 static uint32_t sol_default_worker_count(void)
 {
     const uint32_t cpu_count = sol_platform_cpu_count();
@@ -147,6 +173,7 @@ static uint32_t sol_default_worker_count(void)
     return cpu_count - 1u;
 }
 
+/* Return a SolJobSystemConfig populated with sensible defaults. */
 SolJobSystemConfig sol_job_system_config_default(void)
 {
     SolJobSystemConfig config;
@@ -155,6 +182,15 @@ SolJobSystemConfig sol_job_system_config_default(void)
     return config;
 }
 
+/*
+ * Allocate a job system and launch its worker threads.
+ *
+ * If any worker thread fails to start, previously launched threads are stopped
+ * and all resources are freed before returning NULL.
+ *
+ * config   Configuration; pass NULL to use defaults.
+ * Returns  Heap-allocated job system, or NULL on failure.
+ */
 SolJobSystem *sol_job_system_create(const SolJobSystemConfig *config)
 {
     SolJobSystemConfig effective = config ? *config : sol_job_system_config_default();
@@ -227,6 +263,13 @@ SolJobSystem *sol_job_system_create(const SolJobSystemConfig *config)
     return system;
 }
 
+/*
+ * Signal all workers to stop, join them, then free the job system.
+ *
+ * Passing NULL is a no-op.
+ *
+ * system  Job system to destroy.
+ */
 void sol_job_system_destroy(SolJobSystem *system)
 {
     if (!system) {
@@ -250,6 +293,18 @@ void sol_job_system_destroy(SolJobSystem *system)
     free(system);
 }
 
+/*
+ * Enqueue a job for execution by the worker pool.
+ *
+ * Increments the fence's pending count before enqueuing, and decrements it if
+ * the queue is full and the job cannot be submitted.
+ *
+ * system     Job system to submit to.
+ * fn         Function to execute.
+ * user_data  Opaque argument passed to fn.
+ * fence      Optional fence to track completion; may be NULL.
+ * Returns    true if the job was enqueued, false if the queue is full or shutting down.
+ */
 bool sol_job_system_submit(
     SolJobSystem *system,
     SolJobFn fn,
@@ -296,6 +351,14 @@ typedef struct SolParallelForContext {
     void *user_data;
 } SolParallelForContext;
 
+/*
+ * Worker task that steals chunks from a SolParallelForContext until exhausted.
+ *
+ * Uses an atomic fetch-add on next_index to claim the next chunk without a
+ * lock. Multiple tasks running concurrently will each process disjoint chunks.
+ *
+ * user_data  Pointer to a SolParallelForContext describing the work.
+ */
 static void sol_parallel_for_task(void *user_data)
 {
     SolParallelForContext *context = (SolParallelForContext *)user_data;
@@ -320,6 +383,19 @@ static void sol_parallel_for_task(void *user_data)
     }
 }
 
+/*
+ * Distribute item_count work items across the worker pool and block until done.
+ *
+ * Submits up to worker_count tasks that each steal chunks via an atomic
+ * counter. Blocks the calling thread until all chunks are processed.
+ *
+ * system      Job system to dispatch on.
+ * item_count  Total number of items to process.
+ * chunk_size  Number of items per chunk; 0 defaults to 64.
+ * fn          Range callback invoked for each [begin, end) slice.
+ * user_data   Opaque argument forwarded to fn.
+ * Returns     true on success, false on OOM or if system/fn is NULL.
+ */
 bool sol_job_system_parallel_for(
     SolJobSystem *system,
     uint32_t item_count,
@@ -374,6 +450,7 @@ bool sol_job_system_parallel_for(
     return ok;
 }
 
+/* Block until the job queue is empty and all workers are idle. */
 void sol_job_system_wait_idle(SolJobSystem *system)
 {
     if (!system) {
@@ -387,6 +464,7 @@ void sol_job_system_wait_idle(SolJobSystem *system)
     pthread_mutex_unlock(&system->lock);
 }
 
+/* Return the number of worker threads in the pool (0 if system is NULL). */
 uint32_t sol_job_system_worker_count(const SolJobSystem *system)
 {
     if (!system) {
@@ -395,6 +473,7 @@ uint32_t sol_job_system_worker_count(const SolJobSystem *system)
     return system->worker_count;
 }
 
+/* Allocate and initialise a new fence with zero pending jobs. */
 SolJobFence *sol_job_fence_create(void)
 {
     SolJobFence *fence = (SolJobFence *)calloc(1u, sizeof(SolJobFence));
@@ -410,6 +489,7 @@ SolJobFence *sol_job_fence_create(void)
     return fence;
 }
 
+/* Wait for all pending jobs to complete, then free the fence. */
 void sol_job_fence_destroy(SolJobFence *fence)
 {
     if (!fence) {
@@ -421,6 +501,7 @@ void sol_job_fence_destroy(SolJobFence *fence)
     free(fence);
 }
 
+/* Block the calling thread until the fence's pending count reaches zero. */
 void sol_job_fence_wait(SolJobFence *fence)
 {
     if (!fence) {
@@ -434,6 +515,7 @@ void sol_job_fence_wait(SolJobFence *fence)
     pthread_mutex_unlock(&fence->lock);
 }
 
+/* Return the number of jobs still pending on the fence (0 if fence is NULL). */
 uint32_t sol_job_fence_pending(SolJobFence *fence)
 {
     if (!fence) {

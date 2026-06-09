@@ -77,27 +77,47 @@ typedef void (*SolServiceDestroyFn)(void *service, void *user_data);
 /* Core subsystem access                                               */
 /* ================================================================== */
 
+/* Returns the system manager associated with this plugin context. */
 SOL_API SolSystemManager *sol_plugin_systems(SolPluginCtx *ctx);
+
+/* Returns the event bus associated with this plugin context. */
 SOL_API SolEventBus      *sol_plugin_event_bus(SolPluginCtx *ctx);
+
+/* Returns the buffer system associated with this plugin context. */
 SOL_API SolBufferSystem  *sol_plugin_buffers(SolPluginCtx *ctx);
+
+/* Returns the job system associated with this plugin context. */
 SOL_API SolJobSystem     *sol_plugin_jobs(SolPluginCtx *ctx);
+
+/* Returns the input system associated with this plugin context. */
 SOL_API SolInputSystem   *sol_plugin_input(SolPluginCtx *ctx);
 
-/* Returns the UI system, or NULL if it was not registered before
- * plugins were loaded. Register it with:
- *   sol_system_register_service(systems, "sol.ui", ui, NULL, NULL); */
+/*
+ * Returns the UI system, or NULL if it was not registered before plugins loaded.
+ *
+ * Register it with: sol_system_register_service(systems, "sol.ui", ui, NULL, NULL).
+ */
 SOL_API SolUISystem      *sol_plugin_ui(SolPluginCtx *ctx);
 
 /* ================================================================== */
 /* Plugin metadata                                                     */
 /* ================================================================== */
 
+/* Returns the unique dotted id of this plugin (e.g. "com.myco.myplugin"). */
 SOL_API const char *sol_plugin_id(const SolPluginCtx *ctx);
+
+/* Returns the human-readable display name of this plugin. */
 SOL_API const char *sol_plugin_display_name(const SolPluginCtx *ctx);
+
+/* Returns the semver version string of this plugin (e.g. "1.0.0"). */
 SOL_API const char *sol_plugin_version(const SolPluginCtx *ctx);
 
-/* Thread-safe printf-style logger.  Output is prefixed with
- * "[plugin:<id>] " for easy grep.  No trailing newline needed. */
+/*
+ * Thread-safe printf-style logger prefixed with "[plugin:<id>] ".
+ *
+ * ctx  The plugin context.
+ * fmt  printf format string. No trailing newline needed.
+ */
 SOL_API void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
     SOL_PRINTF_FORMAT(2, 3);
 
@@ -135,12 +155,27 @@ SOL_API bool sol_plugin_register_language_with_query(
 /* automatically unsubscribed when the plugin is unloaded.             */
 /* ================================================================== */
 
+/*
+ * Subscribe to a named event; auto-unsubscribed when the plugin unloads.
+ *
+ * ctx         The plugin context.
+ * event_name  Dotted event name, e.g. SOL_EVENT_TEXT_EDITED.
+ * handler     Function invoked for each matching event.
+ * user_data   Passed unchanged to handler.
+ * Returns     An opaque token used to unsubscribe early.
+ */
 SOL_API SolSubscriptionToken sol_plugin_subscribe(
     SolPluginCtx    *ctx,
     const char      *event_name,
     SolEventHandler  handler,
     void            *user_data);
 
+/*
+ * Unsubscribe a previously registered event handler before plugin unload.
+ *
+ * ctx    The plugin context.
+ * token  Token returned by sol_plugin_subscribe.
+ */
 SOL_API void sol_plugin_unsubscribe(SolPluginCtx *ctx, SolSubscriptionToken token);
 
 /* ================================================================== */
@@ -153,6 +188,7 @@ SOL_API void sol_plugin_unsubscribe(SolPluginCtx *ctx, SolSubscriptionToken toke
 /* Registered commands are automatically unregistered on unload.       */
 /* ================================================================== */
 
+/* Descriptor for a plugin command registered via sol_plugin_register_command. */
 typedef struct SolPluginCommandDesc {
     const char            *action;       /* unique dot-namespaced id          */
     const char            *label;        /* human-readable, shown in palette  */
@@ -163,7 +199,21 @@ typedef struct SolPluginCommandDesc {
     void                  *user_data;
 } SolPluginCommandDesc;
 
+/*
+ * Register a command; auto-unregistered when the plugin unloads.
+ *
+ * ctx   The plugin context.
+ * desc  Command parameters including action id, label, optional chord, and callback.
+ * Returns  true on success.
+ */
 SOL_API bool sol_plugin_register_command(SolPluginCtx *ctx, const SolPluginCommandDesc *desc);
+
+/*
+ * Unregister a command before plugin unload.
+ *
+ * ctx     The plugin context.
+ * action  The action id string used when the command was registered.
+ */
 SOL_API void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action);
 
 /* ================================================================== */
@@ -173,8 +223,22 @@ SOL_API void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action
 /* Auto-unbound on plugin unload.                                      */
 /* ================================================================== */
 
+/*
+ * Bind a key directly (outside the leader-chord mechanism); auto-unbound on unload.
+ *
+ * ctx   The plugin context.
+ * desc  Binding parameters.
+ * Returns  An opaque token used to unbind early.
+ */
 SOL_API SolInputActionToken sol_plugin_bind_key(SolPluginCtx *ctx,
                                                  const SolInputBindingDesc *desc);
+
+/*
+ * Unbind a key binding before plugin unload.
+ *
+ * ctx    The plugin context.
+ * token  Token returned by sol_plugin_bind_key.
+ */
 SOL_API void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token);
 
 /* ================================================================== */
@@ -188,15 +252,37 @@ SOL_API void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token)
 typedef uint32_t SolPluginStatusToken;
 #define SOL_PLUGIN_STATUS_TOKEN_INVALID 0u
 
+/*
+ * Add a text segment to the right side of the status bar.
+ *
+ * ctx          The plugin context.
+ * text         Text to display.
+ * style_class  CSS class for styling, or NULL for the default style.
+ * Returns      An opaque token used to update or remove the segment later;
+ *              SOL_PLUGIN_STATUS_TOKEN_INVALID on failure.
+ */
 SOL_API SolPluginStatusToken sol_plugin_add_status_segment(
     SolPluginCtx *ctx,
     const char   *text,
-    const char   *style_class);   /* CSS class, or NULL for default */
+    const char   *style_class);
 
+/*
+ * Update the text of an existing status bar segment.
+ *
+ * ctx    The plugin context.
+ * token  Token returned by sol_plugin_add_status_segment.
+ * text   New text to display.
+ */
 SOL_API void sol_plugin_update_status_segment(SolPluginCtx        *ctx,
                                                SolPluginStatusToken token,
                                                const char          *text);
 
+/*
+ * Remove a status bar segment.
+ *
+ * ctx    The plugin context.
+ * token  Token returned by sol_plugin_add_status_segment.
+ */
 SOL_API void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
                                                SolPluginStatusToken token);
 
@@ -204,49 +290,115 @@ SOL_API void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
 /* Buffer operations                                                   */
 /* ================================================================== */
 
-/* Open a file into a text buffer, deduplicating by source path.
- * Returns the buffer id (may be an existing buffer), or 0 on error. */
+/*
+ * Open a file-backed text buffer, deduplicating by source path.
+ *
+ * ctx   The plugin context.
+ * path  Absolute path of the file to open.
+ * Returns  Buffer id (may refer to an existing buffer), or 0 on error.
+ */
 SOL_API SolBufferId sol_plugin_open_file(SolPluginCtx *ctx, const char *path);
 
-/* Open a scratch (in-memory) text buffer.  `initial_text` may be NULL.
- * `source_path` is optional and used only for dedup (may be NULL). */
+/*
+ * Open an in-memory scratch text buffer.
+ *
+ * ctx           The plugin context.
+ * name          Display name shown in tab strips.
+ * initial_text  Initial content, or NULL for an empty buffer.
+ * initial_len   Byte length of initial_text.
+ * source_path   Optional path used for open-by-path deduplication; may be NULL.
+ * Returns       Buffer id, or 0 on error.
+ */
 SOL_API SolBufferId sol_plugin_open_scratch(SolPluginCtx *ctx,
                                              const char   *name,
                                              const char   *initial_text,
                                              size_t        initial_len,
                                              const char   *source_path);
 
-/* Open a fully custom plugin buffer with caller-provided ops. */
+/*
+ * Open a fully custom buffer with caller-provided render and destroy callbacks.
+ *
+ * ctx    The plugin context.
+ * name   Display name for the buffer.
+ * state  Caller-owned state pointer passed to ops callbacks.
+ * ops    Vtable of destroy and render callbacks.
+ * Returns  Buffer id, or 0 on error.
+ */
 SOL_API SolBufferId sol_plugin_open_custom(SolPluginCtx  *ctx,
                                             const char    *name,
                                             void          *state,
                                             SolBufferOps   ops);
 
-/* Focus a buffer in the active leaf. */
+/*
+ * Focus a buffer in the active leaf.
+ *
+ * ctx  The plugin context.
+ * id   Id of the buffer to focus.
+ * Returns  true on success.
+ */
 SOL_API bool sol_plugin_focus_buffer(SolPluginCtx *ctx, SolBufferId id);
 
-/* Return the currently-focused buffer id (0 if none). */
+/* Returns the id of the currently-focused buffer, or 0 if none. */
 SOL_API SolBufferId sol_plugin_active_buffer(SolPluginCtx *ctx);
 
-/* Text buffer editing — byte-offset based.
- * All three functions return false for non-text buffers. */
+/*
+ * Insert bytes into a text buffer at a byte offset.
+ *
+ * ctx          The plugin context.
+ * id           Buffer to edit (must be a text buffer).
+ * byte_offset  Insertion point in the rope.
+ * text         Bytes to insert.
+ * len          Number of bytes to insert.
+ * Returns      false for non-text buffers or on failure.
+ */
 SOL_API bool   sol_plugin_buf_insert(SolPluginCtx *ctx, SolBufferId id,
                                       size_t byte_offset,
                                       const char *text, size_t len);
+
+/*
+ * Delete bytes from a text buffer at a byte offset.
+ *
+ * ctx          The plugin context.
+ * id           Buffer to edit (must be a text buffer).
+ * byte_offset  Start of the region to delete.
+ * byte_count   Number of bytes to remove.
+ * Returns      false for non-text buffers or on failure.
+ */
 SOL_API bool   sol_plugin_buf_delete(SolPluginCtx *ctx, SolBufferId id,
                                       size_t byte_offset, size_t byte_count);
 
-/* Copy up to out_size-1 bytes from the buffer into `out`, NUL-terminating.
- * Returns the number of bytes actually copied (excluding the NUL). */
+/*
+ * Copy up to out_size-1 bytes from a text buffer into out, NUL-terminating.
+ *
+ * ctx          The plugin context.
+ * id           Buffer to read from.
+ * byte_offset  Starting byte offset in the rope.
+ * out          Destination buffer.
+ * out_size     Total bytes available in out (including space for the NUL).
+ * Returns      Number of bytes copied, excluding the NUL terminator.
+ */
 SOL_API size_t sol_plugin_buf_read(SolPluginCtx *ctx, SolBufferId id,
                                     size_t byte_offset,
                                     char *out, size_t out_size);
 
-/* Total byte length of the buffer content (0 for non-text). */
+/*
+ * Return the total byte length of a text buffer's content.
+ *
+ * Returns 0 for non-text buffers.
+ */
 SOL_API size_t sol_plugin_buf_length(SolPluginCtx *ctx, SolBufferId id);
 
-/* Cursor byte offset in a text buffer. */
+/* Returns the cursor byte offset in a text buffer (0 for non-text). */
 SOL_API size_t sol_plugin_buf_cursor(SolPluginCtx *ctx, SolBufferId id);
+
+/*
+ * Move the cursor in a text buffer to a specific byte offset.
+ *
+ * ctx          The plugin context.
+ * id           Buffer to update (must be a text buffer).
+ * byte_offset  Target byte offset; clamped to rope length.
+ * Returns      false for non-text buffers.
+ */
 SOL_API bool   sol_plugin_buf_set_cursor(SolPluginCtx *ctx, SolBufferId id,
                                           size_t byte_offset);
 
@@ -254,6 +406,15 @@ SOL_API bool   sol_plugin_buf_set_cursor(SolPluginCtx *ctx, SolBufferId id,
 /* Async job submission                                                */
 /* ================================================================== */
 
+/*
+ * Submit a job to the shared thread pool.
+ *
+ * ctx        The plugin context.
+ * fn         Function to execute on a worker thread.
+ * user_data  Passed unchanged to fn.
+ * fence      Optional fence to track completion; pass NULL to ignore.
+ * Returns    true if the job was enqueued successfully.
+ */
 SOL_API bool sol_plugin_submit_job(SolPluginCtx *ctx,
                                     SolJobFn      fn,
                                     void         *user_data,
@@ -270,6 +431,17 @@ SOL_API bool sol_plugin_submit_job(SolPluginCtx *ctx,
 /* if a destroy_fn was provided.                                        */
 /* ================================================================== */
 
+/*
+ * Register a versioned service; auto-unregistered on plugin unload.
+ *
+ * ctx                The plugin context.
+ * name               Unique service name.
+ * version            Service ABI version number.
+ * service            Pointer to the service object.
+ * destroy_fn         Optional destructor called on unregister; may be NULL.
+ * destroy_user_data  Passed unchanged to destroy_fn.
+ * Returns            true on success.
+ */
 SOL_API bool sol_plugin_register_service(SolPluginCtx       *ctx,
                                            const char         *name,
                                            uint32_t            version,
@@ -277,7 +449,14 @@ SOL_API bool sol_plugin_register_service(SolPluginCtx       *ctx,
                                            SolServiceDestroyFn destroy_fn,
                                            void               *destroy_user_data);
 
-/* Returns the service pointer, or NULL if not found or version too low. */
+/*
+ * Retrieve a registered service, enforcing a minimum version.
+ *
+ * ctx          The plugin context.
+ * name         Service name to look up.
+ * min_version  Minimum acceptable version; returns NULL if lower.
+ * Returns      The service pointer, or NULL if not found or version too low.
+ */
 SOL_API void *sol_plugin_get_service(SolPluginCtx *ctx,
                                        const char   *name,
                                        uint32_t      min_version);

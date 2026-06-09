@@ -82,6 +82,18 @@ typedef struct SolWorkspaceVisitorContext {
 #define SOL_UI_LABEL_OPEN_FILE   CA_ICON_NF_COD_FILE " Open File..."
 #define SOL_UI_LABEL_OPEN_FOLDER CA_ICON_NF_COD_FOLDER_OPENED " Open Folder..."
 
+/*
+ * Compute the buffer area's bounding rectangle in logical pixels, accounting
+ * for the title bar, status bar, global tab strip, and optional file-tree
+ * split panel.
+ *
+ * ui     The UI system providing window dimensions and tree visibility.
+ * out_x  Receives the left edge of the buffer area.
+ * out_y  Receives the top edge of the buffer area.
+ * out_w  Receives the width of the buffer area.
+ * out_h  Receives the height of the buffer area.
+ * Returns true when the window dimensions are valid, false otherwise.
+ */
 static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
                                              float *out_x,
                                              float *out_y,
@@ -135,6 +147,12 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
    this runs outside any effect context), then write +1. Notifies
    every effect that subscribed via ca_signal_get_u32 during its last
    evaluation. */
+/*
+ * Increment a u32 revision signal, notifying every effect that subscribed
+ * to it during its last evaluation.
+ *
+ * sig  The signal to bump (no-op when NULL).
+ */
 void sol_ui_bump_u32(Ca_Signal *sig)
 {
     if (!sig) {
@@ -143,6 +161,13 @@ void sol_ui_bump_u32(Ca_Signal *sig)
     ca_signal_set_u32(sig, ca_signal_get_u32(sig) + 1u);
 }
 
+/*
+ * Show or hide the file-tree explorer panel and notify reactive subscribers
+ * via sig_file_tree_visible.  No-op when the visibility is unchanged.
+ *
+ * ui       The UI system to update.
+ * visible  Desired visibility state.
+ */
 void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible)
 {
     if (!ui) return;
@@ -168,6 +193,12 @@ const char *sol_ui_system_file_tree_root(const SolUISystem *ui)
 /* Buffer workspace visitor                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Map a SolBufferSplitDirection to the equivalent Causality direction constant.
+ *
+ * direction  The Sol buffer split direction.
+ * Returns    CA_HORIZONTAL for vertical splits, CA_VERTICAL for horizontal.
+ */
 static int sol_ui_split_direction_to_ca(SolBufferSplitDirection direction)
 {
     return direction == SOL_BUFFER_SPLIT_VERTICAL ? CA_HORIZONTAL : CA_VERTICAL;

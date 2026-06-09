@@ -13,6 +13,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+ * Copy path into ctx->path and point ctx->request.path at it.
+ * Clears both fields when path is NULL or empty.
+ *
+ * ctx   The context menu context to update.
+ * path  Filesystem path to store (may be NULL).
+ * Returns true on success, false if path is too long for the internal buffer.
+ */
 static bool sol_ui_context_copy_path(SolContextMenuCtx *ctx, const char *path)
 {
     if (!ctx) {
@@ -32,6 +40,13 @@ static bool sol_ui_context_copy_path(SolContextMenuCtx *ctx, const char *path)
     return true;
 }
 
+/*
+ * Obtain a zeroed SolContextMenuCtx from the UI system's per-frame pool,
+ * growing the pool with realloc when necessary.
+ *
+ * ui      The UI system that owns the context-menu pool.
+ * Returns A freshly zeroed context, or NULL on allocation failure.
+ */
 SolContextMenuCtx *sol_ui_acquire_context_menu_ctx(SolUISystem *ui)
 {
     if (!ui) {
@@ -68,6 +83,7 @@ SolContextMenuCtx *sol_ui_acquire_context_menu_ctx(SolUISystem *ui)
     return ctx;
 }
 
+/* Reset the per-frame pool counter so contexts can be reused next frame. */
 void sol_ui_reset_context_menu_ctxs(SolUISystem *ui)
 {
     if (ui) {
@@ -75,6 +91,14 @@ void sol_ui_reset_context_menu_ctxs(SolUISystem *ui)
     }
 }
 
+/*
+ * Causality callback invoked when the user picks a menu item.
+ * Resolves the selected action and forwards a SolUIContextActionRequest to
+ * the application-level context_action_callback.
+ *
+ * item_index  Zero-based index of the selected item.
+ * user_data   Pointer to the SolContextMenuCtx for this menu.
+ */
 static void sol_ui_on_context_select(int item_index, void *user_data)
 {
     SolContextMenuCtx *ctx = (SolContextMenuCtx *)user_data;
@@ -92,6 +116,17 @@ static void sol_ui_on_context_select(int item_index, void *user_data)
         &request, ctx->ui->context_action_user_data);
 }
 
+/*
+ * Causality callback invoked when the context menu is about to open.
+ * Records the pointer position in the context so the action request carries
+ * the click coordinates.
+ *
+ * local_x    X coordinate in the surface's local space.
+ * local_y    Y coordinate in the surface's local space.
+ * screen_x   X coordinate in screen space.
+ * screen_y   Y coordinate in screen space.
+ * user_data  Pointer to the SolContextMenuCtx for this menu.
+ */
 static void sol_ui_on_context_open(float local_x, float local_y,
                                    float screen_x, float screen_y,
                                    void *user_data)
@@ -107,6 +142,15 @@ static void sol_ui_on_context_open(float local_x, float local_y,
     ctx->request.screen_y = screen_y;
 }
 
+/*
+ * Store action codes in ctx and register a Causality context-menu descriptor
+ * with the matching labels and selection/open callbacks.
+ *
+ * ctx      The context to populate and attach to the current Causality node.
+ * labels   Array of display strings, one per action.
+ * actions  Array of SolUIContextAction codes parallel to labels.
+ * count    Number of items (clamped to SOL_UI_MAX_CONTEXT_ACTIONS).
+ */
 static void sol_ui_attach_context_menu(SolContextMenuCtx *ctx,
                                        const char **labels,
                                        const SolUIContextAction *actions,
@@ -133,6 +177,17 @@ static void sol_ui_attach_context_menu(SolContextMenuCtx *ctx,
     });
 }
 
+/*
+ * Acquire a context from the pool and initialise it with surface metadata.
+ *
+ * ui          The UI system owning the pool.
+ * surface     Which UI surface this menu belongs to.
+ * path        Filesystem path associated with the target item (may be NULL).
+ * path_is_dir Whether path refers to a directory.
+ * leaf_id     Buffer-node identifier for buffer-surface menus (0 otherwise).
+ * buffer_id   Buffer identifier for buffer-surface menus (0 otherwise).
+ * Returns     Initialised context, or NULL on failure.
+ */
 static SolContextMenuCtx *sol_ui_make_context(SolUISystem *ui,
                                               SolUIContextSurface surface,
                                               const char *path,
@@ -151,6 +206,12 @@ static SolContextMenuCtx *sol_ui_make_context(SolUISystem *ui,
     return ctx;
 }
 
+/*
+ * Attach a workspace-level context menu to the current Causality node,
+ * offering New Buffer, Open File, and Open Folder actions.
+ *
+ * ui  The UI system providing the pool and action callback.
+ */
 void sol_ui_attach_workspace_context_menu(SolUISystem *ui)
 {
     static const char *labels[] = {
@@ -169,6 +230,13 @@ void sol_ui_attach_workspace_context_menu(SolUISystem *ui)
                                (int)(sizeof(actions) / sizeof(actions[0])));
 }
 
+/*
+ * Attach a context menu to the explorer's root header node, offering
+ * file/folder creation, paste, and open-folder actions.
+ *
+ * ui         The UI system providing the pool and action callback.
+ * root_path  The filesystem path of the explorer root directory.
+ */
 void sol_ui_attach_explorer_root_context_menu(SolUISystem *ui, const char *root_path)
 {
     static const char *labels[] = {
@@ -189,6 +257,13 @@ void sol_ui_attach_explorer_root_context_menu(SolUISystem *ui, const char *root_
                                (int)(sizeof(actions) / sizeof(actions[0])));
 }
 
+/*
+ * Attach a context menu to the explorer's empty-state area, offering the same
+ * creation/paste/open-folder actions as the root context menu.
+ *
+ * ui         The UI system providing the pool and action callback.
+ * root_path  The filesystem path of the explorer root directory.
+ */
 void sol_ui_attach_explorer_empty_context_menu(SolUISystem *ui, const char *root_path)
 {
     static const char *labels[] = {
@@ -209,6 +284,14 @@ void sol_ui_attach_explorer_empty_context_menu(SolUISystem *ui, const char *root
                                (int)(sizeof(actions) / sizeof(actions[0])));
 }
 
+/*
+ * Attach a context menu to an individual explorer tree item.  The menu
+ * items differ between files and directories.
+ *
+ * ui      The UI system providing the pool and action callback.
+ * path    Filesystem path of the item.
+ * is_dir  When true, uses the directory-oriented menu variant.
+ */
 void sol_ui_attach_explorer_item_context_menu(SolUISystem *ui,
                                               const char *path,
                                               bool is_dir)
@@ -260,6 +343,14 @@ void sol_ui_attach_explorer_item_context_menu(SolUISystem *ui,
     }
 }
 
+/*
+ * Attach a context menu to the body area of a buffer pane, offering paste,
+ * select-all, new buffer, close, and split actions.
+ *
+ * ui         The UI system providing the pool and action callback.
+ * leaf_id    Buffer-node identifier for the target pane.
+ * buffer_id  Buffer identifier for the target buffer.
+ */
 void sol_ui_attach_buffer_body_context_menu(SolUISystem *ui,
                                             SolBufferNodeId leaf_id,
                                             SolBufferId buffer_id)
@@ -286,6 +377,15 @@ void sol_ui_attach_buffer_body_context_menu(SolUISystem *ui,
                                (int)(sizeof(actions) / sizeof(actions[0])));
 }
 
+/*
+ * Attach a text-selection context menu to a buffer's text area, offering
+ * cut, copy, copy-line, paste, paste-line, select-all, delete, and
+ * delete-line actions.
+ *
+ * ui         The UI system providing the pool and action callback.
+ * leaf_id    Buffer-node identifier for the target pane.
+ * buffer_id  Buffer identifier for the target buffer.
+ */
 void sol_ui_system_attach_buffer_text_context_menu(SolUISystem *ui,
                                                    SolBufferNodeId leaf_id,
                                                    SolBufferId buffer_id)
@@ -316,6 +416,14 @@ void sol_ui_system_attach_buffer_text_context_menu(SolUISystem *ui,
                                (int)(sizeof(actions) / sizeof(actions[0])));
 }
 
+/*
+ * Attach a context menu to a buffer tab strip item, offering close, new
+ * buffer, and split actions.
+ *
+ * ui         The UI system providing the pool and action callback.
+ * leaf_id    Buffer-node identifier for the target pane.
+ * buffer_id  Buffer identifier for the target buffer.
+ */
 void sol_ui_attach_buffer_tab_context_menu(SolUISystem *ui,
                                            SolBufferNodeId leaf_id,
                                            SolBufferId buffer_id)

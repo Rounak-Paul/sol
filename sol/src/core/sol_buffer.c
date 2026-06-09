@@ -121,6 +121,12 @@ static void bump_rev(SolBufferSystem *system)
     maybe_publish_focus(system);
 }
 
+/*
+ * Duplicate a string into a heap-allocated buffer.
+ *
+ * value   Source string to copy; NULL is accepted and returns NULL.
+ * Returns Heap-allocated copy, or NULL on allocation failure or NULL input.
+ */
 static char *sol_strdup(const char *value)
 {
     if (!value) {
@@ -137,7 +143,7 @@ static char *sol_strdup(const char *value)
     return out;
 }
 
-// Clamps the split ratio to a reasonable range to prevent unusable splits.
+/* Clamp a split ratio to [0.1, 0.9] to prevent unusable pane sizes. */
 static float sol_clamp_ratio(float ratio)
 {
     if (ratio < 0.1f) {
@@ -149,6 +155,13 @@ static float sol_clamp_ratio(float ratio)
     return ratio;
 }
 
+/*
+ * Grow the buffer slot array to hold at least min_capacity entries.
+ *
+ * system        Buffer system whose array is grown.
+ * min_capacity  Minimum required capacity.
+ * Returns       true on success or if capacity is already sufficient.
+ */
 static bool sol_buffer_reserve_buffers(SolBufferSystem *system, size_t min_capacity)
 {
     if (system->buffer_capacity >= min_capacity) {
@@ -170,6 +183,13 @@ static bool sol_buffer_reserve_buffers(SolBufferSystem *system, size_t min_capac
     return true;
 }
 
+/*
+ * Grow the layout node array to hold at least min_capacity entries.
+ *
+ * system        Buffer system whose node array is grown.
+ * min_capacity  Minimum required capacity.
+ * Returns       true on success or if capacity is already sufficient.
+ */
 static bool sol_buffer_reserve_nodes(SolBufferSystem *system, size_t min_capacity)
 {
     if (system->node_capacity >= min_capacity) {
@@ -191,6 +211,13 @@ static bool sol_buffer_reserve_nodes(SolBufferSystem *system, size_t min_capacit
     return true;
 }
 
+/*
+ * Find a live buffer by id within the system.
+ *
+ * system  Buffer system to search.
+ * id      Buffer id to look up.
+ * Returns Pointer to the matching buffer slot, or NULL if not found.
+ */
 static SolBuffer *sol_buffer_find(SolBufferSystem *system, SolBufferId id)
 {
     if (!system || id == 0u) {
@@ -211,6 +238,13 @@ static const SolBuffer *sol_buffer_find_const(const SolBufferSystem *system, Sol
     return sol_buffer_find((SolBufferSystem *)system, id);
 }
 
+/*
+ * Find a live layout node by id within the system.
+ *
+ * system  Buffer system to search.
+ * id      Node id to look up.
+ * Returns Pointer to the matching node, or NULL if not found.
+ */
 static SolLayoutNode *sol_layout_find_node(SolBufferSystem *system, SolBufferNodeId id)
 {
     if (!system || id == 0u) {
@@ -231,6 +265,13 @@ static const SolLayoutNode *sol_layout_find_node_const(const SolBufferSystem *sy
     return sol_layout_find_node((SolBufferSystem *)system, id);
 }
 
+/*
+ * Allocate a new leaf node that references the given buffer.
+ *
+ * system     Buffer system that owns the node pool.
+ * buffer_id  Buffer to associate with the leaf (0 = empty leaf).
+ * Returns    Pointer to the new node, or NULL on allocation failure.
+ */
 static SolLayoutNode *sol_layout_create_leaf(SolBufferSystem *system, SolBufferId buffer_id)
 {
     if (!sol_buffer_reserve_nodes(system, system->node_count + 1u)) {
@@ -248,6 +289,16 @@ static SolLayoutNode *sol_layout_create_leaf(SolBufferSystem *system, SolBufferI
     return &system->nodes[system->node_count - 1u];
 }
 
+/*
+ * Allocate a new split node that divides two child nodes.
+ *
+ * system     Buffer system that owns the node pool.
+ * direction  Whether the split is vertical or horizontal.
+ * ratio      Fraction of space given to the first child; clamped to [0.1, 0.9].
+ * first_id   Node id of the first (left/top) child.
+ * second_id  Node id of the second (right/bottom) child.
+ * Returns    Pointer to the new split node, or NULL on allocation failure.
+ */
 static SolLayoutNode *sol_layout_create_split(
     SolBufferSystem *system,
     SolBufferSplitDirection direction,
@@ -274,6 +325,12 @@ static SolLayoutNode *sol_layout_create_split(
     return &system->nodes[system->node_count - 1u];
 }
 
+/*
+ * Return the id of the first live buffer in registration order.
+ *
+ * system  Buffer system to query.
+ * Returns Id of the first live buffer, or 0 if none exist.
+ */
 static SolBufferId sol_first_live_buffer_id(const SolBufferSystem *system)
 {
     if (!system) {
@@ -315,6 +372,13 @@ static SolBufferId sol_neighbor_buffer_id(const SolBufferSystem *system,
     return 0u;
 }
 
+/*
+ * Replace every leaf that references old_id with new_id across the whole layout.
+ *
+ * system  Buffer system whose layout nodes are updated.
+ * old_id  Buffer id to search for.
+ * new_id  Buffer id to substitute (may be 0 to leave panes empty).
+ */
 static void sol_replace_buffer_in_layout(SolBufferSystem *system, SolBufferId old_id, SolBufferId new_id)
 {
     for (size_t i = 0u; i < system->node_count; ++i) {
@@ -329,6 +393,14 @@ static void sol_replace_buffer_in_layout(SolBufferSystem *system, SolBufferId ol
     }
 }
 
+/*
+ * Collect leaf node ids in left-to-right DFS order into out_ids[].
+ *
+ * system   Buffer system owning the layout tree.
+ * node_id  Root of the subtree to traverse.
+ * out_ids  Caller-allocated array to receive leaf ids.
+ * cursor   Current write position in out_ids; incremented for each leaf found.
+ */
 static void sol_collect_leaf_ids(const SolBufferSystem *system, SolBufferNodeId node_id, SolBufferNodeId *out_ids, size_t *cursor)
 {
     const SolLayoutNode *node = sol_layout_find_node_const(system, node_id);
@@ -346,6 +418,12 @@ static void sol_collect_leaf_ids(const SolBufferSystem *system, SolBufferNodeId 
     sol_collect_leaf_ids(system, node->as.split.second_id, out_ids, cursor);
 }
 
+/*
+ * Return a SolBufferSystemConfig populated with sensible defaults.
+ *
+ * Returns  Config struct with initial_buffer_capacity = 32 and
+ *          initial_node_capacity = 32.
+ */
 SolBufferSystemConfig sol_buffer_system_config_default(void)
 {
     SolBufferSystemConfig config;
@@ -354,6 +432,12 @@ SolBufferSystemConfig sol_buffer_system_config_default(void)
     return config;
 }
 
+/*
+ * Create and initialise a new buffer system.
+ *
+ * config  Optional configuration; NULL uses sol_buffer_system_config_default().
+ * Returns Heap-allocated system, or NULL on allocation failure.
+ */
 SolBufferSystem *sol_buffer_system_create(const SolBufferSystemConfig *config)
 {
     SolBufferSystemConfig effective = config ? *config : sol_buffer_system_config_default();
@@ -382,6 +466,11 @@ SolBufferSystem *sol_buffer_system_create(const SolBufferSystemConfig *config)
     return system;
 }
 
+/*
+ * Destroy all buffers and free the system.
+ *
+ * system  System to destroy; NULL is ignored.
+ */
 void sol_buffer_system_destroy(SolBufferSystem *system)
 {
     if (!system) {
@@ -426,6 +515,13 @@ SolEventBus *sol_buffer_event_bus(SolBufferSystem *system)
     return system ? system->events : NULL;
 }
 
+/*
+ * Create a new buffer from a descriptor and register it with the system.
+ *
+ * system  Buffer system to register the buffer in.
+ * desc    Descriptor with name, kind, state pointer, and ops vtable.
+ * Returns Id of the newly created buffer, or 0 on failure.
+ */
 SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc)
 {
     if (!system || !desc) {
@@ -482,6 +578,13 @@ SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc
     return buffer.id;
 }
 
+/*
+ * Close and free a buffer, redirecting any leaf that showed it to a neighbor.
+ *
+ * system     Buffer system owning the buffer.
+ * buffer_id  Id of the buffer to close.
+ * Returns    true if the buffer was found and closed.
+ */
 bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
 {
     SolBuffer *buffer = sol_buffer_find(system, buffer_id);
@@ -554,6 +657,16 @@ const void *sol_buffer_state_const(const SolBuffer *buffer)
     return buffer ? buffer->state : NULL;
 }
 
+/*
+ * Split the active leaf pane and place new_buffer_id in the new pane.
+ *
+ * system          Buffer system to modify.
+ * direction       SOL_BUFFER_SPLIT_VERTICAL or SOL_BUFFER_SPLIT_HORIZONTAL.
+ * ratio           Fraction of space given to the existing pane; clamped to [0.1, 0.9].
+ * new_buffer_id   Buffer to display in the new pane (0 = empty pane).
+ * out_new_leaf_id If non-NULL, receives the node id of the newly created leaf.
+ * Returns         true on success.
+ */
 bool sol_buffer_split_active(
     SolBufferSystem *system,
     SolBufferSplitDirection direction,
@@ -621,6 +734,13 @@ bool sol_buffer_split_active(
     return true;
 }
 
+/*
+ * Shift focus to the next or previous leaf pane in DFS order.
+ *
+ * system     Buffer system to operate on.
+ * direction  Positive = next pane, negative = previous pane.
+ * Returns    true if the active leaf changed.
+ */
 bool sol_buffer_cycle_active_pane(SolBufferSystem *system, int direction)
 {
     if (!system || system->root_id == 0u || direction == 0) {
@@ -851,6 +971,16 @@ static bool sol_layout_leaf_geometry(
                                     target_leaf_id, out_rect);
 }
 
+/*
+ * Compute the screen rectangle occupied by a specific leaf node.
+ *
+ * system    Buffer system owning the layout.
+ * leaf_id   Node id of the leaf whose geometry is requested.
+ * root_rect Total area available to the root node.
+ * bar_size  Width/height of split divider bars, in pixels.
+ * out_rect  Receives the computed rectangle; may be NULL for a presence check.
+ * Returns   true if the leaf was found and out_rect was filled.
+ */
 bool sol_buffer_leaf_geometry(const SolBufferSystem *system,
                               SolBufferNodeId leaf_id,
                               const SolBufferRect *root_rect,
@@ -866,6 +996,16 @@ bool sol_buffer_leaf_geometry(const SolBufferSystem *system,
                                     bar_size, leaf_id, out_rect);
 }
 
+/*
+ * Hit-test a screen point against the layout tree and return the leaf it lands in.
+ *
+ * system    Buffer system owning the layout.
+ * x, y      Top-left corner of the root rect in screen space.
+ * w, h      Dimensions of the root rect.
+ * bar_size  Width/height of split divider bars, in pixels.
+ * px, py    Screen coordinates of the point to test.
+ * Returns   Node id of the hit leaf, or 0 if no leaf was hit.
+ */
 SolBufferNodeId sol_buffer_leaf_at_point(const SolBufferSystem *system,
                                          float x, float y,
                                          float w, float h,
@@ -930,6 +1070,13 @@ size_t sol_buffer_count(const SolBufferSystem *system)
     return count;
 }
 
+/*
+ * Return the buffer id at position index in registration order.
+ *
+ * system  Buffer system to query.
+ * index   Zero-based index among live buffers.
+ * Returns Id of the buffer at that index, or 0 if index is out of range.
+ */
 SolBufferId sol_buffer_at(const SolBufferSystem *system, size_t index)
 {
     if (!system) {
@@ -949,6 +1096,13 @@ SolBufferId sol_buffer_at(const SolBufferSystem *system, size_t index)
     return 0u;
 }
 
+/*
+ * Cycle the buffer shown in the active leaf through all live buffers.
+ *
+ * system     Buffer system to operate on.
+ * direction  Positive = next buffer, negative = previous buffer.
+ * Returns    true if the displayed buffer changed.
+ */
 bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
 {
     if (!system || direction == 0) {
@@ -1004,6 +1158,17 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
     return changed;
 }
 
+/*
+ * Recursively walk a layout subtree, invoking visitor callbacks for each leaf
+ * and split. Rectangles are subdivided the same way the renderer does.
+ *
+ * system        Buffer system owning the layout.
+ * current_rect  Screen rectangle allocated to this subtree.
+ * visitor       Callback table; individual callbacks may be NULL.
+ * node_id       Root of the subtree to visit.
+ * bar_size      Width/height in pixels of the split divider bar.
+ * user_data     Opaque value forwarded to every visitor callback.
+ */
 static void sol_buffer_visit_node(
     SolBufferSystem *system,
     const SolBufferRect *current_rect,
@@ -1082,6 +1247,14 @@ static void sol_buffer_visit_node(
     }
 }
 
+/*
+ * Walk the entire layout tree, invoking visitor callbacks for every leaf and split.
+ *
+ * system    Buffer system whose layout is traversed.
+ * root_rect Total area available to the root node.
+ * visitor   Callback table; individual callbacks may be NULL.
+ * user_data Opaque value forwarded to every visitor callback.
+ */
 void sol_buffer_workspace_visit(
     SolBufferSystem *system,
     const SolBufferRect *root_rect,
@@ -1099,6 +1272,12 @@ void sol_buffer_workspace_visit(
                           user_data);
 }
 
+/*
+ * Invoke the buffer's render callback if it has one.
+ *
+ * buffer  Buffer to render; must be live and have a render op set.
+ * args    Render arguments forwarded verbatim to the callback.
+ */
 void sol_buffer_render(SolBuffer *buffer, const SolBufferRenderArgs *args)
 {
     if (!buffer || !buffer->in_use || !buffer->ops.render) {

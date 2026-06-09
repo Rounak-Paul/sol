@@ -83,6 +83,13 @@ static SolPluginWindow *g_pm_windows = NULL;
 /* Utilities                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Return true when needle occurs anywhere inside haystack using a
+ * case-insensitive ASCII comparison.  An empty needle always matches.
+ *
+ * haystack  The string to search within.
+ * needle    The substring to look for.
+ */
 static bool pm_contains_nocase(const char *haystack, const char *needle)
 {
     if (!needle || !needle[0]) return true;
@@ -106,6 +113,10 @@ static bool pm_contains_nocase(const char *haystack, const char *needle)
 /* Button callbacks                                                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Handle a click on a plugin list item: update the selected plugin ID and
+ * bump sig_selected_rev to refresh the detail panel.
+ */
 static void pm_on_item_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -118,6 +129,7 @@ static void pm_on_item_click(Ca_Button *btn, void *user_data)
     sol_ui_bump_u32(w->sig_selected_rev);
 }
 
+/* Disable the currently selected plugin and refresh both list and detail. */
 static void pm_on_disable_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -129,6 +141,7 @@ static void pm_on_disable_click(Ca_Button *btn, void *user_data)
     sol_ui_bump_u32(w->sig_selected_rev);
 }
 
+/* Enable the currently selected plugin and refresh both list and detail. */
 static void pm_on_enable_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -140,6 +153,7 @@ static void pm_on_enable_click(Ca_Button *btn, void *user_data)
     sol_ui_bump_u32(w->sig_selected_rev);
 }
 
+/* Reload the currently selected dynamic plugin and refresh both panels. */
 static void pm_on_reload_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -151,6 +165,10 @@ static void pm_on_reload_click(Ca_Button *btn, void *user_data)
     sol_ui_bump_u32(w->sig_selected_rev);
 }
 
+/*
+ * Handle changes to the search text input: copy the new text into w->search
+ * and bump sig_list_rev to re-filter the plugin list.
+ */
 static void pm_on_search_change(Ca_TextInput *inp, void *user_data)
 {
     SolPluginWindow *w   = user_data;
@@ -168,6 +186,15 @@ static void pm_on_search_change(Ca_TextInput *inp, void *user_data)
 /* Content builder                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Reactive builder for the plugin manager's body div.  Subscribes to both
+ * sig_list_rev and sig_selected_rev, so the builder reruns on any list
+ * change or selection change.  Renders the filtered plugin list on the left
+ * and the selected plugin's detail panel on the right.
+ *
+ * div        The body div being rebuilt (unused directly).
+ * user_data  Pointer to the SolPluginWindow.
+ */
 static void pm_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -436,6 +463,12 @@ static void pm_content_builder(Ca_Div *div, void *user_data)
 /* Layout                                                              */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Construct the top-level Causality layout for the plugin manager window:
+ * a vertical root div containing a single reactive horizontal body div.
+ *
+ * w  The plugin window whose Causality tree is initialised.
+ */
 static void pm_build_layout(SolPluginWindow *w)
 {
     ca_ui_begin(w->window, &(Ca_DivDesc){
@@ -457,6 +490,12 @@ static void pm_build_layout(SolPluginWindow *w)
 /* Cleanup                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Close the plugin manager window (if still open) and free the struct.
+ * Causality owns the signals; they are not freed here.
+ *
+ * w  The plugin window to destroy (safe to call with NULL).
+ */
 static void pm_destroy(SolPluginWindow *w)
 {
     if (!w) return;
@@ -470,6 +509,14 @@ static void pm_destroy(SolPluginWindow *w)
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Open the Plugin Manager window, creating it if no instance is already open.
+ * The window is registered in the global g_pm_windows list so tick can manage
+ * its lifetime.
+ *
+ * instance  Causality instance to create the window on.
+ * pm        Plugin manager whose data is displayed (may be NULL).
+ */
 void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm)
 {
     if (!instance) return;
@@ -508,6 +555,10 @@ void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm)
     g_pm_windows = w;
 }
 
+/*
+ * Advance plugin-window lifecycle: walk the global list and destroy any
+ * window whose Causality window has been closed.  Call once per frame.
+ */
 void sol_ui_plugin_window_tick(void)
 {
     SolPluginWindow **link = &g_pm_windows;

@@ -88,12 +88,23 @@ static SolSearchWindow *g_search_windows = NULL;
 static char g_preview_token_ring[SEARCH_PREVIEW_TOKEN_RING][SEARCH_PREVIEW_TOKEN_MAX];
 static size_t g_preview_token_ring_cursor = 0u;
 
+/*
+ * Return a pointer to the next available slot in the preview token ring
+ * buffer.  The ring is large enough that slots remain valid for the entire
+ * Causality frame in which they are written.
+ */
 static char *search_preview_token_slot(void)
 {
     return g_preview_token_ring[
         g_preview_token_ring_cursor++ & (SEARCH_PREVIEW_TOKEN_RING - 1u)];
 }
 
+/*
+ * Release all resources held by the preview cache: syntax highlighter, rope,
+ * and memory-mapped file.  Resets all associated pointers and flags.
+ *
+ * w  The search window whose preview cache is cleared.
+ */
 static void search_clear_preview_cache(SolSearchWindow *w)
 {
     if (!w) return;
@@ -106,6 +117,16 @@ static void search_clear_preview_cache(SolSearchWindow *w)
     w->preview_path[0] = '\0';
 }
 
+/*
+ * Ensure the preview cache is loaded for path, returning immediately if the
+ * file is already mapped.  On a cache miss the old file is released and the
+ * new one is memory-mapped; a syntax highlighter and rope are created when a
+ * language can be resolved for the path.
+ *
+ * w     The search window whose preview cache is updated.
+ * path  Absolute filesystem path of the file to preview.
+ * Returns true on success, false if the file could not be mapped.
+ */
 static bool search_prepare_preview(SolSearchWindow *w, const char *path)
 {
     if (!w || !path) return false;
@@ -132,6 +153,16 @@ static bool search_prepare_preview(SolSearchWindow *w, const char *path)
     return true;
 }
 
+/*
+ * Emit Causality text nodes for one line of the file preview, applying syntax
+ * highlight spans when a valid highlighter is available.  Uses token-ring
+ * slots so the emitted strings survive until the frame is committed.
+ *
+ * line             Pointer to the first byte of the line content.
+ * line_bytes       Number of bytes in the line (excluding the newline).
+ * line_start_byte  Byte offset of the line's start within the file.
+ * highlighter      The syntax highlighter to query for spans (may be NULL).
+ */
 static void search_render_preview_text(const char *line,
                                        size_t line_bytes,
                                        uint32_t line_start_byte,
@@ -214,6 +245,19 @@ static void search_render_preview_text(const char *line,
     }
 }
 
+/*
+ * Progress callback invoked from the search worker thread.  Updates atomic
+ * progress counters, publishes an intermediate result snapshot to the UI
+ * thread at most once per SEARCH_STREAM_INTERVAL_NS, and checks for
+ * cancellation.
+ *
+ * results       Current result array (may be NULL at some progress points).
+ * result_count  Number of valid entries in results.
+ * processed     Number of files examined so far.
+ * total         Total number of files to examine.
+ * user_data     Pointer to the SolSearchWindow.
+ * Returns       true to continue searching, false to abort.
+ */
 static bool search_worker_progress(const SolSearchResult *results,
                                    size_t result_count,
                                    size_t processed,
@@ -243,6 +287,14 @@ static bool search_worker_progress(const SolSearchResult *results,
     return true;
 }
 
+/*
+ * Thread entry point for background content searches.  Runs
+ * sol_search_contents_progress to completion, then sets search_done and
+ * wakes the Causality instance.
+ *
+ * user_data  Pointer to the SolSearchWindow.
+ * Returns    NULL.
+ */
 static void *search_worker_main(void *user_data)
 {
     SolSearchWindow *w = (SolSearchWindow *)user_data;
@@ -254,12 +306,14 @@ static void *search_worker_main(void *user_data)
     return NULL;
 }
 
+/* Signal the search worker to stop at the next cancellation check point. */
 static void search_cancel_worker(SolSearchWindow *w)
 {
     if (!w || !w->search_thread_started) return;
     atomic_store_explicit(&w->search_cancel, true, memory_order_relaxed);
 }
 
+/* Wait for the search worker thread to finish, then mark it as stopped. */
 static void search_join_worker(SolSearchWindow *w)
 {
     if (!w || !w->search_thread_started) return;
@@ -267,6 +321,13 @@ static void search_join_worker(SolSearchWindow *w)
     w->search_thread_started = false;
 }
 
+/*
+ * Start a new background content-search worker thread for w->query.
+ * Resets all progress and stream-revision state before spawning.
+ *
+ * w       The search window to operate on.
+ * Returns true when the thread was successfully started.
+ */
 static bool search_start_worker(SolSearchWindow *w)
 {
     if (!w || w->search_thread_started || !w->query[0]) return false;
@@ -292,6 +353,12 @@ static bool search_start_worker(SolSearchWindow *w)
     return true;
 }
 
+/*
+ * Execute a synchronous fuzzy file-name search and update w->results,
+ * w->result_count, w->selected, and the status string.
+ *
+ * w  The search window to refresh (must be in FILES mode).
+ */
 static void search_refresh(SolSearchWindow *w)
 {
     if (!w || !w->index) return;
@@ -304,6 +371,13 @@ static void search_refresh(SolSearchWindow *w)
              w->result_count, sol_search_index_file_count(w->index));
 }
 
+/*
+ * Open the result at result_index via the file-open callback, position the
+ * cursor at the matched line when available, and close the search window.
+ *
+ * w             The search window initiating the open.
+ * result_index  Index into w->results of the result to open.
+ */
 static void search_open_result(SolSearchWindow *w, size_t result_index)
 {
     if (!w || !w->ui || result_index >= w->result_count) return;
@@ -327,6 +401,10 @@ static void search_open_result(SolSearchWindow *w, size_t result_index)
     if (w->window && ca_window_is_open(w->window)) ca_window_close(w->window);
 }
 
+/*
+ * Handle a click on a result row: update the selected index and bump
+ * sig_results_rev to refresh the preview and highlight.
+ */
 static void search_on_row_click(Ca_Button *button, void *user_data)
 {
     (void)button;
@@ -336,6 +414,11 @@ static void search_on_row_click(Ca_Button *button, void *user_data)
     sol_ui_bump_u32(ctx->window->sig_results_rev);
 }
 
+/*
+ * Handle query input changes.  For file-name mode, re-runs the synchronous
+ * search immediately; for contents mode, cancels any running worker and
+ * schedules a new search on the next frame tick.
+ */
 static void search_on_input_change(Ca_TextInput *input, void *user_data)
 {
     SolSearchWindow *w = (SolSearchWindow *)user_data;
@@ -356,6 +439,13 @@ static void search_on_input_change(Ca_TextInput *input, void *user_data)
     sol_ui_bump_u32(w->sig_results_rev);
 }
 
+/*
+ * Emit the Causality button for one search result row, showing the relative
+ * path and optional line number.
+ *
+ * w      The search window providing result data and selection state.
+ * index  Zero-based index into w->results.
+ */
 static void search_render_result(SolSearchWindow *w, size_t index)
 {
     const SolSearchResult *result = &w->results[index];
@@ -384,6 +474,14 @@ static void search_render_result(SolSearchWindow *w, size_t index)
     ca_btn_end();
 }
 
+/*
+ * Emit the right-side preview panel for the currently selected result.
+ * Reads up to SEARCH_PREVIEW_LINES lines from the memory-mapped file,
+ * applying syntax highlighting when available, and highlights the matched
+ * line.
+ *
+ * w  The search window providing result and preview-cache data.
+ */
 static void search_render_preview(SolSearchWindow *w)
 {
     ca_div_begin(&(Ca_DivDesc){
@@ -472,6 +570,14 @@ static void search_render_preview(SolSearchWindow *w)
     ca_div_end();
 }
 
+/*
+ * Reactive builder for the search window's body div.  Subscribes to
+ * sig_results_rev and emits the title, query input, horizontal split
+ * (results list | preview), and footer with progress bar and status.
+ *
+ * div        The body div being rebuilt (unused directly).
+ * user_data  Pointer to the SolSearchWindow.
+ */
 static void search_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -570,6 +676,13 @@ static void search_content_builder(Ca_Div *div, void *user_data)
     ca_div_end();
 }
 
+/*
+ * Per-frame callback for the search window.  Drives the background search
+ * lifecycle (focus, worker completion, streaming results, progress updates,
+ * pending restart) and handles keyboard shortcuts (Escape, Enter, Up, Down).
+ *
+ * user_data  Pointer to the SolSearchWindow.
+ */
 static void search_on_frame(void *user_data)
 {
     SolSearchWindow *w = (SolSearchWindow *)user_data;
@@ -663,6 +776,12 @@ static void search_on_frame(void *user_data)
     }
 }
 
+/*
+ * Cancel any running worker, close the window, and free all resources owned
+ * by the search window including the search index and preview cache.
+ *
+ * w  The search window to destroy (safe to call with NULL).
+ */
 static void search_destroy(SolSearchWindow *w)
 {
     if (!w) return;
@@ -675,6 +794,15 @@ static void search_destroy(SolSearchWindow *w)
     free(w);
 }
 
+/*
+ * Internal implementation for opening a search window.  Creates the window,
+ * search index, reactive content div, and per-frame callback.  No-ops when a
+ * search window is already open.
+ *
+ * ui    The UI system providing the Causality instance and file-open callback.
+ * mode  SOL_SEARCH_WINDOW_FILES for fuzzy file search, or
+ *       SOL_SEARCH_WINDOW_CONTENTS for grep-style content search.
+ */
 static void search_open(SolUISystem *ui, SolSearchWindowMode mode)
 {
     if (!ui || !ui->instance) return;
@@ -745,16 +873,22 @@ static void search_open(SolUISystem *ui, SolSearchWindowMode mode)
     g_search_windows = w;
 }
 
+/* Open the fuzzy file-name search window. */
 void sol_ui_search_window_open_files(SolUISystem *ui)
 {
     search_open(ui, SOL_SEARCH_WINDOW_FILES);
 }
 
+/* Open the workspace content (grep-style) search window. */
 void sol_ui_search_window_open_contents(SolUISystem *ui)
 {
     search_open(ui, SOL_SEARCH_WINDOW_CONTENTS);
 }
 
+/*
+ * Advance search-window lifecycle: walk the global list and destroy any
+ * window whose Causality window has been closed.  Call once per frame.
+ */
 void sol_ui_search_window_tick(void)
 {
     SolSearchWindow **link = &g_search_windows;

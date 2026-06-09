@@ -50,6 +50,7 @@ typedef uint64_t SolSubscriptionToken;
 
 typedef struct SolEventBus SolEventBus;
 
+/* A single event dispatched through the bus. Handlers receive a const pointer. */
 typedef struct SolEvent {
     SolEventType type;
     const char  *name;
@@ -59,6 +60,10 @@ typedef struct SolEvent {
     uint64_t     timestamp_ns;
 } SolEvent;
 
+/*
+ * Callback invoked for each matching event. Return true to mark the event
+ * as handled (stops further dispatch when SOL_EVENT_FLAG_STOP_ON_HANDLED is set).
+ */
 typedef bool (*SolEventHandler)(const SolEvent *event, void *user_data);
 
 enum {
@@ -66,6 +71,7 @@ enum {
     SOL_EVENT_FLAG_STOP_ON_HANDLED = 1u << 0,
 };
 
+/* Descriptor used to publish a single event. Fill event_name OR event_type. */
 typedef struct SolEventDesc {
     SolEventType  event_type;
     const char   *event_name;
@@ -75,6 +81,7 @@ typedef struct SolEventDesc {
     uint32_t      flags;
 } SolEventDesc;
 
+/* Descriptor used to register a subscription. Fill event_name OR event_type. */
 typedef struct SolEventSubscriptionDesc {
     SolEventType    event_type;
     const char     *event_name;
@@ -83,26 +90,79 @@ typedef struct SolEventSubscriptionDesc {
     void           *user_data;
 } SolEventSubscriptionDesc;
 
+/* Tuning knobs for the event bus's internal storage. */
 typedef struct SolEventBusConfig {
     size_t initial_subscriber_capacity;
     size_t initial_queue_capacity;
 } SolEventBusConfig;
 
+/* Return a SolEventBusConfig populated with sensible defaults. */
 SolEventBusConfig sol_event_bus_config_default(void);
 
+/*
+ * Create a new event bus.
+ *
+ * config  Capacity hints; use sol_event_bus_config_default() for defaults.
+ * Returns A heap-allocated bus, or NULL on allocation failure.
+ */
 SolEventBus *sol_event_bus_create(const SolEventBusConfig *config);
+
+/* Destroy the event bus and free all internal resources. */
 void         sol_event_bus_destroy(SolEventBus *bus);
 
+/*
+ * Derive a stable numeric type id from an event name string.
+ *
+ * name    Dotted event name, e.g. "sol.text.edited".
+ * Returns A non-zero numeric type suitable for use in SolEventDesc.event_type.
+ */
 SolEventType sol_event_type_from_name(const char *name);
 
+/*
+ * Subscribe to an event by name or type.
+ *
+ * bus   The event bus.
+ * desc  Subscription parameters (event name/type, handler, priority).
+ * Returns  An opaque token used to unsubscribe later.
+ */
 SolSubscriptionToken sol_event_bus_subscribe(
     SolEventBus *bus,
     const SolEventSubscriptionDesc *desc);
 
+/*
+ * Unsubscribe a previously registered handler.
+ *
+ * bus    The event bus.
+ * token  Token returned by sol_event_bus_subscribe.
+ * Returns  true if the subscription was found and removed.
+ */
 bool   sol_event_bus_unsubscribe(SolEventBus *bus, SolSubscriptionToken token);
 
+/*
+ * Synchronously dispatch an event to all matching subscribers.
+ *
+ * bus   The event bus.
+ * desc  Event to publish.
+ * Returns  Number of handlers that returned true (handled).
+ */
 size_t sol_event_bus_publish(SolEventBus *bus, const SolEventDesc *desc);
+
+/*
+ * Enqueue an event for deferred delivery via sol_event_bus_drain.
+ *
+ * bus   The event bus.
+ * desc  Event to enqueue.
+ * Returns  true on success, false if the queue is full.
+ */
 bool   sol_event_bus_post   (SolEventBus *bus, const SolEventDesc *desc);
+
+/*
+ * Dispatch up to max_events queued events synchronously.
+ *
+ * bus        The event bus.
+ * max_events Maximum number of events to dequeue and deliver.
+ * Returns    Number of events actually dispatched.
+ */
 size_t sol_event_bus_drain  (SolEventBus *bus, size_t max_events);
 
 /* ================================================================== */
@@ -127,8 +187,10 @@ size_t sol_event_bus_drain  (SolEventBus *bus, size_t max_events);
 /* -- Commands ------------------------------------------------------ */
 #define SOL_EVENT_COMMAND_INVOKED    "sol.command.invoked"
 
-/* SOL_EVENT_APP_STARTUP — fired exactly once, after subsystems are
-   up but before the frame loop spins. */
+/*
+ * Payload for SOL_EVENT_APP_STARTUP — fired exactly once after subsystems
+ * are up but before the frame loop spins.
+ */
 typedef struct SolAppStartupPayload {
     uint32_t worker_count;
     uint32_t loaded_plugins;
@@ -139,10 +201,13 @@ typedef struct SolAppStartupPayload {
 /* SOL_EVENT_APP_READY — fired after the primary window exists and
    the first frame is about to run. No payload. */
 
-/* SOL_EVENT_BUFFER_OPENED / CLOSED / FOCUSED.
- * `source_path` is the on-disk path for text buffers loaded from a
- * file; NULL for scratch/non-file buffers. All pointers are owned by
- * the buffer system and remain valid for the duration of the handler. */
+/*
+ * Payload for SOL_EVENT_BUFFER_OPENED, CLOSED, and FOCUSED.
+ *
+ * source_path is the on-disk path for file-backed text buffers, or NULL for
+ * scratch/non-file buffers. All pointers are owned by the buffer system and
+ * remain valid for the duration of the handler.
+ */
 typedef struct SolBufferEventPayload {
     SolBufferId   buffer_id;
     SolBufferKind kind;
@@ -150,11 +215,13 @@ typedef struct SolBufferEventPayload {
     const char   *source_path;   /* may be NULL */
 } SolBufferEventPayload;
 
-/* SOL_EVENT_TEXT_EDITED — fired after a successful text-buffer
- * mutation. Models insert and remove as a single replace shape:
- *   pure insert : removed_bytes == 0, inserted_bytes  > 0
- *   pure remove : removed_bytes  > 0, inserted_bytes == 0
- * `byte_offset` is the rope offset BEFORE the change took effect. */
+/*
+ * Payload for SOL_EVENT_TEXT_EDITED — fired after a successful text-buffer
+ * mutation. Inserts and removals are represented as a single replace shape:
+ *   pure insert:  removed_bytes == 0, inserted_bytes > 0
+ *   pure remove:  removed_bytes > 0,  inserted_bytes == 0
+ * byte_offset is the rope offset BEFORE the change took effect.
+ */
 typedef struct SolTextEditedPayload {
     SolBufferId buffer_id;
     size_t      byte_offset;
@@ -162,14 +229,18 @@ typedef struct SolTextEditedPayload {
     size_t      inserted_bytes;
 } SolTextEditedPayload;
 
-/* SOL_EVENT_FILE_TREE_ROOT — fired when the tree mounts a new root.
-   `path` is the new root (NULL when the tree was cleared). */
+/*
+ * Payload for SOL_EVENT_FILE_TREE_ROOT — fired when the tree mounts a new root.
+ * path is the new root directory, or NULL when the tree was cleared.
+ */
 typedef struct SolFileTreeRootPayload {
     const char *path;
 } SolFileTreeRootPayload;
 
-/* SOL_EVENT_COMMAND_INVOKED — fired when a command-flow action runs
-   (e.g. user typed the leader chord for "editor.save"). */
+/*
+ * Payload for SOL_EVENT_COMMAND_INVOKED — fired when a command-flow action
+ * runs (e.g. the user typed the leader chord for "editor.save").
+ */
 typedef struct SolCommandInvokedPayload {
     const char *action;
 } SolCommandInvokedPayload;
@@ -178,8 +249,15 @@ typedef struct SolCommandInvokedPayload {
 /* Convenience publisher                                               */
 /* ================================================================== */
 
-/* Synchronous one-liner publish helper. No-op when `bus` is NULL,
-   so call sites don't need to null-check before every publish. */
+/*
+ * Synchronously publish an event by name, with a null-check on the bus.
+ *
+ * bus          The event bus, or NULL (no-op when NULL).
+ * name         Dotted event name string.
+ * payload      Pointer to the event payload struct.
+ * payload_size Size in bytes of the payload struct.
+ * sender       Opaque sender pointer passed through to handlers.
+ */
 static inline void sol_event_publish(SolEventBus *bus,
                                      const char  *name,
                                      const void  *payload,

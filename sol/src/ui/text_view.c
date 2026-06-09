@@ -97,6 +97,15 @@ typedef struct ScrollbarDragCtx {
 /* Count displayed monospace columns in the first `byte_len` bytes of `buf`.
    Causality renders tabs as four invisible space advances, so editor
    selection/caret geometry must use the same visual width. */
+/*
+ * Count the number of displayed monospace columns in the first byte_len bytes
+ * of buf, expanding tabs to four columns.  UTF-8 multi-byte sequences are
+ * treated as single columns.
+ *
+ * buf       Buffer to measure.
+ * byte_len  Number of bytes to consider.
+ * Returns   Visual column count.
+ */
 static size_t tv_visual_col_count(const char *buf, size_t byte_len)
 {
     size_t col = 0u, off = 0u;
@@ -122,6 +131,16 @@ static size_t tv_visual_col_count(const char *buf, size_t byte_len)
    column. Tabs are rendered as one wide glyph, so clicks inside a tab choose
    the nearest editable boundary: before it in the first half, after it in
    the second half. */
+/*
+ * Map a target visual column back to the corresponding codepoint column
+ * boundary in buf.  Clicks inside a tab glyph are resolved to the nearest
+ * editable boundary using half-width rounding.
+ *
+ * buf               Buffer to walk.
+ * byte_len          Length of the buffer in bytes.
+ * target_visual_col Target visual column to resolve.
+ * Returns           Codepoint-column index.
+ */
 static size_t tv_cp_col_from_visual_col(const char *buf, size_t byte_len,
                                         size_t target_visual_col)
 {
@@ -170,18 +189,22 @@ static bool           g_scrollbar_drag_vertical = false;
 static float          g_scrollbar_drag_grab_offset = 0.0f;
 static bool           g_scrollbar_drag_active = false;
 
+/* Return the next available per-frame line text slot from the ring buffer. */
 static char *acquire_line_slot(void)
 {
     return g_line_ring[g_line_ring_cursor++ & (SOL_TEXT_VIEW_LINE_RING - 1)];
 }
+/* Return the next available per-frame gutter line-number slot from the ring buffer. */
 static char *acquire_num_slot(void)
 {
     return g_num_ring[g_num_ring_cursor++ & (SOL_TEXT_VIEW_NUM_RING - 1)];
 }
+/* Return the next available per-frame click-context slot from the ring buffer. */
 static TextClickCtx *acquire_click_slot(void)
 {
     return &g_click_ring[g_click_ring_cursor++ & (SOL_TEXT_VIEW_CLICK_RING - 1)];
 }
+/* Return the next available per-frame scrollbar drag-context slot from the ring buffer. */
 static ScrollbarDragCtx *acquire_scrollbar_slot(void)
 {
     return &g_scrollbar_ring[
@@ -197,6 +220,7 @@ static ScrollbarDragCtx *acquire_scrollbar_slot(void)
 static char g_token_ring[SOL_TEXT_VIEW_TOKEN_RING][SOL_TEXT_VIEW_TOKEN_MAX];
 static int  g_token_ring_cursor = 0;
 
+/* Return the next available per-frame syntax-token slot from the ring buffer. */
 static char *acquire_token_slot(void)
 {
     return g_token_ring[g_token_ring_cursor++ & (SOL_TEXT_VIEW_TOKEN_RING - 1u)];
@@ -215,6 +239,7 @@ static uint64_t g_caret_last_move_ms = 0u;
 static size_t   g_caret_prev_line    = (size_t)-1;
 static size_t   g_caret_prev_col     = (size_t)-1;
 
+/* Return the current monotonic time in milliseconds. */
 static uint64_t monotonic_ms(void)
 {
     return sol_platform_now_monotonic_ns() / 1000000ull;
@@ -222,6 +247,15 @@ static uint64_t monotonic_ms(void)
 
 /* Call once per frame with the current cursor position.  Returns true
  * when the caret should be drawn (on-phase or just moved). */
+/*
+ * Determine whether the caret should be visible this frame.  Resets the blink
+ * phase when the cursor position changes and holds the caret solid for
+ * SOL_CARET_SOLID_MS after any movement.
+ *
+ * cur_line  Current cursor line index.
+ * cur_col   Current cursor column index.
+ * Returns   true when the caret should be drawn.
+ */
 static bool caret_blink_visible(size_t cur_line, size_t cur_col)
 {
     const uint64_t now = monotonic_ms();
@@ -245,6 +279,17 @@ static bool caret_blink_visible(size_t cur_line, size_t cur_col)
 /* Emit ca_text nodes for a single line using the pre-queried span list.
  * Spans must be sorted by start_byte and already clipped/filtered to
  * the range [line_start_byte, line_start_byte + line_bytes). */
+/*
+ * Emit Causality text nodes for a single line using pre-queried syntax spans.
+ * Interleaves plain-text runs and coloured token runs from the span list,
+ * writing each token into a per-frame ring-buffer slot.
+ *
+ * line_buf         The line content buffer.
+ * line_bytes       Number of bytes in the line.
+ * line_start_byte  Byte offset of the line's start within the file/rope.
+ * spans            Sorted array of syntax spans clipped to this line's range.
+ * span_count       Number of valid entries in spans.
+ */
 static void emit_highlighted_line(
     const char          *line_buf,
     size_t               line_bytes,
@@ -319,6 +364,14 @@ static void emit_highlighted_line(
 
 int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale);
 
+/*
+ * Estimate the number of visible text lines for a given window height,
+ * subtracting approximate UI chrome (title bar, tabs, status bar).
+ *
+ * window_h  Full window height in logical pixels.
+ * ui_scale  Current UI scale factor.
+ * Returns   Estimated visible line count.
+ */
 int sol_text_view_visible_lines(int window_h, float ui_scale)
 {
     if (ui_scale <= 0.0f) ui_scale = 1.0f;
@@ -327,6 +380,15 @@ int sol_text_view_visible_lines(int window_h, float ui_scale)
         ui_scale);
 }
 
+/*
+ * Compute how many lines to render for a pane of the given height.  Adds two
+ * extra rows so the pane always appears fully filled even when the chrome
+ * estimate is slightly off.
+ *
+ * pane_h    Pane content height in logical pixels (excluding chrome).
+ * ui_scale  Current UI scale factor.
+ * Returns   Number of lines to render (always >= 1).
+ */
 int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale)
 {
     if (ui_scale <= 0.0f) ui_scale = 1.0f;
@@ -345,6 +407,15 @@ int sol_text_view_visible_lines_for_height(float pane_h, float ui_scale)
     return n;
 }
 
+/*
+ * Compute the number of visible monospace columns for a given pane width,
+ * accounting for the gutter and scrollbar.
+ *
+ * pane_w                  Pane width in logical pixels.
+ * ui_scale                Current UI scale factor.
+ * glyph_advance_layout_px Monospace glyph advance in layout pixels.
+ * Returns                 Number of visible columns (always >= 1).
+ */
 int sol_text_view_visible_cols_for_width(float pane_w, float ui_scale,
                                          float glyph_advance_layout_px)
 {
@@ -366,6 +437,14 @@ int sol_text_view_visible_cols_for_width(float pane_w, float ui_scale,
 /* Resolve the monospace glyph advance for caret / click math. Falls
    back to a 60% ratio of the font size when the window can't measure
    yet (no font atlas warmed up). */
+/*
+ * Return the monospace glyph advance width in layout pixels for the given
+ * window.  Falls back to 60% of the boot font size when the measurement is
+ * unavailable.
+ *
+ * win     The Causality window to query (may be NULL).
+ * Returns Glyph advance in layout pixels.
+ */
 static float glyph_advance_px_for(Ca_Window *win)
 {
     float w = win ? ca_measure_text_px(win, "M", SOL_UI_BOOT_FONT_SIZE_PX_FLOAT)
@@ -374,6 +453,15 @@ static float glyph_advance_px_for(Ca_Window *win)
     return w;
 }
 
+/*
+ * Find the widest visible line (in monospace columns) within the rendered
+ * window, used to size the horizontal scrollbar thumb.
+ *
+ * tb          Text buffer to query.
+ * scroll_top  Index of the first visible line.
+ * rendered    Number of lines to check.
+ * Returns     Maximum column width of any visible line.
+ */
 static size_t visible_max_line_cols(const SolTextBuffer *tb, int scroll_top,
                                     int rendered)
 {
@@ -396,6 +484,19 @@ static size_t visible_max_line_cols(const SolTextBuffer *tb, int scroll_top,
 /* Pointer handler                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Convert text-column-local pointer coordinates to a (line, codepoint column)
+ * buffer position, accounting for scroll offset, line height, and glyph
+ * advance.
+ *
+ * ui              The UI system providing the primary window for font metrics.
+ * tb              The text buffer being hit-tested.
+ * event_local_x   X coordinate in the text column's local space.
+ * event_local_y   Y coordinate in the text column's local space.
+ * out_line        Receives the resolved buffer line index.
+ * out_cp_col      Receives the resolved codepoint column index.
+ * Returns         true on success.
+ */
 static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
                                  float event_local_x, float event_local_y,
                                  size_t *out_line, size_t *out_cp_col)
@@ -454,6 +555,15 @@ bool sol_text_view_local_point_to_line_col(SolUISystem *ui,
 }
 
 /* Convert pane-local drag event coordinates to line/codepoint column. */
+/*
+ * Convert pane-local drag-event coordinates to a (line, codepoint column)
+ * pair, storing results as ints.
+ *
+ * ev          The Causality drag event with local coordinates.
+ * cb          Click context providing the UI system and text buffer.
+ * out_line    Receives the resolved line index.
+ * out_cp_col  Receives the resolved codepoint column index.
+ */
 static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
                                int *out_line, int *out_cp_col)
 {
@@ -471,6 +581,11 @@ static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
 
 /* on_drag_start — click or start of drag.  Set cursor and store anchor
    for potential selection extension via on_drag. */
+/*
+ * Handle the start of a drag (click) on the text column: focus the leaf pane,
+ * move the cursor to the click position, and set the selection anchor so a
+ * subsequent drag can extend the selection.
+ */
 static void on_text_col_drag_start(const Ca_DragEvent *ev, void *user_data)
 {
     TextClickCtx *cb = (TextClickCtx *)user_data;
@@ -490,6 +605,11 @@ static void on_text_col_drag_start(const Ca_DragEvent *ev, void *user_data)
 }
 
 /* on_drag — mouse moved while button held.  Extend selection. */
+/*
+ * Handle mouse movement while the button is held over the text column.
+ * Extends the selection from the anchor set during drag-start to the current
+ * pointer position.
+ */
 static void on_text_col_drag_move(const Ca_DragEvent *ev, void *user_data)
 {
     TextClickCtx *cb = (TextClickCtx *)user_data;
@@ -503,6 +623,11 @@ static void on_text_col_drag_move(const Ca_DragEvent *ev, void *user_data)
     sol_ui_system_invalidate_buffer_area(cb->ui);
 }
 
+/*
+ * Handle the start of a scrollbar thumb drag: compute the grab offset so the
+ * thumb tracks the pointer smoothly, and latch the drag state into the global
+ * drag variables for use by subsequent on_scrollbar_drag calls.
+ */
 static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
 {
     ScrollbarDragCtx *ctx = (ScrollbarDragCtx *)user_data;
@@ -528,6 +653,10 @@ static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
     g_scrollbar_drag_active = true;
 }
 
+/*
+ * Handle scrollbar thumb movement: convert the pointer position to a scroll
+ * value and update the text buffer's scroll_top or scroll_left accordingly.
+ */
 static void on_scrollbar_drag(const Ca_DragEvent *ev, void *user_data)
 {
     ScrollbarDragCtx *ctx = (ScrollbarDragCtx *)user_data;
@@ -559,6 +688,7 @@ static void on_scrollbar_drag(const Ca_DragEvent *ev, void *user_data)
     if (ctx->ui) sol_ui_system_invalidate_buffer_area(ctx->ui);
 }
 
+/* Clear the global scrollbar drag state when the pointer button is released. */
 static void on_scrollbar_drag_end(const Ca_DragEvent *ev, void *user_data)
 {
     (void)ev;
@@ -573,6 +703,16 @@ static void on_scrollbar_drag_end(const Ca_DragEvent *ev, void *user_data)
 /* Render                                                              */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Render one text buffer pane into the current Causality frame context.
+ * Emits the gutter (line numbers), the text column (highlighted content,
+ * selection overlay, caret), an optional horizontal scrollbar, and a vertical
+ * scrollbar when content overflows.
+ *
+ * buffer  The buffer whose content is rendered.
+ * args    Per-pane render arguments: geometry rect, leaf ID, active flag.
+ * state   Pointer to the SolTextBuffer holding scroll and cursor state.
+ */
 void sol_text_view_render(const SolBuffer *buffer,
                           const SolBufferRenderArgs *args,
                           void *state)

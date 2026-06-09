@@ -63,6 +63,7 @@ struct SolFileTree {
     SolEventBus *events;
 };
 
+/* Increment the attached revision signal to notify reactive subscribers. */
 static void bump_rev(SolFileTree *t)
 {
     if (t && t->rev) {
@@ -74,6 +75,7 @@ static void bump_rev(SolFileTree *t)
 /* Helpers                                                           */
 /* ---------------------------------------------------------------- */
 
+/* Duplicate a string into a heap-allocated buffer; NULL input returns NULL. */
 static char *xstrdup(const char *s)
 {
     if (!s) return NULL;
@@ -84,11 +86,13 @@ static char *xstrdup(const char *s)
     return o;
 }
 
+/* Join a parent directory path and a child name into a new heap string. */
 static char *path_join(const char *parent, const char *name)
 {
     return sol_platform_path_join(parent, name);
 }
 
+/* Case-insensitive string comparison; returns negative/zero/positive like strcmp. */
 static int casecmp(const char *a, const char *b)
 {
     while (*a && *b) {
@@ -104,6 +108,13 @@ static int casecmp(const char *a, const char *b)
 /* Node pool                                                         */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Grow the node pool to hold at least needed entries.
+ *
+ * t       File tree whose node pool is grown.
+ * needed  Minimum required capacity.
+ * Returns true on success or if capacity is already sufficient.
+ */
 static bool ensure_node_capacity(SolFileTree *t, size_t needed)
 {
     if (needed <= t->node_capacity) return true;
@@ -116,6 +127,15 @@ static bool ensure_node_capacity(SolFileTree *t, size_t needed)
     return true;
 }
 
+/*
+ * Allocate a new node in the pool and return its index.
+ *
+ * t        File tree to allocate within.
+ * name     Display name of the entry (will be duplicated).
+ * full     Full path of the entry (will be duplicated).
+ * is_dir   Whether the entry represents a directory.
+ * Returns  Index of the new node, or (size_t)-1 on OOM.
+ */
 static size_t alloc_node(SolFileTree *t, const char *name, const char *full,
                          bool is_dir)
 {
@@ -133,6 +153,7 @@ static size_t alloc_node(SolFileTree *t, const char *name, const char *full,
     return t->node_count++;
 }
 
+/* Free every node in the pool and reset pool metadata to empty. */
 static void free_all_nodes(SolFileTree *t)
 {
     for (size_t i = 0; i < t->node_count; ++i) {
@@ -155,6 +176,7 @@ typedef struct ScanItem {
     bool  is_dir;
 } ScanItem;
 
+/* qsort comparator: directories sort before files; ties use case-insensitive name order. */
 static int scan_compare(const void *a, const void *b)
 {
     const ScanItem *x = (const ScanItem *)a;
@@ -241,6 +263,13 @@ static bool load_children(SolFileTree *t, size_t dir_idx)
 /* Visible projection                                                */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Grow the visible projection array to hold at least needed entries.
+ *
+ * t       File tree whose visible array is grown.
+ * needed  Minimum required capacity.
+ * Returns true on success or if capacity is already sufficient.
+ */
 static bool ensure_visible_capacity(SolFileTree *t, size_t needed)
 {
     if (needed <= t->visible_capacity) return true;
@@ -253,6 +282,13 @@ static bool ensure_visible_capacity(SolFileTree *t, size_t needed)
     return true;
 }
 
+/*
+ * Append a node to the visible projection at the given indentation depth.
+ *
+ * t         File tree to append to.
+ * node_idx  Index of the node to emit.
+ * depth     Visual nesting depth (0 = top-level under root).
+ */
 static void emit_visible(SolFileTree *t, size_t node_idx, size_t depth)
 {
     if (!ensure_visible_capacity(t, t->visible_count + 1u)) return;
@@ -265,6 +301,16 @@ static void emit_visible(SolFileTree *t, size_t node_idx, size_t depth)
     e->expanded  = n->expanded;
 }
 
+/*
+ * Recursively populate the visible projection under an expanded directory node.
+ *
+ * Lazy-loads children on first visit. Re-resolves the Node pointer after each
+ * lazy load because the node pool realloc may move memory.
+ *
+ * t         File tree being rebuilt.
+ * node_idx  Directory node to descend into.
+ * depth     Visual nesting depth of node_idx's children.
+ */
 static void rebuild_visible_recursive(SolFileTree *t, size_t node_idx, size_t depth)
 {
     Node *n = &t->nodes[node_idx];
@@ -290,6 +336,7 @@ static void rebuild_visible_recursive(SolFileTree *t, size_t node_idx, size_t de
     }
 }
 
+/* Reset and fully rebuild the visible projection from the current expansion state. */
 static void rebuild_visible(SolFileTree *t)
 {
     t->visible_count = 0u;
@@ -302,12 +349,14 @@ static void rebuild_visible(SolFileTree *t)
 /* Public API                                                        */
 /* ---------------------------------------------------------------- */
 
+/* Allocate and return a new, empty file tree. Returns NULL on OOM. */
 SolFileTree *sol_file_tree_create(void)
 {
     SolFileTree *t = (SolFileTree *)calloc(1u, sizeof(SolFileTree));
     return t;
 }
 
+/* Free all resources owned by the file tree. Passing NULL is a no-op. */
 void sol_file_tree_destroy(SolFileTree *tree)
 {
     if (!tree) return;
@@ -317,18 +366,31 @@ void sol_file_tree_destroy(SolFileTree *tree)
     free(tree);
 }
 
+/* Attach a Causality u32 signal that is bumped after every tree mutation. */
 void sol_file_tree_attach_revision_signal(SolFileTree *tree, Ca_Signal *sig)
 {
     if (!tree) return;
     tree->rev = sig;
 }
 
+/* Attach an event bus used to publish SOL_EVENT_FILE_TREE_ROOT on root changes. */
 void sol_file_tree_attach_event_bus(SolFileTree *tree, SolEventBus *bus)
 {
     if (!tree) return;
     tree->events = bus;
 }
 
+/*
+ * Reset the tree to use root_path as the new root directory.
+ *
+ * Clears all existing nodes and the visible projection. Passing NULL clears
+ * the tree without error. Publishes SOL_EVENT_FILE_TREE_ROOT if an event bus
+ * is attached.
+ *
+ * tree       File tree to update.
+ * root_path  Absolute path of the new root, or NULL to clear.
+ * Returns    true on success (always true for NULL root_path).
+ */
 bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
 {
     if (!tree) return false;
@@ -403,22 +465,40 @@ bool sol_file_tree_set_root(SolFileTree *tree, const char *root_path)
     return true;
 }
 
+/* Return the current root path, or NULL if no root is set. */
 const char *sol_file_tree_root(const SolFileTree *tree)
 {
     return tree ? tree->root_path : NULL;
 }
 
+/* Return the number of entries in the current visible projection. */
 size_t sol_file_tree_visible_count(const SolFileTree *tree)
 {
     return tree ? tree->visible_count : 0u;
 }
 
+/*
+ * Return the visible entry at the given index, or NULL if out of range.
+ *
+ * tree   File tree to query.
+ * index  Zero-based row index into the visible projection.
+ * Returns Pointer to the entry (valid until the next mutation), or NULL.
+ */
 const SolFileEntry *sol_file_tree_visible(const SolFileTree *tree, size_t index)
 {
     if (!tree || index >= tree->visible_count) return NULL;
     return &tree->visible[index];
 }
 
+/*
+ * Toggle the expanded/collapsed state of the directory at visible row index.
+ *
+ * Rebuilds the visible projection and bumps the revision signal on success.
+ *
+ * tree   File tree to mutate.
+ * index  Row index of the directory to toggle.
+ * Returns true if the toggle was applied (false for non-directory or OOB).
+ */
 bool sol_file_tree_toggle(SolFileTree *tree, size_t index)
 {
     if (!tree || index >= tree->visible_count) return false;
@@ -437,6 +517,14 @@ bool sol_file_tree_toggle(SolFileTree *tree, size_t index)
     return true;
 }
 
+/*
+ * Re-scan the root directory, discarding all cached node data.
+ *
+ * Equivalent to calling sol_file_tree_set_root with the existing root path.
+ *
+ * tree    File tree to refresh.
+ * Returns true on success; false if no root is set or re-scan fails.
+ */
 bool sol_file_tree_refresh(SolFileTree *tree)
 {
     if (!tree || !tree->root_path) {

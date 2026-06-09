@@ -44,6 +44,12 @@ struct SolInputRouter {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Convert a Causality modifier bitmask to the Sol modifier mask type.
+ *
+ * mods    Causality modifier flags (bit 0=Shift, 1=Ctrl, 2=Alt, 3=Super).
+ * Returns Equivalent SolModifierMask.
+ */
 static SolModifierMask modifiers_from_ca(int mods)
 {
     SolModifierMask out = SOL_MOD_NONE;
@@ -55,6 +61,14 @@ static SolModifierMask modifiers_from_ca(int mods)
 }
 
 /* Resolve the monospace advance used by the text view, in layout pixels. */
+/*
+ * Return the monospace glyph advance width in layout pixels, measured from
+ * the window's font metrics.  Falls back to 60% of the boot font size when
+ * the measurement is unavailable.
+ *
+ * win     The Causality window to query (may be NULL).
+ * Returns Glyph advance width in logical pixels.
+ */
 static float router_glyph_advance_px(Ca_Window *win)
 {
     float w = win ? ca_measure_text_px(win, "M", SOL_UI_BOOT_FONT_SIZE_PX_FLOAT)
@@ -64,6 +78,13 @@ static float router_glyph_advance_px(Ca_Window *win)
 }
 
 /* Convert one wheel axis to editor scroll columns/rows. */
+/*
+ * Convert a raw wheel-axis amount to an integer scroll delta in columns/rows.
+ * Guarantees at least ±1 when amount is non-zero.
+ *
+ * amount  Raw wheel axis value.
+ * Returns Integer scroll delta.
+ */
 static int scroll_delta_from_axis(double amount)
 {
     int delta = (int)(amount * 3.0);
@@ -73,6 +94,14 @@ static int scroll_delta_from_axis(double amount)
     return delta;
 }
 
+/*
+ * Accumulate a fractional horizontal scroll amount and return the integer
+ * column delta, carrying the sub-column remainder into the next call.
+ *
+ * r   The input router holding the fractional remainder.
+ * dx  Raw horizontal wheel axis value.
+ * Returns Integer column delta (positive = scroll right).
+ */
 static int horizontal_scroll_delta(SolInputRouter *r, double dx)
 {
     if (!r || dx == 0.0) return 0;
@@ -84,6 +113,12 @@ static int horizontal_scroll_delta(SolInputRouter *r, double dx)
     return delta;
 }
 
+/*
+ * Return true when the event originated from the UI system's primary window.
+ *
+ * r   The input router providing the UI system reference.
+ * ev  The Causality event to check.
+ */
 static bool event_is_from_primary_window(const SolInputRouter *r,
                                          const Ca_Event *ev)
 {
@@ -91,6 +126,17 @@ static bool event_is_from_primary_window(const SolInputRouter *r,
     return ev->window == sol_ui_system_primary_window(r->ui);
 }
 
+/*
+ * Test whether the screen point (x, y) falls inside the active buffer area
+ * and, if so, resolve the leaf buffer-split node it belongs to.
+ *
+ * r         The input router providing UI and buffer system references.
+ * x         Screen X coordinate to test.
+ * y         Screen Y coordinate to test.
+ * out_root  Optionally receives the buffer-area bounding rect.
+ * out_leaf  Optionally receives the leaf node ID (0 when not inside any pane).
+ * Returns   true when the point is inside a valid buffer pane.
+ */
 static bool point_in_active_buffer_leaf(SolInputRouter *r,
                                         double x, double y,
                                         SolBufferRect *out_root,
@@ -122,12 +168,21 @@ static bool point_in_active_buffer_leaf(SolInputRouter *r,
 
 /* Printable keys arrive twice from GLFW — once as KEY and again decoded
    through CHAR. We only act on the CHAR copy so dead-keys / IME work. */
+/* Return true when key falls in the printable ASCII range (32–126). */
 static bool key_is_printable_alpha(SolKeyCode key)
 {
     return (key >= 32 && key <= 126);
 }
 
 /* Settle the cursor into view + ask the UI to rebuild the buffer area. */
+/*
+ * After a buffer edit, scroll the cursor into the visible viewport and
+ * request a buffer-area UI rebuild.  Uses the active leaf's geometry when
+ * available, falling back to the full window dimensions.
+ *
+ * r   The input router providing geometry and UI references.
+ * tb  The text buffer that was edited.
+ */
 static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
 {
     if (!r || !tb) return;
@@ -165,6 +220,16 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
 }
 
 /* Handle non-printable / editing keys for the active text buffer. */
+/*
+ * Dispatch a non-printable editing key to the active text buffer.
+ * Modifier chords other than Shift are ignored here; they belong to the
+ * command-flow system.
+ *
+ * r     The input router providing the buffer system reference.
+ * key   The key code to handle (arrow, Home, End, Backspace, Delete, Enter).
+ * mods  Active modifier mask.
+ * Returns true when the key was handled and the buffer was modified.
+ */
 static bool handle_text_buffer_key(SolInputRouter *r,
                                    SolKeyCode key, SolModifierMask mods)
 {
@@ -213,6 +278,12 @@ static bool handle_text_buffer_key(SolInputRouter *r,
 /* Causality event handlers                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Handle CA_EVENT_KEY events: translate to SolInputEvent, forward to the
+ * UI system and input system, and dispatch non-printable editing keys to
+ * the active text buffer.  Latches a one-shot text-input suppression when
+ * the UI consumes a printable key chord.
+ */
 static void on_key(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -255,6 +326,11 @@ static void on_key(const Ca_Event *ev, void *user_data)
     handle_text_buffer_key(r, ie.data.key.key, ie.data.key.modifiers);
 }
 
+/*
+ * Handle CA_EVENT_CHAR (decoded text input) events: insert the codepoint
+ * into the active text buffer unless suppressed (by a consumed command chord),
+ * the leader popup is active, or the buffer input region is not focused.
+ */
 static void on_char(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -289,6 +365,11 @@ static void on_char(const Ca_Event *ev, void *user_data)
     }
 }
 
+/*
+ * Handle CA_EVENT_MOUSE_BUTTON events: update buffer_input_active based on
+ * whether the click landed inside a buffer pane, and forward the event to
+ * the input system.
+ */
 static void on_mouse_button(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -321,6 +402,10 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
     }
 }
 
+/*
+ * Handle CA_EVENT_MOUSE_MOVE events: cache the pointer position and forward
+ * the event to the input system.
+ */
 static void on_mouse_move(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -337,6 +422,11 @@ static void on_mouse_move(const Ca_Event *ev, void *user_data)
     sol_input_system_process_event(r->input, &ie);
 }
 
+/*
+ * Handle CA_EVENT_MOUSE_SCROLL events: apply vertical and horizontal scroll
+ * deltas to the buffer under the pointer using natural-scroll convention
+ * (dy > 0 moves content up).  Forwards the event to the input system first.
+ */
 static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -452,6 +542,7 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     }
 }
 
+/* Forward a window-close event to the UI system. */
 static void on_window_close(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -459,6 +550,7 @@ static void on_window_close(const Ca_Event *ev, void *user_data)
     sol_ui_system_on_window_close(r->ui, ev->window);
 }
 
+/* Forward a primary-window resize event to the UI system. */
 static void on_window_resize(const Ca_Event *ev, void *user_data)
 {
     SolInputRouter *r = (SolInputRouter *)user_data;
@@ -471,6 +563,17 @@ static void on_window_resize(const Ca_Event *ev, void *user_data)
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Create a SolInputRouter and register all seven Causality event handlers
+ * (key, char, mouse button, mouse move, mouse scroll, window close, window
+ * resize) with the given instance.
+ *
+ * instance  Causality instance to hook events on.
+ * ui        UI system that receives forwarded events.
+ * input     Low-level input system for event processing.
+ * buffers   Buffer system used for text editing and scroll.
+ * Returns   The new router, or NULL on allocation failure or invalid args.
+ */
 SolInputRouter *sol_input_router_create(Ca_Instance *instance, SolUISystem *ui,
                                         SolInputSystem *input,
                                         SolBufferSystem *buffers)
@@ -494,6 +597,11 @@ SolInputRouter *sol_input_router_create(Ca_Instance *instance, SolUISystem *ui,
     return r;
 }
 
+/*
+ * Deregister all Causality event handlers and free the router.
+ *
+ * router  The router to destroy (safe to call with NULL).
+ */
 void sol_input_router_destroy(SolInputRouter *router)
 {
     if (!router) return;

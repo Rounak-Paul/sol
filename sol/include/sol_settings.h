@@ -34,6 +34,11 @@
 /* Settings aggregate                                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Aggregate of all user-configurable preferences persisted in settings.json.
+ *
+ * Fields are safe to read at any time; write via sol_settings_save.
+ */
 typedef struct SolSettings {
     /* ---- Theme ---- */
     /* Global UI scale factor applied via ca_instance_set_scale().
@@ -46,18 +51,28 @@ typedef struct SolSettings {
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
-/* Return a SolSettings with all fields at their documented defaults. */
+/* Return a SolSettings with all fields initialised to their documented defaults. */
 SolSettings sol_settings_defaults(void);
 
-/* Load settings from $HOME/.sol/settings.json into *out.
- * On any error (file absent, parse failure, out-of-range value) the
- * affected field is replaced with its default; false is returned only
- * when the file cannot be read at all.  Callers should treat even a
- * false return as a valid *out filled with safe defaults. */
+/*
+ * Load settings from $HOME/.sol/settings.json.
+ *
+ * On any error (file absent, parse failure, out-of-range value) the affected
+ * field is replaced with its default. false is returned only when the file
+ * cannot be read at all; callers should treat even a false return as a valid
+ * *out filled with safe defaults.
+ *
+ * out  Receives the loaded (or defaulted) settings.
+ * Returns  true if the file was read successfully.
+ */
 bool sol_settings_load(SolSettings *out);
 
-/* Write *settings to $HOME/.sol/settings.json, creating the directory
- * if necessary.  Returns true on success. */
+/*
+ * Write settings to $HOME/.sol/settings.json, creating the directory if needed.
+ *
+ * settings  Settings to persist.
+ * Returns   true on success.
+ */
 bool sol_settings_save(const SolSettings *settings);
 
 #endif /* SOL_SETTINGS_H */

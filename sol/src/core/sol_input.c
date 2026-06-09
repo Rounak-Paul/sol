@@ -54,6 +54,12 @@ struct SolInputSystem {
     SolEventBus *event_bus;
 };
 
+/*
+ * Duplicate a string into a heap-allocated buffer.
+ *
+ * value   Source string; NULL input returns NULL.
+ * Returns Heap-allocated copy, or NULL on OOM or NULL input.
+ */
 static char *sol_strdup(const char *value)
 {
     if (!value) {
@@ -70,6 +76,13 @@ static char *sol_strdup(const char *value)
     return out;
 }
 
+/*
+ * Grow the binding array to hold at least min_capacity entries.
+ *
+ * system        Input system whose binding array is grown.
+ * min_capacity  Minimum required capacity.
+ * Returns       true on success or if capacity is already sufficient.
+ */
 static bool sol_input_reserve_bindings(SolInputSystem *system, size_t min_capacity)
 {
     if (system->binding_capacity >= min_capacity) {
@@ -94,6 +107,13 @@ static bool sol_input_reserve_bindings(SolInputSystem *system, size_t min_capaci
     return true;
 }
 
+/*
+ * Remove inactive bindings from the array and free their action strings.
+ *
+ * Must be called while the system lock is held.
+ *
+ * system  Input system to compact.
+ */
 static void sol_input_compact_bindings_locked(SolInputSystem *system)
 {
     size_t write = 0u;
@@ -113,6 +133,7 @@ static void sol_input_compact_bindings_locked(SolInputSystem *system)
     system->binding_count = write;
 }
 
+/* Map an input event type to its canonical event-bus name string. */
 static const char *sol_input_event_name(SolInputEventType type)
 {
     switch (type) {
@@ -135,6 +156,7 @@ static const char *sol_input_event_name(SolInputEventType type)
     }
 }
 
+/* Return the modifier bit that key is a modifier for, or SOL_MOD_NONE. */
 static SolModifierMask sol_modifier_for_key(SolKeyCode key)
 {
     switch (key) {
@@ -155,6 +177,7 @@ static SolModifierMask sol_modifier_for_key(SolKeyCode key)
     }
 }
 
+/* Return a SolInputConfig populated with sensible defaults. */
 SolInputConfig sol_input_config_default(void)
 {
     SolInputConfig config;
@@ -163,6 +186,12 @@ SolInputConfig sol_input_config_default(void)
     return config;
 }
 
+/*
+ * Allocate and initialise a new input system.
+ *
+ * config   Configuration; pass NULL to use defaults.
+ * Returns  Heap-allocated input system, or NULL on OOM.
+ */
 SolInputSystem *sol_input_system_create(const SolInputConfig *config)
 {
     SolInputConfig effective = config ? *config : sol_input_config_default();
@@ -193,6 +222,14 @@ SolInputSystem *sol_input_system_create(const SolInputConfig *config)
     return system;
 }
 
+/*
+ * Free all resources owned by the input system.
+ *
+ * Frees all binding action strings before releasing the system. Passing NULL
+ * is a no-op.
+ *
+ * system  Input system to destroy.
+ */
 void sol_input_system_destroy(SolInputSystem *system)
 {
     if (!system) {
@@ -208,6 +245,13 @@ void sol_input_system_destroy(SolInputSystem *system)
     free(system);
 }
 
+/*
+ * Reset per-frame transient state (pressed/released flags and scroll delta).
+ *
+ * Must be called once at the start of each frame before processing events.
+ *
+ * system  Input system to reset.
+ */
 void sol_input_system_begin_frame(SolInputSystem *system)
 {
     if (!system) {
@@ -224,6 +268,18 @@ void sol_input_system_begin_frame(SolInputSystem *system)
     pthread_mutex_unlock(&system->lock);
 }
 
+/*
+ * Test whether a key event satisfies all conditions of a binding.
+ *
+ * Checks key code, press/release direction, repeat permission, and modifier
+ * requirements. Only key-down and key-up events can match; all others return
+ * false.
+ *
+ * binding            Binding to test against.
+ * event              Incoming input event.
+ * current_modifiers  Modifier mask active at the time of the event.
+ * Returns            true if the event matches the binding.
+ */
 static bool sol_input_event_matches_binding(
     const SolInputBinding *binding,
     const SolInputEvent *event,
@@ -269,6 +325,17 @@ static bool sol_input_event_matches_binding(
     return true;
 }
 
+/*
+ * Update internal state for an incoming event and fire matching action bindings.
+ *
+ * Updates key/mouse/scroll state, publishes a raw event to the event bus, then
+ * invokes callbacks for all priority-ordered bindings that match the event.
+ * Stops dispatching to further bindings once one callback returns true.
+ *
+ * system  Input system to update.
+ * event   Event to process.
+ * Returns true if any binding callback consumed the event.
+ */
 bool sol_input_system_process_event(SolInputSystem *system, const SolInputEvent *event)
 {
     if (!system || !event) {
@@ -406,6 +473,16 @@ bool sol_input_system_process_event(SolInputSystem *system, const SolInputEvent 
     return consumed;
 }
 
+/*
+ * Register an action binding and return a token for later removal.
+ *
+ * Bindings are kept sorted by descending priority so higher-priority actions
+ * are evaluated first during event dispatch.
+ *
+ * system  Input system to register with.
+ * desc    Binding descriptor (key, modifiers, priority, callback, etc.).
+ * Returns Non-zero token on success, 0 on failure.
+ */
 SolInputActionToken sol_input_bind_action(
     SolInputSystem *system,
     const SolInputBindingDesc *desc
@@ -462,6 +539,13 @@ SolInputActionToken sol_input_bind_action(
     return binding.token;
 }
 
+/*
+ * Remove the binding identified by token.
+ *
+ * system  Input system owning the binding.
+ * token   Token returned by sol_input_bind_action.
+ * Returns true if the binding was found and removed.
+ */
 bool sol_input_unbind_action(SolInputSystem *system, SolInputActionToken token)
 {
     if (!system || token == 0u) {
@@ -489,6 +573,7 @@ bool sol_input_unbind_action(SolInputSystem *system, SolInputActionToken token)
     return removed;
 }
 
+/* Return true if key is currently held down. */
 bool sol_input_is_key_down(SolInputSystem *system, SolKeyCode key)
 {
     if (!system || key >= SOL_INPUT_MAX_KEYS) {
@@ -501,6 +586,7 @@ bool sol_input_is_key_down(SolInputSystem *system, SolKeyCode key)
     return value;
 }
 
+/* Return true if key transitioned from up to down this frame. */
 bool sol_input_was_key_pressed(SolInputSystem *system, SolKeyCode key)
 {
     if (!system || key >= SOL_INPUT_MAX_KEYS) {
@@ -513,6 +599,7 @@ bool sol_input_was_key_pressed(SolInputSystem *system, SolKeyCode key)
     return value;
 }
 
+/* Return true if key transitioned from down to up this frame. */
 bool sol_input_was_key_released(SolInputSystem *system, SolKeyCode key)
 {
     if (!system || key >= SOL_INPUT_MAX_KEYS) {
@@ -525,6 +612,7 @@ bool sol_input_was_key_released(SolInputSystem *system, SolKeyCode key)
     return value;
 }
 
+/* Return the current modifier mask (Shift, Ctrl, Alt, Super). */
 SolModifierMask sol_input_current_modifiers(SolInputSystem *system)
 {
     if (!system) {
@@ -537,6 +625,15 @@ SolModifierMask sol_input_current_modifiers(SolInputSystem *system)
     return modifiers;
 }
 
+/*
+ * Write the current mouse cursor position into out_x and out_y.
+ *
+ * Either output pointer may be NULL. Both are set to 0.0 when system is NULL.
+ *
+ * system  Input system to query.
+ * out_x   Receives the horizontal cursor position.
+ * out_y   Receives the vertical cursor position.
+ */
 void sol_input_mouse_position(SolInputSystem *system, double *out_x, double *out_y)
 {
     if (!system) {
@@ -562,6 +659,16 @@ void sol_input_mouse_position(SolInputSystem *system, double *out_x, double *out
     }
 }
 
+/*
+ * Read and clear the accumulated scroll delta for the current frame.
+ *
+ * Resets the internal scroll accumulators to zero after reading. Either output
+ * pointer may be NULL. Both are set to 0.0f when system is NULL.
+ *
+ * system  Input system to consume scroll from.
+ * out_x   Receives the horizontal scroll delta.
+ * out_y   Receives the vertical scroll delta.
+ */
 void sol_input_consume_scroll(SolInputSystem *system, float *out_x, float *out_y)
 {
     if (!system) {

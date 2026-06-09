@@ -144,6 +144,12 @@ static bool sol_mkdir_p(const char *path)
     return sol_platform_mkdir_p(path);
 }
 
+/*
+ * Return (and create if absent) the Sol configuration directory path.
+ *
+ * Returns Heap-allocated absolute path to $HOME/.sol (or platform equivalent),
+ *         or NULL if the path cannot be determined or created.
+ */
 char *sol_config_dir(void)
 {
     char *dir = sol_platform_config_home_dir();
@@ -157,6 +163,12 @@ char *sol_config_dir(void)
     return dir;
 }
 
+/*
+ * Build a full path to a file inside the Sol configuration directory.
+ *
+ * filename  File name relative to the config dir (e.g. "bindings.conf").
+ * Returns   Heap-allocated absolute path, or NULL on failure.
+ */
 char *sol_config_path(const char *filename)
 {
     if (!filename) return NULL;
@@ -171,6 +183,12 @@ char *sol_config_path(const char *filename)
 /* Default-file emission                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Write the built-in default bindings.conf template to disk.
+ *
+ * path    Absolute path of the file to create.
+ * Returns true on success.
+ */
 static bool sol_write_default_bindings(const char *path)
 {
     FILE *fp = fopen(path, "wb");
@@ -291,8 +309,14 @@ static bool sol_parse_chord_token(const char *token,
     }
 }
 
-/* In-place tokeniser: rewrites consecutive whitespace runs to NULs,
-   stores token start pointers. Returns token count. */
+/*
+ * Tokenise a line in place by NUL-terminating each whitespace-separated token.
+ *
+ * line        Mutable line buffer; whitespace between tokens is overwritten.
+ * tokens      Caller-allocated array to receive pointers to each token start.
+ * max_tokens  Capacity of the tokens array.
+ * Returns     Number of tokens found.
+ */
 static size_t sol_tokenise_inplace(char *line, char **tokens, size_t max_tokens)
 {
     size_t n = 0u;
@@ -326,6 +350,15 @@ static const char *sol_modifier_name(SolModifierMask mod)
     }
 }
 
+/*
+ * Parse and register one `bind` directive from the config file.
+ *
+ * ui       UI system to register the command flow into.
+ * tokens   Null-terminated token array produced by sol_tokenise_inplace().
+ * ntokens  Number of tokens in the array.
+ * line_no  Source line number, used in diagnostic messages.
+ * Returns  true if the binding was successfully registered.
+ */
 static bool sol_register_bind_line(SolUISystem *ui, char **tokens, size_t ntokens,
                                    size_t line_no)
 {
@@ -397,6 +430,15 @@ static bool sol_register_bind_line(SolUISystem *ui, char **tokens, size_t ntoken
 /* Public loader                                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Load key bindings from $HOME/.sol/bindings.conf and register them.
+ *
+ * Writes a default config file on first launch. Lines that fail to parse
+ * are skipped with a warning so a single typo doesn't break the whole keymap.
+ *
+ * ui      UI system to register the parsed command flows into.
+ * Returns Number of successfully registered bindings, or -1 on fatal error.
+ */
 int sol_config_load_bindings(SolUISystem *ui)
 {
     if (!ui) return -1;

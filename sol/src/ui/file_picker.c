@@ -139,6 +139,7 @@ static SolFilePicker *g_pickers = NULL;
 /* Small helpers                                                     */
 /* ---------------------------------------------------------------- */
 
+/* Duplicate string s into a malloc-owned buffer, returning NULL when s is NULL. */
 static char *fp_strdup(const char *s)
 {
     if (!s) return NULL;
@@ -148,6 +149,11 @@ static char *fp_strdup(const char *s)
     return o;
 }
 
+/*
+ * Case-insensitive string comparison (ASCII only).
+ *
+ * Returns Negative, zero, or positive like strcmp.
+ */
 static int fp_casecmp(const char *a, const char *b)
 {
     while (*a && *b) {
@@ -162,6 +168,11 @@ static int fp_casecmp(const char *a, const char *b)
 /* Set to the current picker during qsort (synchronous, single-threaded). */
 static SolFilePicker *g_sort_ctx = NULL;
 
+/*
+ * qsort comparator for SolFpEntry.  Directories always precede files; within
+ * each group ordering follows the column (name/size/date) and direction
+ * recorded in the global g_sort_ctx picker.
+ */
 static int fp_entry_cmp(const void *a, const void *b)
 {
     const SolFpEntry *x = (const SolFpEntry *)a;
@@ -187,11 +198,20 @@ static int fp_entry_cmp(const void *a, const void *b)
     return sort_asc ? cmp : -cmp;
 }
 
+/* Join parent directory and child name into a new heap-allocated path string. */
 static char *fp_path_join(const char *parent, const char *name)
 {
     return sol_platform_path_join(parent, name);
 }
 
+/*
+ * Return the parent directory of path as a new heap-allocated string.
+ * Handles Unix roots ("/"), Windows drive roots ("C:\"), and trailing
+ * separators.  Returns "." when there is no parent component.
+ *
+ * path    The filesystem path whose parent is needed.
+ * Returns Heap-allocated parent path, or NULL on allocation failure.
+ */
 static char *fp_parent_dir(const char *path)
 {
     if (!path || !*path) return fp_strdup(".");
@@ -225,6 +245,15 @@ static char *fp_parent_dir(const char *path)
 /* Metadata format helpers                                          */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Format a file size as a human-readable string (B / KB / MB / GB).
+ * Writes an empty string for directories.
+ *
+ * bytes   File size in bytes.
+ * is_dir  When true, writes an empty string and returns immediately.
+ * buf     Destination buffer.
+ * bufsz   Size of the destination buffer in bytes.
+ */
 static void fp_format_size(uint64_t bytes, bool is_dir, char *buf, size_t bufsz)
 {
     if (is_dir) { buf[0] = '\0'; return; }
@@ -239,6 +268,14 @@ static void fp_format_size(uint64_t bytes, bool is_dir, char *buf, size_t bufsz)
                  (double)bytes / (1024.0 * 1024.0 * 1024.0));
 }
 
+/*
+ * Format a Unix timestamp as "Mon DD HH:MM" into buf.
+ * Writes an empty string when mtime is 0 or localtime fails.
+ *
+ * mtime   Unix timestamp (seconds since epoch), 0 = unavailable.
+ * buf     Destination buffer.
+ * bufsz   Size of the destination buffer in bytes.
+ */
 static void fp_format_date(int64_t mtime, char *buf, size_t bufsz)
 {
     if (mtime == 0) { buf[0] = '\0'; return; }
@@ -271,6 +308,13 @@ static const char *fp_crumb_label(const char *crumb_path)
 /* File-type icon selector (mirrors file_tree_panel.c)              */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Select the Nerd Font icon glyph and CSS style for a given filename.
+ *
+ * name       The filename (basename) to inspect.
+ * out_style  Receives the CSS class string for the icon element.
+ * Returns    The icon glyph string constant.
+ */
 static const char *fp_file_icon(const char *name, const char **out_style)
 {
     if (name && strncmp(name, "CMakeLists", 10) == 0) {
@@ -302,12 +346,22 @@ static const char *fp_file_icon(const char *name, const char **out_style)
 /* Breadcrumb path building                                          */
 /* ---------------------------------------------------------------- */
 
+/* Free all breadcrumb path strings and reset the crumb count to zero. */
 static void fp_crumbs_clear(SolFilePicker *p)
 {
     for (size_t i = 0; i < p->crumb_count; ++i) free(p->crumb_paths[i]);
     p->crumb_count = 0;
 }
 
+/*
+ * Append the first len bytes of path as a new breadcrumb entry, growing the
+ * crumb_paths array if needed.
+ *
+ * p     The file picker whose breadcrumb array is updated.
+ * path  Source path string.
+ * len   Number of bytes to copy from path (result is null-terminated).
+ * Returns true on success, false on allocation failure.
+ */
 static bool fp_crumb_push_len(SolFilePicker *p, const char *path, size_t len)
 {
     if (p->crumb_count == p->crumb_capacity) {
@@ -377,6 +431,7 @@ static void fp_build_crumbs(SolFilePicker *p)
 /* Listing                                                           */
 /* ---------------------------------------------------------------- */
 
+/* Free all entry name and full_path strings and reset the entry count. */
 static void fp_entries_clear(SolFilePicker *p)
 {
     for (size_t i = 0; i < p->entry_count; ++i) {
@@ -386,6 +441,16 @@ static void fp_entries_clear(SolFilePicker *p)
     p->entry_count = 0;
 }
 
+/*
+ * Append a directory entry to the picker's entry array, growing it if needed.
+ * Takes ownership of the heap-allocated name and full strings on success.
+ *
+ * p       The file picker to append to.
+ * name    Heap-allocated basename string.
+ * full    Heap-allocated absolute path string.
+ * is_dir  Whether the entry is a directory.
+ * Returns true on success, false on allocation failure (does not free strings).
+ */
 static bool fp_entries_push(SolFilePicker *p, char *name, char *full, bool is_dir)
 {
     if (p->entry_count == p->entry_capacity) {
@@ -402,6 +467,13 @@ static bool fp_entries_push(SolFilePicker *p, char *name, char *full, bool is_di
     return true;
 }
 
+/*
+ * Scan p->current_dir, populate the entries array with stat metadata, and
+ * sort the results according to the picker's current sort column and direction.
+ * Hidden/dotfile entries are excluded unless show_hidden is set.
+ *
+ * p  The file picker to refresh.
+ */
 static void fp_load_directory(SolFilePicker *p)
 {
     fp_entries_clear(p);
@@ -442,6 +514,14 @@ static void fp_load_directory(SolFilePicker *p)
     g_sort_ctx = NULL;
 }
 
+/*
+ * Change the picker's current directory, reload the directory listing, and
+ * rebuild the breadcrumb segments.
+ *
+ * p     The file picker to navigate.
+ * path  The target directory path (defaults to "." when empty or NULL).
+ * Returns true on success, false on allocation failure.
+ */
 static bool fp_set_current_dir(SolFilePicker *p, const char *path)
 {
     char *dup = fp_strdup(path && *path ? path : ".");
@@ -457,6 +537,14 @@ static bool fp_set_current_dir(SolFilePicker *p, const char *path)
 /* Click-context pool                                                */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Obtain the next available click context from the pool, growing it with
+ * realloc when necessary.  Pointers into the pool remain valid for the
+ * lifetime of the picker.
+ *
+ * p       The file picker owning the pool.
+ * Returns Pointer to the next free context, or NULL on allocation failure.
+ */
 static SolFpClickCtx *fp_acquire_ctx(SolFilePicker *p)
 {
     if (p->click_ctx_count == p->click_ctx_capacity) {
@@ -476,6 +564,12 @@ static SolFpClickCtx *fp_acquire_ctx(SolFilePicker *p)
 /* Confirmation / cancellation                                       */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Invoke the picker callback exactly once, guarded by the fired flag.
+ *
+ * p     The file picker.
+ * path  The selected path, or NULL on cancellation.
+ */
 static void fp_fire(SolFilePicker *p, const char *path)
 {
     if (p->fired) return;
@@ -483,12 +577,14 @@ static void fp_fire(SolFilePicker *p, const char *path)
     if (p->callback) p->callback(path, p->user_data);
 }
 
+/* Fire the picker callback with path and close the window. */
 static void fp_confirm(SolFilePicker *p, const char *path)
 {
     fp_fire(p, path);
     if (p->window) ca_window_close(p->window);
 }
 
+/* Fire the picker callback with NULL (cancellation) and close the window. */
 static void fp_cancel(SolFilePicker *p)
 {
     fp_fire(p, NULL);
@@ -499,6 +595,10 @@ static void fp_cancel(SolFilePicker *p)
 /* Click handlers                                                    */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Handle a click on a file-list row.  Navigates into directories; confirms
+ * file selection in file-picker mode; ignores file clicks in folder mode.
+ */
 static void fp_on_row_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -521,6 +621,10 @@ static void fp_on_row_click(Ca_Button *btn, void *user_data)
     /* Folder mode: clicking a file is a no-op. */
 }
 
+/*
+ * Handle a click on a breadcrumb segment button, navigating to the
+ * corresponding ancestor directory.
+ */
 static void fp_on_crumb_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -535,6 +639,7 @@ static void fp_on_crumb_click(Ca_Button *btn, void *user_data)
     if (p->content_host) ca_div_invalidate(p->content_host);
 }
 
+/* Navigate to the parent of the current directory. */
 static void fp_on_up_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -550,6 +655,7 @@ static void fp_on_up_click(Ca_Button *btn, void *user_data)
     }
 }
 
+/* Confirm the current directory as the selected folder and close the picker. */
 static void fp_on_select_folder(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -557,6 +663,7 @@ static void fp_on_select_folder(Ca_Button *btn, void *user_data)
     if (p) fp_confirm(p, p->current_dir);
 }
 
+/* Cancel the picker, firing the callback with NULL and closing the window. */
 static void fp_on_cancel(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -568,6 +675,7 @@ static void fp_on_cancel(Ca_Button *btn, void *user_data)
 /* Toolbar action handlers                                           */
 /* ---------------------------------------------------------------- */
 
+/* Navigate to the user's home directory ($HOME / %USERPROFILE%). */
 static void fp_on_home_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -582,6 +690,7 @@ static void fp_on_home_click(Ca_Button *btn, void *user_data)
     if (p->content_host) ca_div_invalidate(p->content_host);
 }
 
+/* Reload the current directory listing and invalidate the content host. */
 static void fp_on_refresh_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -591,6 +700,7 @@ static void fp_on_refresh_click(Ca_Button *btn, void *user_data)
     if (p->content_host) ca_div_invalidate(p->content_host);
 }
 
+/* Toggle visibility of hidden/dotfile entries and reload the listing. */
 static void fp_on_toggle_hidden_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -605,6 +715,11 @@ static void fp_on_toggle_hidden_click(Ca_Button *btn, void *user_data)
 /* Inline new-folder creation                                        */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Handle text-input change events for the inline new-folder creation bar.
+ * Commits the new folder on Enter (key 257) and dismisses the bar on
+ * Escape (key 256).
+ */
 static void fp_on_new_folder_change(Ca_TextInput *input, void *user_data)
 {
     SolFilePicker *p = (SolFilePicker *)user_data;
@@ -635,6 +750,7 @@ static void fp_on_new_folder_change(Ca_TextInput *input, void *user_data)
     }
 }
 
+/* Toggle the inline new-folder creation bar and request focus on the input. */
 static void fp_on_new_folder_toggle_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -646,6 +762,10 @@ static void fp_on_new_folder_toggle_click(Ca_Button *btn, void *user_data)
     if (p->content_host) ca_div_invalidate(p->content_host);
 }
 
+/*
+ * Create the folder named in new_folder_buf under the current directory,
+ * navigate into it, and close the creation bar.
+ */
 static void fp_on_create_folder_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -662,6 +782,7 @@ static void fp_on_create_folder_click(Ca_Button *btn, void *user_data)
     if (p->content_host) ca_div_invalidate(p->content_host);
 }
 
+/* Dismiss the inline new-folder bar without creating anything. */
 static void fp_on_cancel_new_folder_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -672,6 +793,11 @@ static void fp_on_cancel_new_folder_click(Ca_Button *btn, void *user_data)
     if (p->content_host) ca_div_invalidate(p->content_host);
 }
 
+/*
+ * Handle a click on a sortable column header.  Toggles sort direction when
+ * the same column is clicked again; otherwise switches to the new column
+ * with a sensible default direction (date defaults to descending).
+ */
 static void fp_on_sort_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -695,6 +821,13 @@ static void fp_on_sort_click(Ca_Button *btn, void *user_data)
 /* Rendering                                                         */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Emit the Causality nodes for a single file-list row at the given index,
+ * including the type icon, name, size, and modification-date columns.
+ *
+ * p      The file picker owning the entry array.
+ * index  Zero-based index into p->entries.
+ */
 static void fp_render_row(SolFilePicker *p, size_t index)
 {
     const SolFpEntry *e = &p->entries[index];
@@ -740,6 +873,12 @@ static void fp_render_row(SolFilePicker *p, size_t index)
     ca_btn_end();
 }
 
+/*
+ * Emit the horizontal breadcrumb toolbar row, rendering one clickable button
+ * per path segment separated by "/" text labels.
+ *
+ * p  The file picker whose crumb_paths are rendered.
+ */
 static void fp_render_breadcrumb(SolFilePicker *p)
 {
     ca_div_begin(&(Ca_DivDesc){
@@ -779,6 +918,17 @@ static void fp_render_breadcrumb(SolFilePicker *p)
     ca_div_end();
 }
 
+/*
+ * Emit one sortable column-header cell, including sort direction arrow when
+ * this column is the active sort column.
+ *
+ * p            The file picker providing sort state.
+ * cell_style   CSS class for the outer wrapper div.
+ * btn_style    Reserved (currently unused).
+ * label        Display text for the column header.
+ * sort_col     FP_SORT_* identifier for this column.
+ * justify_end  When true, the sort arrow is placed before the label text.
+ */
 static void fp_render_colhdr_cell(
         SolFilePicker *p, const char *cell_style, const char *btn_style,
         const char *label, int sort_col, bool justify_end)
@@ -826,6 +976,11 @@ static void fp_render_colhdr_cell(
     ca_div_end();
 }
 
+/*
+ * Emit the full column-header row with Name, Size, and Modified cells.
+ *
+ * p  The file picker providing sort state.
+ */
 static void fp_render_column_header(SolFilePicker *p)
 {
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "fp-colhdr" });
@@ -841,6 +996,14 @@ static void fp_render_column_header(SolFilePicker *p)
     ca_div_end();
 }
 
+/*
+ * Causality reactive builder for the picker's content host div.  Emits the
+ * toolbar, new-folder bar (when visible), column header, scrollable file
+ * list, and footer with action buttons.  Called on every ca_div_invalidate.
+ *
+ * div        The content host div being rebuilt (unused directly).
+ * user_data  Pointer to the SolFilePicker.
+ */
 static void fp_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -1018,6 +1181,12 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
     ca_div_end();
 }
 
+/*
+ * Construct the top-level Causality layout for the picker window: a vertical
+ * root div containing a single reactive content-host div.
+ *
+ * p  The file picker whose window layout is initialised.
+ */
 static void fp_build_layout(SolFilePicker *p)
 {
     ca_ui_begin(p->window, &(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "fp-root" });
@@ -1038,6 +1207,13 @@ static void fp_build_layout(SolFilePicker *p)
 /* Cleanup                                                           */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Close the picker window (if still open) and free all heap memory owned by
+ * the picker, including entries, breadcrumbs, click contexts, and the struct
+ * itself.
+ *
+ * p  The file picker to destroy (safe to call with NULL).
+ */
 static void fp_destroy(SolFilePicker *p)
 {
     if (!p) return;
@@ -1056,6 +1232,19 @@ static void fp_destroy(SolFilePicker *p)
 /* Public API                                                        */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Create and open a new file/folder picker window.
+ * Resolves the initial directory (falls back to cwd), allocates the picker
+ * struct, creates the Causality window, and registers the picker in the
+ * global linked list so sol_file_picker_tick can manage its lifetime.
+ *
+ * instance     The Causality instance to create the window on.
+ * mode         SOL_FILE_PICKER_FILE or SOL_FILE_PICKER_FOLDER.
+ * initial_dir  Starting directory path (NULL or empty → current working dir).
+ * on_select    Callback invoked with the chosen path, or NULL on cancel.
+ * user_data    Passed through to on_select unchanged.
+ * Returns      The new picker, or NULL on failure.
+ */
 SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
                                     SolFilePickerMode     mode,
                                     const char           *initial_dir,
@@ -1111,6 +1300,11 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
     return p;
 }
 
+/*
+ * Advance picker lifecycle: walk the global picker list and destroy any
+ * picker whose window has been closed, firing the callback with NULL if it
+ * was never confirmed.  Call once per application frame.
+ */
 void sol_file_picker_tick(void)
 {
     SolFilePicker **link = &g_pickers;

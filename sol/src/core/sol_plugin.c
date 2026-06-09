@@ -124,6 +124,7 @@ struct SolPluginManager {
 /* Internal helpers                                                    */
 /* ================================================================== */
 
+/* Duplicate a string into a heap-allocated buffer; NULL input returns NULL. */
 static char *sol_pstrdup(const char *s)
 {
     if (!s) return NULL;
@@ -134,6 +135,13 @@ static char *sol_pstrdup(const char *s)
     return o;
 }
 
+/*
+ * Grow the plugin record array to hold at least min_cap entries.
+ *
+ * manager  Plugin manager whose array is grown.
+ * min_cap  Minimum required capacity.
+ * Returns  true on success or if capacity is already sufficient.
+ */
 static bool sol_plugin_reserve(SolPluginManager *manager, size_t min_cap)
 {
     if (manager->plugin_capacity >= min_cap) return true;
@@ -147,6 +155,7 @@ static bool sol_plugin_reserve(SolPluginManager *manager, size_t min_cap)
     return true;
 }
 
+/* Return true if name ends with the platform's dynamic-library extension. */
 static bool sol_plugin_extension_matches(const char *name)
 {
     if (!name) return false;
@@ -155,6 +164,7 @@ static bool sol_plugin_extension_matches(const char *name)
     return strcmp(dot, sol_platform_dynamic_library_extension()) == 0;
 }
 
+/* Return true if a plugin with the given id is already registered (caller holds lock). */
 static bool sol_plugin_has_id_locked(const SolPluginManager *m, const char *id)
 {
     for (size_t i = 0u; i < m->plugin_count; ++i)
@@ -164,6 +174,15 @@ static bool sol_plugin_has_id_locked(const SolPluginManager *m, const char *id)
 
 /* ---- SolPluginCtx lifecycle -------------------------------------- */
 
+/*
+ * Allocate a zeroed SolPluginCtx and populate its identity strings.
+ *
+ * manager       Owning plugin manager (back-pointer).
+ * id            Plugin id string (will be duplicated).
+ * display_name  Human-readable name; falls back to id when NULL.
+ * version       Semantic version string; falls back to "0.0.0" when NULL.
+ * Returns       Heap-allocated ctx, or NULL on OOM.
+ */
 static SolPluginCtx *plugin_ctx_alloc(SolPluginManager *manager,
                                        const char *id,
                                        const char *display_name,
@@ -235,6 +254,12 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
 
 /* ---- Record deinit ----------------------------------------------- */
 
+/*
+ * Call on_unload, clean up the ctx, close the library, and zero the record.
+ *
+ * manager  Owning plugin manager (unused but kept for symmetry).
+ * record   Plugin record to deinitialise in place.
+ */
 static void sol_plugin_record_deinit(SolPluginManager *manager,
                                       SolPluginRecord  *record)
 {
@@ -275,6 +300,19 @@ static bool sol_plugin_append(SolPluginManager *manager,
 
 /* Build a record from a SolPluginAPI and optional library handle,
  * allocate a ctx, call on_load.  Returns true on success. */
+/*
+ * Allocate a plugin record, call on_load, and append it to the manager.
+ *
+ * Handles all failure paths by calling on_unload (if on_load succeeded),
+ * cleaning up the ctx, and closing the library before returning false.
+ *
+ * manager         Plugin manager to append to.
+ * api             Fully filled SolPluginAPI descriptor.
+ * library_handle  dlopen handle; NULL for static plugins.
+ * is_dynamic      Whether this is a dynamically loaded library.
+ * path            Source path of the library; NULL for static plugins.
+ * Returns         true if the plugin was loaded and appended successfully.
+ */
 static bool sol_plugin_finish_load(SolPluginManager *manager,
                                     SolPluginAPI     *api,
                                     void             *library_handle,
@@ -360,6 +398,7 @@ static bool sol_plugin_finish_load(SolPluginManager *manager,
 /* Manager lifecycle                                                   */
 /* ================================================================== */
 
+/* Return a SolPluginManagerConfig populated with sensible defaults. */
 SolPluginManagerConfig sol_plugin_manager_config_default(void)
 {
     SolPluginManagerConfig cfg;
@@ -368,6 +407,13 @@ SolPluginManagerConfig sol_plugin_manager_config_default(void)
     return cfg;
 }
 
+/*
+ * Allocate and initialise a plugin manager wired to the given system manager.
+ *
+ * systems  System manager providing event bus, input, jobs, and buffer systems.
+ * config   Configuration; pass NULL to use defaults.
+ * Returns  Heap-allocated plugin manager, or NULL on OOM.
+ */
 SolPluginManager *sol_plugin_manager_create(
     SolSystemManager             *systems,
     const SolPluginManagerConfig *config)
@@ -396,6 +442,7 @@ SolPluginManager *sol_plugin_manager_create(
     return m;
 }
 
+/* Unload all plugins, then free the plugin manager. */
 void sol_plugin_manager_destroy(SolPluginManager *manager)
 {
     if (!manager) return;
@@ -406,11 +453,13 @@ void sol_plugin_manager_destroy(SolPluginManager *manager)
     free(manager);
 }
 
+/* Attach a UI system so plugins can register commands and status segments. */
 void sol_plugin_manager_attach_ui(SolPluginManager *manager, SolUISystem *ui)
 {
     if (manager) manager->ui = ui;
 }
 
+/* Attach a syntax registry so plugins can register tree-sitter languages. */
 void sol_plugin_manager_attach_syntax_registry(SolPluginManager  *manager,
                                                 SolSyntaxRegistry *registry)
 {
@@ -421,6 +470,13 @@ void sol_plugin_manager_attach_syntax_registry(SolPluginManager  *manager,
 /* Loading — single plugin                                             */
 /* ================================================================== */
 
+/*
+ * Register a statically-linked plugin (no dynamic library involved).
+ *
+ * manager  Plugin manager to register with.
+ * api      Fully populated plugin descriptor.
+ * Returns  true on success.
+ */
 bool sol_plugin_manager_register_static(SolPluginManager   *manager,
                                          const SolPluginAPI *api)
 {
@@ -430,6 +486,16 @@ bool sol_plugin_manager_register_static(SolPluginManager   *manager,
     return sol_plugin_finish_load(manager, &copy, NULL, false, NULL);
 }
 
+/*
+ * Dynamically load a single plugin from a shared library at path.
+ *
+ * Opens the library, calls sol_plugin_query to obtain the descriptor, then
+ * invokes on_load. Prints errors to stderr on failure.
+ *
+ * manager  Plugin manager to load into.
+ * path     File system path to the shared library.
+ * Returns  true if the plugin was loaded and registered successfully.
+ */
 bool sol_plugin_manager_load(SolPluginManager *manager, const char *path)
 {
     if (!manager || !path || !*path) return false;
@@ -478,7 +544,19 @@ typedef struct SolPluginCandidate {
     uint8_t       colour;   /* 0=white, 1=grey, 2=black (DFS) */
 } SolPluginCandidate;
 
-/* DFS topological sort. Returns false on cycle. */
+/*
+ * DFS visitor for topological sort; returns false when a cycle is detected.
+ *
+ * Uses three-colour marking: white (0) = unvisited, grey (1) = in-progress,
+ * black (2) = finished. Appends to order in post-order (dependencies first).
+ *
+ * cands        Candidate array.
+ * ncands       Number of candidates.
+ * idx          Index of the node to visit.
+ * order        Output array that receives sorted indices.
+ * order_count  Running count of entries written to order.
+ * Returns      true on success, false if a back-edge (cycle) is found.
+ */
 static bool topo_visit(SolPluginCandidate *cands, size_t ncands,
                         int idx, int *order, size_t *order_count)
 {
@@ -514,6 +592,17 @@ static bool topo_visit(SolPluginCandidate *cands, size_t ncands,
     return true;
 }
 
+/*
+ * Scan a directory for plugin libraries and load them in dependency order.
+ *
+ * Phase 1: opens each matching library and calls sol_plugin_query.
+ * Phase 2: topologically sorts candidates by their after[] dependencies.
+ * Phase 3: calls on_load for each candidate in sorted order.
+ *
+ * manager         Plugin manager to load into.
+ * directory_path  Directory to scan; NULL uses the manager's default directory.
+ * Returns         Number of plugins successfully loaded.
+ */
 size_t sol_plugin_manager_load_directory(SolPluginManager *manager,
                                           const char       *directory_path)
 {
@@ -646,6 +735,16 @@ size_t sol_plugin_manager_load_directory(SolPluginManager *manager,
 /* Unloading / reloading                                               */
 /* ================================================================== */
 
+/*
+ * Unload a single plugin identified by plugin_id.
+ *
+ * Removes the record from the manager array, then calls on_unload and
+ * performs full cleanup outside the lock.
+ *
+ * manager    Plugin manager.
+ * plugin_id  Id of the plugin to unload.
+ * Returns    true if the plugin was found and unloaded.
+ */
 bool sol_plugin_manager_unload(SolPluginManager *manager, const char *plugin_id)
 {
     if (!manager || !plugin_id || !*plugin_id) return false;
@@ -671,6 +770,12 @@ bool sol_plugin_manager_unload(SolPluginManager *manager, const char *plugin_id)
     return true;
 }
 
+/*
+ * Unload all registered plugins in reverse registration order.
+ *
+ * manager  Plugin manager to drain.
+ * Returns  Number of plugins successfully unloaded.
+ */
 size_t sol_plugin_manager_unload_all(SolPluginManager *manager)
 {
     if (!manager) return 0u;
@@ -688,6 +793,16 @@ size_t sol_plugin_manager_unload_all(SolPluginManager *manager)
     return unloaded;
 }
 
+/*
+ * Unload a plugin and reload it from its original library path.
+ *
+ * Only works for dynamically-loaded plugins. Fails with an error to stderr
+ * if the plugin is static or not found.
+ *
+ * manager    Plugin manager.
+ * plugin_id  Id of the plugin to reload.
+ * Returns    true if the plugin was successfully unloaded and reloaded.
+ */
 bool sol_plugin_manager_reload(SolPluginManager *manager, const char *plugin_id)
 {
     if (!manager || !plugin_id || !*plugin_id) return false;
@@ -719,6 +834,7 @@ bool sol_plugin_manager_reload(SolPluginManager *manager, const char *plugin_id)
     return ok;
 }
 
+/* Return the number of currently registered plugins (0 if manager is NULL). */
 size_t sol_plugin_manager_count(SolPluginManager *manager)
 {
     if (!manager) return 0u;
@@ -728,6 +844,14 @@ size_t sol_plugin_manager_count(SolPluginManager *manager)
     return n;
 }
 
+/*
+ * Fill out_info with metadata for the plugin at the given index.
+ *
+ * manager   Plugin manager to query.
+ * index     Zero-based plugin index.
+ * out_info  Receives id, display_name, version, path, is_dynamic, enabled.
+ * Returns   true if index is valid and out_info was filled.
+ */
 bool sol_plugin_manager_get_info_at(SolPluginManager *manager,
                                      size_t            index,
                                      SolPluginInfo    *out_info)
@@ -749,6 +873,16 @@ bool sol_plugin_manager_get_info_at(SolPluginManager *manager,
     return true;
 }
 
+/*
+ * Disable a plugin without unloading its library record.
+ *
+ * Calls on_unload and releases all tracked resources, but keeps the record so
+ * the plugin can later be re-enabled with sol_plugin_manager_enable.
+ *
+ * manager    Plugin manager.
+ * plugin_id  Id of the plugin to disable.
+ * Returns    true if the plugin was found and is now disabled.
+ */
 bool sol_plugin_manager_disable(SolPluginManager *manager, const char *plugin_id)
 {
     if (!manager || !plugin_id || !*plugin_id) return false;
@@ -778,6 +912,13 @@ bool sol_plugin_manager_disable(SolPluginManager *manager, const char *plugin_id
     return true;
 }
 
+/*
+ * Re-enable a previously disabled plugin by calling on_load again.
+ *
+ * manager    Plugin manager.
+ * plugin_id  Id of the plugin to enable.
+ * Returns    true if the plugin was found, was disabled, and on_load succeeded.
+ */
 bool sol_plugin_manager_enable(SolPluginManager *manager, const char *plugin_id)
 {
     if (!manager || !plugin_id || !*plugin_id) return false;
@@ -827,31 +968,37 @@ bool sol_plugin_manager_enable(SolPluginManager *manager, const char *plugin_id)
 /* SolPluginCtx — subsystem accessors                                  */
 /* ================================================================== */
 
+/* Return the system manager associated with this plugin context. */
 SolSystemManager *sol_plugin_systems(SolPluginCtx *ctx)
 {
     return ctx ? ctx->manager->systems : NULL;
 }
 
+/* Return the global event bus accessible from this plugin context. */
 SolEventBus *sol_plugin_event_bus(SolPluginCtx *ctx)
 {
     return ctx ? sol_system_events(ctx->manager->systems) : NULL;
 }
 
+/* Return the buffer system accessible from this plugin context. */
 SolBufferSystem *sol_plugin_buffers(SolPluginCtx *ctx)
 {
     return ctx ? sol_system_buffers(ctx->manager->systems) : NULL;
 }
 
+/* Return the job system accessible from this plugin context. */
 SolJobSystem *sol_plugin_jobs(SolPluginCtx *ctx)
 {
     return ctx ? sol_system_jobs(ctx->manager->systems) : NULL;
 }
 
+/* Return the input system accessible from this plugin context. */
 SolInputSystem *sol_plugin_input(SolPluginCtx *ctx)
 {
     return ctx ? sol_system_input(ctx->manager->systems) : NULL;
 }
 
+/* Return the UI system: checks the cached pointer first, then the service registry. */
 SolUISystem *sol_plugin_ui(SolPluginCtx *ctx)
 {
     if (!ctx) return NULL;
@@ -863,21 +1010,30 @@ SolUISystem *sol_plugin_ui(SolPluginCtx *ctx)
 /* SolPluginCtx — metadata                                             */
 /* ================================================================== */
 
+/* Return the plugin's id string, or NULL if ctx is NULL. */
 const char *sol_plugin_id(const SolPluginCtx *ctx)
 {
     return ctx ? ctx->id : NULL;
 }
 
+/* Return the plugin's human-readable display name, or NULL if ctx is NULL. */
 const char *sol_plugin_display_name(const SolPluginCtx *ctx)
 {
     return ctx ? ctx->display_name : NULL;
 }
 
+/* Return the plugin's version string, or NULL if ctx is NULL. */
 const char *sol_plugin_version(const SolPluginCtx *ctx)
 {
     return ctx ? ctx->version : NULL;
 }
 
+/*
+ * Print a formatted log message prefixed with the plugin id to stderr.
+ *
+ * ctx  Plugin context supplying the id prefix.
+ * fmt  printf-style format string.
+ */
 void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
 {
     if (!ctx || !fmt) return;
@@ -893,6 +1049,15 @@ void sol_plugin_log(SolPluginCtx *ctx, const char *fmt, ...)
 /* SolPluginCtx — event subscriptions                                  */
 /* ================================================================== */
 
+/*
+ * Subscribe to an event and track the token for automatic cleanup on unload.
+ *
+ * ctx         Plugin context.
+ * event_name  Event name string.
+ * handler     Callback invoked when the event fires.
+ * user_data   Opaque argument forwarded to the handler.
+ * Returns     Subscription token, or 0 on failure.
+ */
 SolSubscriptionToken sol_plugin_subscribe(SolPluginCtx    *ctx,
                                            const char      *event_name,
                                            SolEventHandler  handler,
@@ -916,6 +1081,7 @@ SolSubscriptionToken sol_plugin_subscribe(SolPluginCtx    *ctx,
     return tok;
 }
 
+/* Cancel a specific subscription and remove its token from the tracking list. */
 void sol_plugin_unsubscribe(SolPluginCtx *ctx, SolSubscriptionToken token)
 {
     if (!ctx || !token) return;
@@ -933,6 +1099,13 @@ void sol_plugin_unsubscribe(SolPluginCtx *ctx, SolSubscriptionToken token)
 /* SolPluginCtx — command registration                                 */
 /* ================================================================== */
 
+/*
+ * Register a UI command flow and track the action name for auto-cleanup.
+ *
+ * ctx   Plugin context.
+ * desc  Command descriptor (action name, label, chord, callback).
+ * Returns true on success.
+ */
 bool sol_plugin_register_command(SolPluginCtx               *ctx,
                                    const SolPluginCommandDesc *desc)
 {
@@ -965,6 +1138,7 @@ bool sol_plugin_register_command(SolPluginCtx               *ctx,
     return true;
 }
 
+/* Unregister a command flow and remove it from the plugin's tracking list. */
 void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action)
 {
     if (!ctx || !action) return;
@@ -986,6 +1160,13 @@ void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action)
 /* SolPluginCtx — key binding                                          */
 /* ================================================================== */
 
+/*
+ * Register a key binding and track the token for automatic cleanup on unload.
+ *
+ * ctx   Plugin context.
+ * desc  Binding descriptor (key, modifiers, callback, etc.).
+ * Returns Non-zero token on success, 0 on failure.
+ */
 SolInputActionToken sol_plugin_bind_key(SolPluginCtx              *ctx,
                                          const SolInputBindingDesc *desc)
 {
@@ -1002,6 +1183,7 @@ SolInputActionToken sol_plugin_bind_key(SolPluginCtx              *ctx,
     return tok;
 }
 
+/* Remove a key binding and delete its token from the plugin's tracking list. */
 void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token)
 {
     if (!ctx || !token) return;
@@ -1019,6 +1201,14 @@ void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token)
 /* SolPluginCtx — status bar segments                                  */
 /* ================================================================== */
 
+/*
+ * Add a status bar segment and track its token for automatic cleanup on unload.
+ *
+ * ctx          Plugin context.
+ * text         Initial display text; NULL is treated as an empty string.
+ * style_class  CSS-like style class applied to the segment; may be NULL.
+ * Returns      Token identifying the segment, or SOL_PLUGIN_STATUS_TOKEN_INVALID on failure.
+ */
 SolPluginStatusToken sol_plugin_add_status_segment(SolPluginCtx *ctx,
                                                     const char   *text,
                                                     const char   *style_class)

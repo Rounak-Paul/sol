@@ -34,6 +34,7 @@
 #if defined(_WIN32)
 static char g_sol_dl_error[512];
 
+/* Copy a WIN32_FIND_DATAA into the iterator's internal storage for safe name access. */
 static void sol_platform_copy_find_data(SolDirectoryIter *iter, const WIN32_FIND_DATAA *data)
 {
     iter->find_data.dwFileAttributes = data->dwFileAttributes;
@@ -42,6 +43,7 @@ static void sol_platform_copy_find_data(SolDirectoryIter *iter, const WIN32_FIND
 }
 #endif
 
+/* Return the primary path separator character for the current platform. */
 char sol_platform_path_separator(void)
 {
 #if defined(_WIN32)
@@ -51,11 +53,21 @@ char sol_platform_path_separator(void)
 #endif
 }
 
+/* Return true if c is a path separator ('/' or '\\'). */
 bool sol_platform_is_path_separator(char c)
 {
     return c == '/' || c == '\\';
 }
 
+/*
+ * Join two path components into a new heap-allocated string.
+ *
+ * Inserts a separator between a and b only if a does not already end with one.
+ *
+ * a        Left-hand path segment.
+ * b        Right-hand path segment.
+ * Returns  Heap-allocated joined path, or NULL on OOM or NULL input.
+ */
 char *sol_platform_path_join(const char *a, const char *b)
 {
     if (!a || !b) {
@@ -81,6 +93,14 @@ char *sol_platform_path_join(const char *a, const char *b)
     return out;
 }
 
+/*
+ * Return a pointer to the final path component (filename) within path.
+ *
+ * The returned pointer points into the original string; no allocation is made.
+ *
+ * path     Null-terminated path string.
+ * Returns  Pointer to the basename within path, or "" for NULL/empty input.
+ */
 const char *sol_platform_basename(const char *path)
 {
     if (!path || *path == '\0') {
@@ -96,6 +116,13 @@ const char *sol_platform_basename(const char *path)
     return base;
 }
 
+/*
+ * Write the current working directory path into buffer.
+ *
+ * buffer       Destination buffer.
+ * buffer_size  Size of buffer in bytes.
+ * Returns      true on success.
+ */
 bool sol_platform_get_cwd(char *buffer, size_t buffer_size)
 {
     if (!buffer || buffer_size == 0u) {
@@ -109,6 +136,16 @@ bool sol_platform_get_cwd(char *buffer, size_t buffer_size)
 #endif
 }
 
+/*
+ * Write the absolute path of the running executable into buffer.
+ *
+ * Uses platform-specific APIs (GetModuleFileName, _NSGetExecutablePath,
+ * /proc/self/exe) to resolve the path.
+ *
+ * buffer       Destination buffer.
+ * buffer_size  Size of buffer in bytes.
+ * Returns      true on success; false if the path exceeds buffer_size.
+ */
 bool sol_platform_get_executable_path(char *buffer, size_t buffer_size)
 {
     if (!buffer || buffer_size == 0u) {
@@ -145,6 +182,12 @@ bool sol_platform_get_executable_path(char *buffer, size_t buffer_size)
 #endif
 }
 
+/*
+ * Return a heap-allocated path to Sol's per-user configuration directory.
+ *
+ * On POSIX this is $HOME/.sol; on Windows it is %APPDATA%\sol (falling back to
+ * %USERPROFILE%\sol). Returns NULL if the home directory cannot be determined.
+ */
 char *sol_platform_config_home_dir(void)
 {
 #if defined(_WIN32)
@@ -165,6 +208,13 @@ char *sol_platform_config_home_dir(void)
     return sol_platform_path_join(home, name);
 }
 
+/*
+ * Query metadata for a filesystem path.
+ *
+ * path      Path to query.
+ * out_info  Receives existence, type (directory/regular), and size.
+ * Returns   true if the path exists and was queried successfully.
+ */
 bool sol_platform_get_path_info(const char *path, SolPathInfo *out_info)
 {
     if (!path || !out_info) {
@@ -198,6 +248,14 @@ bool sol_platform_get_path_info(const char *path, SolPathInfo *out_info)
 #endif
 }
 
+/*
+ * Create a directory and all missing parent directories.
+ *
+ * Behaves like mkdir -p: succeeds silently if the directory already exists.
+ *
+ * path    Directory path to create.
+ * Returns true on success (including if the directory already exists).
+ */
 bool sol_platform_mkdir_p(const char *path)
 {
     if (!path || *path == '\0') {
@@ -244,6 +302,13 @@ bool sol_platform_mkdir_p(const char *path)
 #undef SOL_MKDIR
 }
 
+/*
+ * Create an empty file at path, optionally failing if it already exists.
+ *
+ * path            Path of the file to create.
+ * fail_if_exists  If true, return false when the file already exists.
+ * Returns         true on success.
+ */
 bool sol_platform_create_empty_file(const char *path, bool fail_if_exists)
 {
     if (!path || *path == '\0') {
@@ -273,6 +338,7 @@ bool sol_platform_create_empty_file(const char *path, bool fail_if_exists)
 #endif
 }
 
+/* Return true if path represents a filesystem root (e.g. "/" or "C:\"). */
 static bool sol_platform_is_root_path(const char *path)
 {
     if (!path || path[0] == '\0') {
@@ -293,6 +359,15 @@ static bool sol_platform_is_root_path(const char *path)
     return false;
 }
 
+/*
+ * Recursively delete path and all its contents.
+ *
+ * Refuses to operate on filesystem roots. For directories, iterates children
+ * and recurses before removing the directory itself.
+ *
+ * path    Path to remove.
+ * Returns true if everything under path was deleted successfully.
+ */
 bool sol_platform_remove_path_recursive(const char *path)
 {
     if (sol_platform_is_root_path(path)) {
@@ -342,6 +417,15 @@ bool sol_platform_remove_path_recursive(const char *path)
 #endif
 }
 
+/*
+ * Copy a single file from source_path to dest_path using buffered I/O.
+ *
+ * Removes the incomplete destination file on write failure.
+ *
+ * source_path  Path of the file to copy.
+ * dest_path    Destination path.
+ * Returns      true on success.
+ */
 static bool sol_platform_copy_file(const char *source_path, const char *dest_path)
 {
     FILE *src = fopen(source_path, "rb");
@@ -385,6 +469,16 @@ static bool sol_platform_copy_file(const char *source_path, const char *dest_pat
     return ok;
 }
 
+/*
+ * Recursively copy source_path to dest_path.
+ *
+ * For directories, creates dest_path and copies each child. On partial failure
+ * the already-created dest_path is removed before returning false.
+ *
+ * source_path  Source file or directory.
+ * dest_path    Destination path.
+ * Returns      true on success.
+ */
 bool sol_platform_copy_path_recursive(const char *source_path, const char *dest_path)
 {
     if (!source_path || !dest_path || source_path[0] == '\0' ||
@@ -429,6 +523,16 @@ bool sol_platform_copy_path_recursive(const char *source_path, const char *dest_
     return ok;
 }
 
+/*
+ * Move source_path to dest_path, falling back to copy-then-delete if rename fails.
+ *
+ * On copy-fallback failure the incomplete destination is removed before
+ * returning false.
+ *
+ * source_path  Path to move.
+ * dest_path    Destination path.
+ * Returns      true on success.
+ */
 bool sol_platform_move_path(const char *source_path, const char *dest_path)
 {
     if (!source_path || !dest_path || source_path[0] == '\0' ||
@@ -450,6 +554,7 @@ bool sol_platform_move_path(const char *source_path, const char *dest_path)
     return true;
 }
 
+/* Return the number of logical CPU cores available (at least 1). */
 uint32_t sol_platform_cpu_count(void)
 {
 #if defined(_WIN32)
@@ -467,6 +572,7 @@ uint32_t sol_platform_cpu_count(void)
 #endif
 }
 
+/* Return the current monotonic clock value in nanoseconds. */
 uint64_t sol_platform_now_monotonic_ns(void)
 {
 #if defined(_WIN32)
@@ -486,6 +592,7 @@ uint64_t sol_platform_now_monotonic_ns(void)
 }
 
 #if defined(_WIN32)
+/* Capture the last Windows error as a human-readable string in g_sol_dl_error. */
 static void sol_platform_set_dl_error(void)
 {
     DWORD err = GetLastError();
@@ -510,6 +617,12 @@ static void sol_platform_set_dl_error(void)
 }
 #endif
 
+/*
+ * Load a dynamic library from path.
+ *
+ * path    Path to the shared library.
+ * Returns Opaque library handle, or NULL on failure.
+ */
 void *sol_platform_library_open(const char *path)
 {
 #if defined(_WIN32)
@@ -525,6 +638,13 @@ void *sol_platform_library_open(const char *path)
 #endif
 }
 
+/*
+ * Look up an exported symbol in a loaded library.
+ *
+ * library  Handle returned by sol_platform_library_open.
+ * symbol   Name of the symbol to resolve.
+ * Returns  Pointer to the symbol, or NULL if not found.
+ */
 void *sol_platform_library_symbol(void *library, const char *symbol)
 {
 #if defined(_WIN32)
@@ -540,6 +660,12 @@ void *sol_platform_library_symbol(void *library, const char *symbol)
 #endif
 }
 
+/*
+ * Unload a dynamic library.
+ *
+ * library  Handle returned by sol_platform_library_open.
+ * Returns  true on success.
+ */
 bool sol_platform_library_close(void *library)
 {
 #if defined(_WIN32)
@@ -553,6 +679,7 @@ bool sol_platform_library_close(void *library)
 #endif
 }
 
+/* Return the last dynamic-library error string, or NULL if there is none. */
 const char *sol_platform_library_last_error(void)
 {
 #if defined(_WIN32)
@@ -562,6 +689,7 @@ const char *sol_platform_library_last_error(void)
 #endif
 }
 
+/* Return the platform's dynamic library file extension (".dll", ".dylib", or ".so"). */
 const char *sol_platform_dynamic_library_extension(void)
 {
 #if defined(_WIN32)
@@ -573,6 +701,16 @@ const char *sol_platform_dynamic_library_extension(void)
 #endif
 }
 
+/*
+ * Open a directory for iteration.
+ *
+ * Initialises iter so subsequent calls to sol_platform_dir_next yield entries.
+ * The caller must call sol_platform_dir_close when done.
+ *
+ * iter  Iterator to initialise.
+ * path  Path of the directory to open.
+ * Returns true on success.
+ */
 bool sol_platform_dir_open(SolDirectoryIter *iter, const char *path)
 {
     if (!iter || !path) {
@@ -620,6 +758,16 @@ bool sol_platform_dir_open(SolDirectoryIter *iter, const char *path)
     return true;
 }
 
+/*
+ * Advance the iterator and fill entry with the next directory item.
+ *
+ * Skips "." and ".." automatically. Falls back to stat(2) to determine the
+ * is_directory flag on platforms that do not expose d_type.
+ *
+ * iter   Iterator opened with sol_platform_dir_open.
+ * entry  Receives the name and type of the next entry.
+ * Returns true if an entry was written, false when the directory is exhausted.
+ */
 bool sol_platform_dir_next(SolDirectoryIter *iter, SolDirectoryEntry *entry)
 {
     if (!iter || !entry) {
@@ -694,6 +842,7 @@ bool sol_platform_dir_next(SolDirectoryIter *iter, SolDirectoryEntry *entry)
 #endif
 }
 
+/* Close a directory iterator and free its resources. Passing NULL is a no-op. */
 void sol_platform_dir_close(SolDirectoryIter *iter)
 {
     if (!iter) {
@@ -716,6 +865,17 @@ void sol_platform_dir_close(SolDirectoryIter *iter)
     memset(iter, 0, sizeof(*iter));
 }
 
+/*
+ * Map a file into memory for read-only access.
+ *
+ * On POSIX uses mmap(MAP_PRIVATE); on Windows uses CreateFileMapping +
+ * MapViewOfFile. Empty files succeed with a NULL data pointer and zero size.
+ *
+ * path       File to map.
+ * out_file   Receives the mapping descriptor on success.
+ * out_error  Optionally receives a static error description on failure.
+ * Returns    true on success.
+ */
 bool sol_platform_map_file_readonly(const char *path, SolMappedFile *out_file, const char **out_error)
 {
     if (out_error) {
@@ -823,6 +983,7 @@ bool sol_platform_map_file_readonly(const char *path, SolMappedFile *out_file, c
 #endif
 }
 
+/* Unmap a file previously mapped with sol_platform_map_file_readonly. */
 void sol_platform_unmap_file(SolMappedFile *mapped_file)
 {
     if (!mapped_file) {

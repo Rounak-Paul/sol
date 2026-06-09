@@ -20,6 +20,13 @@
 
 #include <stdio.h>
 
+/*
+ * Emit the UI nodes for a single which-key suggestion row: a fixed-width key
+ * chip on the left, the action label in the centre, and an optional "+N"
+ * continuation badge on the right.
+ *
+ * s  The suggestion to render.
+ */
 static void render_suggestion_row(SolFlowSuggestion s)
 {
     char key_name[32];
@@ -58,6 +65,14 @@ static void render_suggestion_row(SolFlowSuggestion s)
     ca_div_end(); /* cf-row */
 }
 
+/*
+ * Build and emit the floating which-key panel card into the current Causality
+ * frame.  Collects live suggestions from the flow registry, sizes the card to
+ * fit, and renders either the suggestion list, an empty-state message, or an
+ * error row when the last key had no matching binding.
+ *
+ * ui  The UI system providing flow registry state and window dimensions.
+ */
 void sol_ui_render_command_flow_panel(SolUISystem *ui)
 {
     if (!ui) {

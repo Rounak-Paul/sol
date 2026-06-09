@@ -81,6 +81,7 @@ static SolSettingsWindow *g_sw_windows = NULL;
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
+/* Refresh scale_input_text from the current settings ui_scale value. */
 static void sw_update_scale_label(SolSettingsWindow *w)
 {
     snprintf(w->scale_input_text, sizeof(w->scale_input_text),
@@ -91,6 +92,10 @@ static void sw_update_scale_label(SolSettingsWindow *w)
 /* Button callbacks                                                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Handle a tab-button click: switch to the selected tab and bump sig_rev
+ * to trigger a reactive rebuild of the right panel.
+ */
 static void sw_on_tab_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -105,6 +110,11 @@ static void sw_on_tab_click(Ca_Button *btn, void *user_data)
 /* Input callbacks                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Handle a change to the UI-scale text input.  Parses the value as a float,
+ * applies it to the Causality instance and settings, and persists it to disk.
+ * Silently ignores invalid or out-of-range values.
+ */
 static void sw_on_scale_input_change(Ca_TextInput *inp, void *user_data)
 {
     SolSettingsWindow *w = (SolSettingsWindow *)user_data;
@@ -129,6 +139,12 @@ static void sw_on_scale_input_change(Ca_TextInput *inp, void *user_data)
 /* Content builder                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Emit the content for the Theme settings tab: a section title, divider,
+ * and a scale row with a numeric text input.
+ *
+ * w  The settings window providing settings data and input callbacks.
+ */
 static void sw_render_theme_tab(SolSettingsWindow *w)
 {
     /* ---- Section title ---- */
@@ -166,6 +182,13 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     ca_div_end(); /* sw-setting-row */
 }
 
+/*
+ * Reactive builder for the settings window body div.  Subscribes to sig_rev
+ * and emits the left tab list and the active tab's right panel content.
+ *
+ * div        The body div being rebuilt (unused directly).
+ * user_data  Pointer to the SolSettingsWindow.
+ */
 static void sw_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -217,6 +240,12 @@ static void sw_content_builder(Ca_Div *div, void *user_data)
 /* Window layout                                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Construct the top-level Causality layout for the settings window: a
+ * vertical root div wrapping a single reactive horizontal body div.
+ *
+ * w  The settings window whose layout is initialised.
+ */
 static void sw_build_layout(SolSettingsWindow *w)
 {
     ca_ui_begin(w->window, &(Ca_DivDesc){
@@ -240,6 +269,12 @@ static void sw_build_layout(SolSettingsWindow *w)
 /* Cleanup                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Close the settings window (if still open) and free its memory.
+ * sig_rev is owned by the Causality instance and is not freed here.
+ *
+ * w  The settings window to destroy (safe to call with NULL).
+ */
 static void sw_destroy(SolSettingsWindow *w)
 {
     if (!w) return;
@@ -253,6 +288,14 @@ static void sw_destroy(SolSettingsWindow *w)
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Open the Settings window, creating it if no instance is already open.
+ * Initialises the tab context pool, creates the Causality window, and
+ * registers the window in the global singleton list.
+ *
+ * instance  Causality instance to create the window on.
+ * settings  The settings object to read from and write to.
+ */
 void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings)
 {
     if (!instance || !settings) return;
@@ -295,6 +338,10 @@ void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings)
     g_sw_windows = w;
 }
 
+/*
+ * Advance settings-window lifecycle: walk the global list and destroy any
+ * window whose Causality window has been closed.  Call once per frame.
+ */
 void sol_ui_settings_window_tick(void)
 {
     SolSettingsWindow **link = &g_sw_windows;

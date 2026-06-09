@@ -42,22 +42,32 @@
 extern "C" {
 #endif
 
-/* Resolve the per-user config directory, creating it (and any missing
- * parents) on first use. Returns a freshly-allocated absolute path the
- * caller must free(); NULL on failure (HOME unset, mkdir failed, …). */
+/*
+ * Resolve the per-user config directory, creating it on first use.
+ *
+ * Returns  A freshly-allocated absolute path the caller must free(),
+ *          or NULL on failure (HOME unset, mkdir failed, etc.).
+ */
 char *sol_config_dir(void);
 
-/* Compose `<config_dir>/<filename>`. Ensures the directory exists.
- * Caller frees. NULL on failure. */
+/*
+ * Compose the absolute path to a file inside the config directory.
+ *
+ * filename  Name of the file relative to the config directory.
+ * Returns   A freshly-allocated path the caller must free(), or NULL on failure.
+ */
 char *sol_config_path(const char *filename);
 
-/* Load bindings.conf, registering each binding on `ui` via
- * `sol_ui_system_register_command_flow`. Writes a default file with
- * Sol's built-in bindings when the file is missing.
+/*
+ * Load bindings.conf and register each binding on the UI system.
  *
- * Returns the number of bindings successfully registered, or -1 on a
- * fatal I/O error. Per-line parse errors are reported on stderr and
- * skipped — they do not abort loading. */
+ * Writes a default bindings.conf with Sol's built-in bindings when the
+ * file is missing. Per-line parse errors are reported on stderr and
+ * skipped without aborting the load.
+ *
+ * ui       The UI system to register bindings on.
+ * Returns  Number of bindings successfully registered, or -1 on fatal I/O error.
+ */
 int sol_config_load_bindings(SolUISystem *ui);
 
 #ifdef __cplusplus

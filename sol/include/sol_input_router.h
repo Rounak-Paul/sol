@@ -32,11 +32,28 @@ typedef struct SolBufferSystem SolBufferSystem;
 
 typedef struct SolInputRouter SolInputRouter;
 
+/*
+ * Create the input router and install all causality event handlers.
+ *
+ * Construct AFTER the UI system, input system, and buffer system are up.
+ * The router borrows all four objects — it does not own them.
+ *
+ * instance  The causality instance whose event hooks to install.
+ * ui        The UI system (receives leader-key and resize events).
+ * input     The input system (receives translated SolInputEvents).
+ * buffers   The buffer system (used for text editing dispatch).
+ * Returns   A heap-allocated router, or NULL on failure.
+ */
 SolInputRouter *sol_input_router_create(Ca_Instance     *instance,
                                         SolUISystem     *ui,
                                         SolInputSystem  *input,
                                         SolBufferSystem *buffers);
 
+/*
+ * Destroy the input router and uninstall all causality event handlers.
+ *
+ * Call this BEFORE destroying any of the subsystems it was created with.
+ */
 void sol_input_router_destroy(SolInputRouter *router);
 
 #ifdef __cplusplus

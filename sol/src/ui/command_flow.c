@@ -21,6 +21,13 @@
 /* Internal helpers                                                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Find the registered flow binding for a given action name.
+ *
+ * ui      The UI system to search.
+ * action  The action name string to look up.
+ * Returns Pointer to the matching binding, or NULL if not found.
+ */
 static SolCommandFlowBinding *
 sol_ui_find_flow_by_action(SolUISystem *ui, const char *action)
 {
@@ -36,6 +43,13 @@ sol_ui_find_flow_by_action(SolUISystem *ui, const char *action)
     return NULL;
 }
 
+/*
+ * Copy src into dst using snprintf, safely null-terminating the result.
+ *
+ * dst       Destination buffer.
+ * dst_size  Size of the destination buffer in bytes.
+ * src       Source string to copy (NULL clears dst).
+ */
 static void sol_ui_copy_text(char *dst, size_t dst_size, const char *src)
 {
     if (!dst || dst_size == 0u) {
@@ -48,6 +62,12 @@ static void sol_ui_copy_text(char *dst, size_t dst_size, const char *src)
     snprintf(dst, dst_size, "%s", src);
 }
 
+/*
+ * Return true when two flow bindings share an identical key-sequence chord.
+ *
+ * a  First binding to compare.
+ * b  Second binding to compare.
+ */
 static bool sol_ui_flows_have_same_chord(const SolCommandFlowBinding *a,
                                          const SolCommandFlowBinding *b)
 {
@@ -61,6 +81,12 @@ static bool sol_ui_flows_have_same_chord(const SolCommandFlowBinding *a,
     return true;
 }
 
+/*
+ * Remove the flow binding at the given index, shifting later entries down.
+ *
+ * ui     The UI system owning the bindings array.
+ * index  Zero-based index of the binding to remove.
+ */
 static void sol_ui_remove_flow_at(SolUISystem *ui, size_t index)
 {
     if (!ui || index >= ui->command_flow_count) return;
@@ -72,6 +98,19 @@ static void sol_ui_remove_flow_at(SolUISystem *ui, size_t index)
            sizeof(ui->command_flows[ui->command_flow_count]));
 }
 
+/*
+ * Return the display label for the flow that would be completed by pressing
+ * next_key/next_mods after the given prefix.
+ *
+ * ui               The UI system to search.
+ * prefix           Key codes of the already-pressed prefix steps.
+ * prefix_modifiers Modifier masks for each prefix step.
+ * prefix_length    Number of steps in the prefix.
+ * next_key         The candidate next key code.
+ * next_mods        Modifier mask for the candidate next key.
+ * Returns          The flow's label (or action name), or "More" when the
+ *                  candidate extends into a deeper sub-sequence.
+ */
 static const char *
 sol_ui_flow_label_for_next(const SolUISystem *ui,
                            const SolKeyCode *prefix,
@@ -101,6 +140,18 @@ sol_ui_flow_label_for_next(const SolUISystem *ui,
     return "More";
 }
 
+/*
+ * Count the number of distinct key continuations available one step beyond
+ * the given prefix + next_key combination.
+ *
+ * ui               The UI system to search.
+ * prefix           Key codes of the already-pressed prefix steps.
+ * prefix_modifiers Modifier masks for each prefix step.
+ * prefix_length    Number of steps in the prefix.
+ * next_key         The candidate next key code.
+ * next_mods        Modifier mask for the candidate next key.
+ * Returns          Number of distinct (key, modifiers) pairs that follow.
+ */
 static uint32_t
 sol_ui_flow_continuation_count(const SolUISystem *ui,
                                const SolKeyCode *prefix,
@@ -152,6 +203,12 @@ sol_ui_flow_continuation_count(const SolUISystem *ui,
 /* Key classification + formatting                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Return true when key is one of the eight physical modifier keys.
+ *
+ * key     Key code to test.
+ * Returns true if key is Ctrl, Shift, Alt, or Super (either side).
+ */
 bool sol_ui_is_modifier_key(SolKeyCode key)
 {
     switch (key) {
@@ -169,6 +226,12 @@ bool sol_ui_is_modifier_key(SolKeyCode key)
     }
 }
 
+/*
+ * Return true when key matches the physical key(s) bound to the leader modifier.
+ *
+ * ui   The UI system whose leader_modifier is used for the comparison.
+ * key  Key code to test.
+ */
 bool sol_ui_is_leader_key(const SolUISystem *ui, SolKeyCode key)
 {
     if (!ui) {
@@ -183,6 +246,12 @@ bool sol_ui_is_leader_key(const SolUISystem *ui, SolKeyCode key)
     }
 }
 
+/*
+ * Normalise a key code so that lowercase letters are stored as uppercase.
+ *
+ * key     The raw key code to normalise.
+ * Returns The normalised key code.
+ */
 SolKeyCode sol_ui_normalize_flow_key(SolKeyCode key)
 {
     if (key >= 'a' && key <= 'z') {
@@ -191,6 +260,13 @@ SolKeyCode sol_ui_normalize_flow_key(SolKeyCode key)
     return key;
 }
 
+/*
+ * Write a human-readable name for a single key code into out.
+ *
+ * key       The key code to format.
+ * out       Destination buffer.
+ * out_size  Size of the destination buffer in bytes.
+ */
 void sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size)
 {
     if (!out || out_size == 0u) {
@@ -235,6 +311,16 @@ void sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size)
     snprintf(out, out_size, "K%u", (unsigned int)key);
 }
 
+/*
+ * Format a key chord (modifiers + key) as a human-readable string such as
+ * "Ctrl+N" or "Alt+Shift+f".  Shift is absorbed into letter capitalisation
+ * rather than emitted as an explicit "Shift+" prefix.
+ *
+ * modifiers  The modifier mask held at the time the key was pressed.
+ * key        The (normalised) key code.
+ * out        Destination buffer.
+ * out_size   Size of the destination buffer in bytes.
+ */
 void sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key,
                                 char *out, size_t out_size)
 {
@@ -301,6 +387,12 @@ void sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key,
 /* Leader popup state                                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Clear the leader prefix buffer and reset all associated state fields,
+ * then bump sig_leader_prefix_rev to notify popup-builder subscribers.
+ *
+ * ui  The UI system whose leader state should be reset.
+ */
 static void sol_ui_reset_leader_prefix(SolUISystem *ui)
 {
     if (!ui) {
@@ -319,6 +411,12 @@ static void sol_ui_reset_leader_prefix(SolUISystem *ui)
     sol_ui_bump_u32(ui->sig_leader_prefix_rev);
 }
 
+/*
+ * Activate the leader popup, resetting the prefix buffer and signalling
+ * reactive subscribers to rebuild the popup content.
+ *
+ * ui  The UI system on which to open the popup.
+ */
 void sol_ui_open_leader_popup(SolUISystem *ui)
 {
     if (!ui) {
@@ -332,6 +430,12 @@ void sol_ui_open_leader_popup(SolUISystem *ui)
     ca_signal_set_bool(ui->sig_leader_active, true);
 }
 
+/*
+ * Deactivate the leader popup, clearing all prefix state and notifying
+ * reactive subscribers.
+ *
+ * ui  The UI system on which to close the popup.
+ */
 void sol_ui_close_leader_popup(SolUISystem *ui)
 {
     if (!ui) {
@@ -346,6 +450,15 @@ void sol_ui_close_leader_popup(SolUISystem *ui)
 /* Flow matching                                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Return true when a flow binding's sequence starts with the given prefix.
+ *
+ * flow             The flow binding to test.
+ * prefix           Array of key codes forming the prefix to match.
+ * prefix_modifiers Modifier mask array for each prefix step (may be NULL to
+ *                  skip modifier comparison).
+ * prefix_length    Number of steps in the prefix.
+ */
 bool sol_ui_flow_matches_prefix(const SolCommandFlowBinding *flow,
                                 const SolKeyCode *prefix,
                                 const SolModifierMask *prefix_modifiers,
@@ -365,6 +478,15 @@ bool sol_ui_flow_matches_prefix(const SolCommandFlowBinding *flow,
     return true;
 }
 
+/*
+ * Populate out with the unique next-step suggestions reachable from the
+ * current leader prefix, for use by the which-key popup.
+ *
+ * ui        The UI system providing the flow registry and current prefix.
+ * out       Output array of SolFlowSuggestion to fill.
+ * capacity  Maximum number of suggestions to write into out.
+ * Returns   Number of suggestions written.
+ */
 size_t sol_ui_collect_suggestions(SolUISystem *ui,
                                   SolFlowSuggestion *out, size_t capacity)
 {
@@ -420,6 +542,17 @@ size_t sol_ui_collect_suggestions(SolUISystem *ui,
 /* Public registration API                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Register a new command-flow binding, or update an existing one with the
+ * same action name.  If another binding already owns the same chord it is
+ * replaced, ensuring every chord has exactly one owner.
+ *
+ * ui    The UI system to register into.
+ * desc  Descriptor containing the action name, key sequence, label, and
+ *       optional callback.
+ * Returns true on success, false when the descriptor is invalid or the
+ *         registry is full.
+ */
 bool sol_ui_system_register_command_flow(SolUISystem *ui,
                                          const SolCommandFlowDesc *desc)
 {
@@ -500,6 +633,13 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
     return true;
 }
 
+/*
+ * Remove the flow binding for the given action name from the registry.
+ *
+ * ui      The UI system to modify.
+ * action  The action name whose binding should be removed.
+ * Returns true if the binding was found and removed, false otherwise.
+ */
 bool sol_ui_system_unregister_command_flow(SolUISystem *ui, const char *action)
 {
     if (!ui || !action) {

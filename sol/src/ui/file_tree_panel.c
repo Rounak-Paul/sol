@@ -19,6 +19,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/*
+ * ASCII case-insensitive string comparison.
+ *
+ * Returns Negative, zero, or positive like strcmp.
+ */
 static int sol_ascii_casecmp(const char *a, const char *b)
 {
     while (*a && *b) {
@@ -91,6 +96,14 @@ static const char *tree_file_icon(const char *name, const char **out_style)
 /* Public setters                                                    */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Set the file tree root to the given filesystem path and update explorer
+ * visibility: shows the panel when path is non-NULL, hides it otherwise.
+ *
+ * ui    The UI system whose file tree is updated.
+ * path  Absolute path of the new root directory (NULL clears the tree).
+ * Returns true on success, false when the UI system or tree is unavailable.
+ */
 bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path)
 {
     if (!ui || !ui->file_tree) return false;
@@ -105,6 +118,13 @@ bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path)
     return ok;
 }
 
+/*
+ * Register the callback invoked when a file is opened from the tree panel.
+ *
+ * ui         The UI system to configure.
+ * callback   Function called with the selected file path.
+ * user_data  Opaque pointer forwarded to callback.
+ */
 void sol_ui_system_set_file_open_callback(SolUISystem *ui,
                                           SolUIFileOpenFn callback,
                                           void *user_data)
@@ -118,6 +138,13 @@ void sol_ui_system_set_file_open_callback(SolUISystem *ui,
 /* Click ctx pool                                                    */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Return a pointer to the next available file-tree click context from the
+ * pool, growing it with realloc when necessary.
+ *
+ * ui      The UI system owning the pool.
+ * Returns Pointer to the next free context, or NULL on allocation failure.
+ */
 static SolFileTreeClickCtx *acquire_click_ctx(SolUISystem *ui)
 {
     if (ui->file_tree_click_ctx_count == ui->file_tree_click_ctx_capacity) {
@@ -137,6 +164,11 @@ static SolFileTreeClickCtx *acquire_click_ctx(SolUISystem *ui)
 /* Click handlers                                                    */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Handle a click on a file-tree row.  Toggles directory expansion or invokes
+ * the file-open callback depending on the entry type.  Also notifies the
+ * focus-region callback so the editor panel loses focus.
+ */
 static void on_row_click(Ca_Button *button, void *user_data)
 {
     (void)button;
@@ -166,6 +198,14 @@ static void on_row_click(Ca_Button *button, void *user_data)
 /* Rendering                                                         */
 /* ---------------------------------------------------------------- */
 
+/*
+ * Emit the four-slot Causality button for one file-tree row: indent spacer,
+ * disclosure arrow, file/dir icon, and name label.
+ *
+ * ui         The UI system (provides pool and callbacks).
+ * entry      The file entry to render.
+ * row_index  The entry's index in the visible list (stored in click context).
+ */
 static void render_row(SolUISystem *ui, const SolFileEntry *entry,
                        size_t row_index)
 {
@@ -228,6 +268,14 @@ static void render_row(SolUISystem *ui, const SolFileEntry *entry,
 /* Emits header + rows directly into the current widget context. The
    caller is responsible for opening a styled "tree-panel" container.
    Used as the body of the reactive tree-panel sub-builder. */
+/*
+ * Emit the file-tree panel content (header, root row, and scrollable list)
+ * directly into the current widget context.  Pre-sizes the click-context pool
+ * before the render loop to prevent mid-loop realloc from invalidating
+ * distributed pointers.
+ *
+ * ui  The UI system providing the file tree and context-menu callbacks.
+ */
 void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
 {
     if (!ui || !ui->file_tree || !sol_ui_system_file_tree_visible(ui) ||
@@ -304,6 +352,13 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
    any caller that wants to drop a one-shot panel into a non-reactive
    context (e.g. a dialog). The reactive workspace path uses the body
    variant directly. */
+/*
+ * Standalone variant of the file-tree panel renderer that wraps content in
+ * its own "tree-panel" container div.  Suitable for non-reactive one-shot
+ * contexts; the reactive workspace path calls the body variant directly.
+ *
+ * ui  The UI system providing the file tree.
+ */
 void sol_ui_render_file_tree_panel(SolUISystem *ui)
 {
     if (!ui || !ui->file_tree || !sol_ui_system_file_tree_visible(ui) ||
@@ -326,6 +381,18 @@ void sol_ui_render_file_tree_panel(SolUISystem *ui)
    in top-down order (shallowest first).  Writes at most max_out entries
    into *out_entries[] and the corresponding visible-list index into
    *out_indices[]. */
+/*
+ * Walk the visible tree list backward from the first visible row to collect
+ * ancestor directory entries for the sticky-header overlay.
+ *
+ * tree         The file tree to query.
+ * scroll_y     Current scroll offset in logical pixels.
+ * out_entries  Output array filled with ancestor entry pointers, top-down.
+ * out_indices  Output array filled with the visible-list index for each
+ *              ancestor entry, parallel to out_entries.
+ * max_out      Maximum number of ancestors to collect.
+ * Returns      Number of ancestors found and written (0 when at the top).
+ */
 static int find_sticky_ancestors(SolFileTree *tree, float scroll_y,
                                  const SolFileEntry **out_entries,
                                  size_t *out_indices,
@@ -365,6 +432,7 @@ static int find_sticky_ancestors(SolFileTree *tree, float scroll_y,
     return found;
 }
 
+/* Scroll the tree list to the row position stored in the sticky click context. */
 static void on_sticky_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -375,6 +443,14 @@ static void on_sticky_click(Ca_Button *btn, void *user_data)
 
 /* Render one sticky-header row — same four-child structure as render_row
    (indent + arrow + icon + name) using a button for click-to-scroll. */
+/*
+ * Emit a sticky-header row button with the same four-slot layout as a normal
+ * row (indent, arrow, icon, name).  Clicking scrolls the tree list to reveal
+ * the directory that owns this header.
+ *
+ * entry  The ancestor directory entry to render.
+ * ctx    Click context carrying the target scroll position.
+ */
 static void render_sticky_row(const SolFileEntry *entry, SolStickyClickCtx *ctx)
 {
     ca_btn_begin(&(Ca_BtnDesc){
@@ -402,6 +478,14 @@ static void render_sticky_row(const SolFileEntry *entry, SolStickyClickCtx *ctx)
    Subscribes to sig_tree_scroll (fires on every scroll tick) and
    sig_file_tree_rev (fires on tree structure change).  Only the sticky
    overlay re-runs on scroll — the main workspace content is unaffected. */
+/*
+ * Reactive builder installed on the tree sticky-header host div.  Subscribes
+ * to sig_tree_scroll and sig_file_tree_rev so only the sticky overlay reruns
+ * on scroll events; the main workspace content remains unaffected.
+ *
+ * div        The sticky-header host div (unused directly).
+ * user_data  Pointer to the SolUISystem.
+ */
 void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data)
 {
     (void)div;

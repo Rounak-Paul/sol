@@ -8,6 +8,14 @@
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * Set the status-bar message, avoiding a redundant invalidation when the
+ * kind and text are unchanged.
+ *
+ * ui    The UI system whose status bar is updated.
+ * kind  Badge kind character (SOL_UI_STATUS_KIND_*).
+ * text  Message string to display (NULL clears the bar).
+ */
 void sol_ui_set_status_text(SolUISystem *ui, char kind, const char *text)
 {
     if (!ui) {
@@ -34,6 +42,14 @@ void sol_ui_set_status_text(SolUISystem *ui, char kind, const char *text)
     }
 }
 
+/*
+ * Format a single key chord and display it in the status bar with the KEY
+ * badge kind.
+ *
+ * ui         The UI system whose status bar is updated.
+ * key        The key code to format.
+ * modifiers  Active modifier mask.
+ */
 void sol_ui_set_status_key(SolUISystem *ui, SolKeyCode key, SolModifierMask modifiers)
 {
     char buf[48];
@@ -41,6 +57,17 @@ void sol_ui_set_status_key(SolUISystem *ui, SolKeyCode key, SolModifierMask modi
     sol_ui_set_status_text(ui, SOL_UI_STATUS_KIND_KEY, buf);
 }
 
+/*
+ * Format a multi-step key sequence as space-separated key names and display
+ * it in the status bar with the COMMAND badge kind.
+ *
+ * ui              The UI system whose status bar is updated.
+ * sequence        Array of key codes for each sequence step.
+ * length          Number of steps in the sequence.
+ * step_modifiers  Per-step modifier masks (may be NULL; used for intermediate
+ *                 steps only).
+ * last_modifiers  Live modifier mask applied to the final step.
+ */
 void sol_ui_set_status_sequence(SolUISystem *ui,
                                 const SolKeyCode *sequence, size_t length,
                                 const SolModifierMask *step_modifiers,
@@ -80,6 +107,12 @@ void sol_ui_set_status_sequence(SolUISystem *ui,
     sol_ui_set_status_text(ui, SOL_UI_STATUS_KIND_COMMAND, text);
 }
 
+/*
+ * Map a status-bar kind character to its CSS badge style class.
+ *
+ * kind    SOL_UI_STATUS_KIND_* character.
+ * Returns The CSS class string for the badge div.
+ */
 static const char *sol_ui_status_badge_style(char kind)
 {
     switch (kind) {
@@ -92,6 +125,13 @@ static const char *sol_ui_status_badge_style(char kind)
     }
 }
 
+/*
+ * Emit the Causality nodes for the entire status bar: the left section with
+ * the optional kind badge and message text, and the right section with any
+ * active plugin status segments.
+ *
+ * ui  The UI system providing status text and plugin segment data.
+ */
 void sol_ui_render_status_bar(SolUISystem *ui)
 {
     if (!ui) {
@@ -158,6 +198,16 @@ void sol_ui_render_status_bar(SolUISystem *ui)
 /* Plugin status segment API                                           */
 /* ================================================================== */
 
+/*
+ * Allocate a new plugin status segment with the given text and optional CSS
+ * style class, and invalidate the status bar.
+ *
+ * ui           The UI system owning the segment array.
+ * text         Initial display text for the segment.
+ * style_class  Optional CSS class (NULL uses the default segment style).
+ * Returns      A unique SolUIStatusToken to identify this segment, or
+ *              SOL_UI_STATUS_TOKEN_INVALID when the array is full.
+ */
 SolUIStatusToken sol_ui_system_add_status_segment(SolUISystem *ui,
                                                    const char  *text,
                                                    const char  *style_class)
@@ -185,6 +235,14 @@ SolUIStatusToken sol_ui_system_add_status_segment(SolUISystem *ui,
     return SOL_UI_STATUS_TOKEN_INVALID;
 }
 
+/*
+ * Update the display text of an existing plugin status segment and
+ * invalidate the status bar.
+ *
+ * ui     The UI system owning the segment array.
+ * token  Token returned by sol_ui_system_add_status_segment.
+ * text   New display text (NULL clears the segment text).
+ */
 void sol_ui_system_update_status_segment(SolUISystem     *ui,
                                           SolUIStatusToken token,
                                           const char      *text)
@@ -204,6 +262,12 @@ void sol_ui_system_update_status_segment(SolUISystem     *ui,
     }
 }
 
+/*
+ * Remove a plugin status segment by token and invalidate the status bar.
+ *
+ * ui     The UI system owning the segment array.
+ * token  Token of the segment to remove.
+ */
 void sol_ui_system_remove_status_segment(SolUISystem     *ui,
                                           SolUIStatusToken token)
 {

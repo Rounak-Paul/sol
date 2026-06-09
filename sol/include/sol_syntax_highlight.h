@@ -26,8 +26,11 @@ extern "C" {
 /* Forward declarations — callers do not need tree_sitter/api.h. */
 typedef struct SolRope SolRope;
 
-/* A single colored byte range within the document.
- * `css_class` points to a string literal — never freed. */
+/*
+ * A single colored byte range within the document.
+ *
+ * css_class points to a string literal owned by the registry — never freed.
+ */
 typedef struct SolSyntaxSpan {
     uint32_t    start_byte;
     uint32_t    end_byte;
@@ -38,28 +41,46 @@ typedef struct SolSyntaxHighlighter SolSyntaxHighlighter;
 
 /* ---- Lifecycle ---------------------------------------------------- */
 
-/* Create a highlighter for the given TSLanguage* (passed as void* to
- * keep this header tree-sitter-free).  `query_text` is the raw text of
- * a highlights.scm query to compile; pass NULL to fall back to the
- * built-in node-type heuristic walker.
- * Returns NULL on allocation failure or if language is NULL. */
+/*
+ * Create a syntax highlighter for a tree-sitter language.
+ *
+ * language    const TSLanguage* cast to const void*.
+ * query_text  Raw text of a highlights.scm query to compile, or NULL to use
+ *             the built-in node-type heuristic walker.
+ * Returns     A heap-allocated highlighter, or NULL on failure or if language is NULL.
+ */
 SolSyntaxHighlighter *sol_syntax_highlight_create(const void *language,
                                                    const char *query_text);
+
+/* Destroy the highlighter and free its internal tree and span table. */
 void                  sol_syntax_highlight_destroy(SolSyntaxHighlighter *h);
 
 /* ---- Parsing ------------------------------------------------------ */
 
-/* (Re)parse the rope content and rebuild the internal span table.
- * Call this after the rope has been mutated.
- * No-op when h or rope is NULL. */
+/*
+ * Reparse the rope content and rebuild the internal span table.
+ *
+ * Call this after the rope has been mutated. No-op when h or rope is NULL.
+ *
+ * h     The highlighter.
+ * rope  The current rope content to parse.
+ */
 void sol_syntax_highlight_reparse(SolSyntaxHighlighter *h,
                                    const SolRope        *rope);
 
 /* ---- Query -------------------------------------------------------- */
 
-/* Fill `out` with spans that overlap the byte range
- * [line_start_byte, line_end_byte).  Returns the number of spans written,
- * capped at max_out.  Spans are ordered by start_byte. */
+/*
+ * Fill out with syntax spans overlapping a byte range.
+ *
+ * h                The highlighter.
+ * line_start_byte  Inclusive start of the byte range to query.
+ * line_end_byte    Exclusive end of the byte range to query.
+ * out              Output array to fill with overlapping spans.
+ * max_out          Maximum number of spans to write.
+ * Returns          Number of spans written, capped at max_out.
+ *                  Spans are ordered by start_byte.
+ */
 size_t sol_syntax_highlight_spans_for_range(
     const SolSyntaxHighlighter *h,
     uint32_t                    line_start_byte,
@@ -67,12 +88,15 @@ size_t sol_syntax_highlight_spans_for_range(
     SolSyntaxSpan              *out,
     size_t                      max_out);
 
-/* True if the last reparse succeeded and the span table is valid. */
+/* Returns true if the last reparse succeeded and the span table is valid. */
 bool sol_syntax_highlight_is_valid(const SolSyntaxHighlighter *h);
 
-/* Return the TSLanguage* (as void*) this highlighter was created with.
- * Used by the plugin system to find buffers that must be invalidated
- * when the language's owning plugin is unloaded.                     */
+/*
+ * Return the TSLanguage* (as void*) this highlighter was created with.
+ *
+ * Used by the plugin system to invalidate buffers when the language's
+ * owning plugin is unloaded.
+ */
 const void *sol_syntax_highlight_get_language(const SolSyntaxHighlighter *h);
 
 #ifdef __cplusplus

@@ -38,11 +38,18 @@ struct SolEventBus {
     size_t queue_tail;
 };
 
+/* Return the current monotonic time in nanoseconds. */
 static uint64_t sol_now_ns(void)
 {
     return sol_platform_now_monotonic_ns();
 }
 
+/*
+ * Duplicate a string into a heap-allocated buffer.
+ *
+ * value   Source string; NULL is accepted and returns NULL.
+ * Returns Heap-allocated copy, or NULL on OOM or NULL input.
+ */
 static char *sol_strdup(const char *value)
 {
     if (!value) {
@@ -59,6 +66,14 @@ static char *sol_strdup(const char *value)
     return out;
 }
 
+/*
+ * Return a numeric event type: use explicit_type when non-zero, otherwise
+ * hash the name string to derive a type id.
+ *
+ * explicit_type  Pre-computed type id, or 0 to force name-based lookup.
+ * name           Event name string; ignored when explicit_type is non-zero.
+ * Returns        Resolved SolEventType.
+ */
 static SolEventType sol_resolve_type(SolEventType explicit_type, const char *name)
 {
     if (explicit_type != 0u) {
@@ -68,6 +83,13 @@ static SolEventType sol_resolve_type(SolEventType explicit_type, const char *nam
     return sol_event_type_from_name(name);
 }
 
+/*
+ * Grow the subscription array to hold at least min_capacity entries.
+ *
+ * bus           Event bus whose subscription array is grown.
+ * min_capacity  Minimum required capacity.
+ * Returns       true on success or if capacity is already sufficient.
+ */
 static bool sol_event_bus_reserve_subscriptions(SolEventBus *bus, size_t min_capacity)
 {
     if (bus->subscription_capacity >= min_capacity) {
@@ -93,6 +115,16 @@ static bool sol_event_bus_reserve_subscriptions(SolEventBus *bus, size_t min_cap
     return true;
 }
 
+/*
+ * Grow the event queue to hold at least min_capacity entries.
+ *
+ * Copies the existing ring-buffer contents into the larger allocation so the
+ * logical order is preserved.
+ *
+ * bus           Event bus whose queue is grown.
+ * min_capacity  Minimum required capacity.
+ * Returns       true on success or if capacity is already sufficient.
+ */
 static bool sol_event_bus_reserve_queue(SolEventBus *bus, size_t min_capacity)
 {
     if (bus->queue_capacity >= min_capacity) {
@@ -122,6 +154,11 @@ static bool sol_event_bus_reserve_queue(SolEventBus *bus, size_t min_capacity)
     return true;
 }
 
+/*
+ * Remove inactive subscriptions from the array (must be called under lock).
+ *
+ * bus  Event bus to compact.
+ */
 static void sol_event_bus_compact_locked(SolEventBus *bus)
 {
     size_t write = 0u;
@@ -139,6 +176,18 @@ static void sol_event_bus_compact_locked(SolEventBus *bus)
     bus->subscription_count = write;
 }
 
+/*
+ * Dispatch an event synchronously to all matching subscribers.
+ *
+ * Takes a snapshot of the subscriber list under lock, then calls each handler
+ * outside the lock. Stops early if a handler returns true and
+ * SOL_EVENT_FLAG_STOP_ON_HANDLED is set.
+ *
+ * bus     Event bus to dispatch through.
+ * event   Event to deliver.
+ * flags   Dispatch flags (e.g. SOL_EVENT_FLAG_STOP_ON_HANDLED).
+ * Returns Number of handlers invoked.
+ */
 static size_t sol_event_bus_dispatch(SolEventBus *bus, const SolEvent *event, uint32_t flags)
 {
     SolSubscription *snapshot = NULL;
@@ -195,6 +244,7 @@ static size_t sol_event_bus_dispatch(SolEventBus *bus, const SolEvent *event, ui
     return dispatched;
 }
 
+/* Return a SolEventBusConfig populated with sensible defaults. */
 SolEventBusConfig sol_event_bus_config_default(void)
 {
     SolEventBusConfig config;
@@ -203,6 +253,12 @@ SolEventBusConfig sol_event_bus_config_default(void)
     return config;
 }
 
+/*
+ * Allocate and initialise a new event bus.
+ *
+ * config   Configuration; pass NULL to use defaults.
+ * Returns  Heap-allocated bus, or NULL on OOM.
+ */
 SolEventBus *sol_event_bus_create(const SolEventBusConfig *config)
 {
     const SolEventBusConfig effective = config ? *config : sol_event_bus_config_default();
@@ -245,6 +301,14 @@ SolEventBus *sol_event_bus_create(const SolEventBusConfig *config)
     return bus;
 }
 
+/*
+ * Free all resources owned by the event bus.
+ *
+ * Drains and frees any queued events before releasing the bus itself. Passing
+ * NULL is a no-op.
+ *
+ * bus  Event bus to destroy.
+ */
 void sol_event_bus_destroy(SolEventBus *bus)
 {
     if (!bus) {
@@ -263,6 +327,12 @@ void sol_event_bus_destroy(SolEventBus *bus)
     free(bus);
 }
 
+/*
+ * Derive a stable numeric event type from a string name using FNV-1a hashing.
+ *
+ * name     Event name string; NULL or empty returns 0.
+ * Returns  64-bit hash value used as the event type id.
+ */
 SolEventType sol_event_type_from_name(const char *name)
 {
     if (!name || *name == '\0') {
@@ -279,6 +349,16 @@ SolEventType sol_event_type_from_name(const char *name)
     return hash;
 }
 
+/*
+ * Register a handler and return a token that can later cancel the subscription.
+ *
+ * Subscribers are kept sorted by descending priority so higher-priority
+ * handlers always fire first.
+ *
+ * bus      Event bus to register with.
+ * desc     Subscription descriptor (handler, priority, event type/name).
+ * Returns  Non-zero token on success, 0 on failure.
+ */
 SolSubscriptionToken sol_event_bus_subscribe(
     SolEventBus *bus,
     const SolEventSubscriptionDesc *desc
@@ -324,6 +404,13 @@ SolSubscriptionToken sol_event_bus_subscribe(
     return subscription.token;
 }
 
+/*
+ * Cancel a subscription identified by its token.
+ *
+ * bus      Event bus the subscription belongs to.
+ * token    Token returned by sol_event_bus_subscribe.
+ * Returns  true if the subscription was found and removed.
+ */
 bool sol_event_bus_unsubscribe(SolEventBus *bus, SolSubscriptionToken token)
 {
     if (!bus || token == 0u) {
@@ -350,6 +437,13 @@ bool sol_event_bus_unsubscribe(SolEventBus *bus, SolSubscriptionToken token)
     return found;
 }
 
+/*
+ * Publish an event synchronously, invoking all matching handlers immediately.
+ *
+ * bus      Event bus to publish through.
+ * desc     Event descriptor (name/type, payload, sender, flags).
+ * Returns  Number of handlers that were called.
+ */
 size_t sol_event_bus_publish(SolEventBus *bus, const SolEventDesc *desc)
 {
     if (!bus || !desc) {
@@ -367,6 +461,15 @@ size_t sol_event_bus_publish(SolEventBus *bus, const SolEventDesc *desc)
     return sol_event_bus_dispatch(bus, &event, desc->flags);
 }
 
+/*
+ * Enqueue an event for deferred dispatch on the next sol_event_bus_drain call.
+ *
+ * Copies the payload and name so the caller may free them immediately.
+ *
+ * bus      Event bus to post to.
+ * desc     Event descriptor.
+ * Returns  true if the event was enqueued successfully.
+ */
 bool sol_event_bus_post(SolEventBus *bus, const SolEventDesc *desc)
 {
     if (!bus || !desc) {
@@ -419,6 +522,16 @@ bool sol_event_bus_post(SolEventBus *bus, const SolEventDesc *desc)
     return true;
 }
 
+/*
+ * Dispatch queued events, up to max_events (0 means no limit).
+ *
+ * Each event is dequeued under the lock, dispatched outside it, then its
+ * heap-allocated copies are freed.
+ *
+ * bus        Event bus to drain.
+ * max_events Maximum number of events to dispatch; 0 dispatches all.
+ * Returns    Number of events dispatched.
+ */
 size_t sol_event_bus_drain(SolEventBus *bus, size_t max_events)
 {
     if (!bus) {
