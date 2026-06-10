@@ -527,31 +527,35 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     sol_ui_system_window_size(r->ui, &win_w, &win_h);
     if (win_w <= 0 || win_h <= 0) return;
 
-    /* Route vertical scroll to terminal scrollback when the mouse is over the
-       terminal panel, regardless of keyboard focus.  Natural scroll convention:
-       dy > 0 (finger up) moves the view toward older content (view_scroll up). */
+    /* Route vertical scroll to the terminal scrollback when the mouse cursor is
+       over the terminal panel, regardless of keyboard focus.
+       Natural scroll: dy > 0 (finger swipe up) shows older scrollback content. */
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (tmgr && sol_terminal_manager_visible(tmgr) && ev->mouse_scroll.dy != 0.0) {
-        bool over_terminal = false;
-        const float ratio = sol_terminal_manager_ratio(tmgr);
-        const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
-        if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
-            const float term_top = (float)win_h * (1.0f - ratio);
-            over_terminal = (float)r->mouse_y >= term_top;
-        } else {   /* SOL_TERMINAL_POSITION_RIGHT */
-            const float term_left = (float)win_w * (1.0f - ratio);
-            over_terminal = (float)r->mouse_x >= term_left;
-        }
-        if (over_terminal) {
-            SolTerminal *term = sol_terminal_manager_active(tmgr);
-            if (term) {
-                const double raw = ev->mouse_scroll.dy * 3.0;
-                int delta = (raw > 0.0) ? (int)raw : -(int)-raw;
-                if (delta == 0) delta = ev->mouse_scroll.dy > 0.0 ? 1 : -1;
-                sol_terminal_set_view_scroll(term,
-                    sol_terminal_view_scroll(term) + delta);
-                sol_ui_system_terminal_notify(r->ui);
-                return;
+        float bx, by, bw, bh;
+        if (sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) &&
+            bw > 0.0f && bh > 0.0f) {
+            const float ratio = sol_terminal_manager_ratio(tmgr);
+            const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
+            const float mx = (float)r->mouse_x, my = (float)r->mouse_y;
+            bool over_terminal = false;
+            if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
+                const float term_top = by + bh * (1.0f - ratio);
+                over_terminal = my >= term_top && mx >= bx && mx < bx + bw;
+            } else {  /* SOL_TERMINAL_POSITION_RIGHT */
+                const float term_left = bx + bw * (1.0f - ratio);
+                over_terminal = mx >= term_left && my >= by && my < by + bh;
+            }
+            if (over_terminal) {
+                SolTerminal *term = sol_terminal_manager_active(tmgr);
+                if (term) {
+                    int delta = (int)(ev->mouse_scroll.dy * 3.0);
+                    if (delta == 0) delta = ev->mouse_scroll.dy > 0.0 ? 1 : -1;
+                    sol_terminal_set_view_scroll(term,
+                        sol_terminal_view_scroll(term) + delta);
+                    sol_ui_system_terminal_notify(r->ui);
+                    return;
+                }
             }
         }
     }

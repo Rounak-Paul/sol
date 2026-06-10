@@ -1807,9 +1807,6 @@ bool sol_terminal_manager_drain(SolTerminalManager *mgr)
             VtUtf8 u; vt_utf8_reset(&u);
             for (size_t j = 0; j < n; ++j)
                 vt_utf8_feed(term, &u, (uint8_t)local[j]);
-            /* New output always snaps the view to the bottom so the user
-               sees the latest output, matching normal terminal behaviour. */
-            term->view_scroll = 0;
             any_dirty = true;
         }
     }
