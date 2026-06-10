@@ -664,8 +664,85 @@ static void sol_ui_on_panel_resize(float ratio, void *user_data)
     if (ui) ui->tree_panel_ratio = ratio;
 }
 
+static void sol_ui_on_terminal_resize(float ratio, void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (ui && ui->terminal_mgr)
+        sol_terminal_manager_set_ratio(ui->terminal_mgr, 1.0f - ratio);
+}
+
+/* ------------------------------------------------------------------ */
+/* Terminal manager public API (implements sol_ui_system.h contract)   */
+/* ------------------------------------------------------------------ */
+
+void sol_ui_system_set_terminal_manager(SolUISystem *ui, SolTerminalManager *mgr)
+{
+    if (ui) ui->terminal_mgr = mgr;
+}
+
+SolTerminalManager *sol_ui_system_terminal_manager(const SolUISystem *ui)
+{
+    return ui ? ui->terminal_mgr : NULL;
+}
+
+void sol_ui_system_terminal_notify(SolUISystem *ui)
+{
+    if (ui) sol_ui_bump_u32(ui->sig_terminal_rev);
+}
+
 /* ------------------------------------------------------------------ */
 /* Reactive content builder                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Render the buffer pane content and, when visible, wrap it with a terminal
+ * split. Handles both BOTTOM (vertical split) and RIGHT (horizontal split)
+ * terminal positions.  Called from sol_ui_workspace_content_builder.
+ *
+ * ui           The UI system.
+ * term_visible Whether the terminal panel should be shown.
+ */
+static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible)
+{
+    if (!term_visible) {
+        sol_ui_render_global_tab_strip(ui);
+        sol_ui_render_workspace_tree(ui);
+        return;
+    }
+
+    SolTerminalManager *mgr = ui->terminal_mgr;
+    const float term_ratio  = sol_terminal_manager_ratio(mgr);
+    const float buf_ratio   = 1.0f - term_ratio;
+    const int   dir = (sol_terminal_manager_position(mgr) == SOL_TERMINAL_POSITION_BOTTOM)
+                        ? CA_VERTICAL : CA_HORIZONTAL;
+
+    ca_split_begin(&(Ca_SplitDesc){
+        .direction       = dir,
+        .ratio           = buf_ratio,
+        .min_ratio       = 0.20f,
+        .max_ratio       = 0.80f,
+        .bar_size        = 1.0f,
+        .bar_color       = 0x181e2eff,
+        .bar_hover_color = 0x2d3a5aff,
+        .on_resize       = sol_ui_on_terminal_resize,
+        .user_data       = ui,
+    });
+
+    /* First pane: editor buffer area */
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL });
+    sol_ui_render_global_tab_strip(ui);
+    sol_ui_render_workspace_tree(ui);
+    ca_div_end();
+    sol_ui_attach_workspace_context_menu(ui);
+
+    /* Second pane: terminal panel */
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "term-panel" });
+    sol_ui_render_terminal_panel(ui);
+    ca_div_end();   /* term-panel */
+
+    ca_split_end();
+}
+
 /* ------------------------------------------------------------------ */
 
 /*
@@ -689,19 +766,18 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
 
     /* Subscribe this effect to every signal whose state this builder
        reads. Causality re-runs us exactly when one of them changes:
-         - sig_buffer_rev    : the buffer/split tree (auto-bumped by
-                               sol_buffer_*)
-         - sig_file_tree_rev : the file tree contents (auto-bumped by
-                               sol_file_tree_*)
+         - sig_buffer_rev      : the buffer/split tree (auto-bumped by sol_buffer_*)
+         - sig_file_tree_rev   : the file tree contents
          - sig_file_tree_visible : explorer panel visibility
-         - sig_window_rev    : window resize — layout-sensitive
-                               children (split bars, tabs) re-flow. */
+         - sig_window_rev      : window resize
+         - sig_terminal_rev    : terminal cell changes, focus, or visibility */
     (void)ca_signal_get_u32(ui->sig_buffer_rev);
     (void)ca_signal_get_u32(ui->sig_file_tree_rev);
     (void)ca_signal_get_bool(ui->sig_file_tree_visible);
     (void)ca_signal_get_u32(ui->sig_window_rev);
+    (void)ca_signal_get_u32(ui->sig_terminal_rev);
 
-    /* Top region: optional left tree panel + buffer area.
+    /* Top region: optional left tree panel + buffer area (+ optional terminal).
        When the tree is visible we use ca_split_begin so the divider is
        user-draggable; when hidden we render the buffer area directly. */
     ca_div_begin(&(Ca_DivDesc){
@@ -713,6 +789,10 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         (ui->file_tree &&
          sol_ui_system_file_tree_visible(ui) &&
          sol_file_tree_root(ui->file_tree) != NULL);
+
+    const bool term_visible = ui->terminal_mgr &&
+                              sol_terminal_manager_visible(ui->terminal_mgr) &&
+                              sol_terminal_manager_count(ui->terminal_mgr) > 0u;
 
     if (has_tree_root) {
         ca_split_begin(&(Ca_SplitDesc){
@@ -737,16 +817,16 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         sol_ui_attach_explorer_empty_context_menu(
             ui, sol_file_tree_root(ui->file_tree));
 
-        /* Right pane — buffer area */
+        /* Right pane — buffer area (+ optional terminal split) */
         ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style     = "workspace-buffer-area",
         });
         ui->pane_click_ctx_count = 0u;
-        sol_ui_render_global_tab_strip(ui);
-        sol_ui_render_workspace_tree(ui);
+        sol_ui_render_buffer_and_terminal(ui, term_visible);
         ca_div_end();   /* workspace-buffer-area (right pane) */
-        sol_ui_attach_workspace_context_menu(ui);
+        if (!term_visible)
+            sol_ui_attach_workspace_context_menu(ui);
 
         ca_split_end();
     } else {
@@ -757,10 +837,10 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             .style     = "workspace-buffer-area",
         });
         ui->pane_click_ctx_count = 0u;
-        sol_ui_render_global_tab_strip(ui);
-        sol_ui_render_workspace_tree(ui);
+        sol_ui_render_buffer_and_terminal(ui, term_visible);
         ca_div_end();   /* workspace-buffer-area */
-        sol_ui_attach_workspace_context_menu(ui);
+        if (!term_visible)
+            sol_ui_attach_workspace_context_menu(ui);
     }
 
     ca_div_end();   /* workspace-main-content */
@@ -841,7 +921,6 @@ static void sol_ui_on_frame(void *user_data)
     /* Reap closed file-picker windows. Safe even when none are open.
        Reactive scheduling is owned by causality — nothing else to
        drive from here. */
-    (void)ui;
     sol_file_picker_tick();
     sol_ui_settings_window_tick();
     sol_ui_search_window_tick();
@@ -857,6 +936,22 @@ static void sol_ui_on_frame(void *user_data)
     if (ui->buffers && sol_buffer_active_buffer(ui->buffers) != 0) {
         sol_ui_bump_u32(ui->sig_buffer_rev);
         ca_instance_wake();
+    }
+
+    /* Drain PTY output for all terminal tabs and rebuild the terminal
+       panel when any cell changed.  Also keep waking the event loop
+       while the focused terminal is alive so the cursor blink and any
+       streaming output land on the next frame. */
+    if (ui->terminal_mgr &&
+        sol_terminal_manager_visible(ui->terminal_mgr) &&
+        sol_terminal_manager_count(ui->terminal_mgr) > 0u) {
+        if (sol_terminal_manager_drain(ui->terminal_mgr)) {
+            sol_ui_bump_u32(ui->sig_terminal_rev);
+        }
+        if (sol_terminal_manager_focused(ui->terminal_mgr)) {
+            sol_ui_bump_u32(ui->sig_terminal_rev);
+            ca_instance_wake();
+        }
     }
 }
 
@@ -1026,11 +1121,12 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->sig_flow_registry_rev = ca_signal_u32  (instance, 0u);
     ui->sig_window_rev        = ca_signal_u32  (instance, 0u);
     ui->sig_tree_scroll       = ca_signal_float(instance, 0.0f);
+    ui->sig_terminal_rev      = ca_signal_u32  (instance, 0u);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_file_tree_visible ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
-        !ui->sig_tree_scroll) {
+        !ui->sig_tree_scroll || !ui->sig_terminal_rev) {
         free(ui);
         return NULL;
     }

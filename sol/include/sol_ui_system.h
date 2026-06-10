@@ -240,6 +240,35 @@ void sol_ui_system_open_file_search(SolUISystem *ui);
 void sol_ui_system_open_content_search(SolUISystem *ui);
 
 /* ================================================================== */
+/* Terminal manager integration                                        */
+/* ================================================================== */
+
+typedef struct SolTerminalManager SolTerminalManager;
+
+/*
+ * Attach a terminal manager to the UI system so the workspace can render it.
+ *
+ * ui   The UI system.
+ * mgr  The terminal manager to attach (may be NULL to detach).
+ */
+void sol_ui_system_set_terminal_manager(SolUISystem *ui, SolTerminalManager *mgr);
+
+/*
+ * Return the attached terminal manager, or NULL if none is attached.
+ *
+ * ui  The UI system.
+ */
+SolTerminalManager *sol_ui_system_terminal_manager(const SolUISystem *ui);
+
+/*
+ * Bump the terminal revision signal so the workspace redraws the terminal panel.
+ * Call after any terminal state change that the renderer must reflect.
+ *
+ * ui  The UI system.
+ */
+void sol_ui_system_terminal_notify(SolUISystem *ui);
+
+/* ================================================================== */
 /* Plugin status bar segments                                          */
 /*                                                                     */
 /* Plugins contribute text segments shown on the RIGHT side of the     */

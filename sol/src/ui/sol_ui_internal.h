@@ -21,6 +21,7 @@
 
 #include "sol_file_tree.h"
 #include "sol_settings.h"
+#include "sol_terminal.h"
 #include "sol_ui_system.h"
 
 /* ------------------------------------------------------------------ */
@@ -277,6 +278,13 @@ struct SolUISystem {
        panel keeps its width across reactive rebuilds. Default 0.20. */
     float tree_panel_ratio;
 
+    /* Terminal manager — NULL until sol_ui_system_set_terminal_manager is called. */
+    SolTerminalManager *terminal_mgr;
+    /* Bumped by sol_ui_on_frame whenever the terminal manager drains new data,
+       or when terminal focus state changes.  The workspace content builder
+       subscribes to force a repaint. */
+    Ca_Signal          *sig_terminal_rev;
+
     /* Plugin-contributed status bar segments (right side). */
     SolUIStatusSegment plugin_status_segs[SOL_UI_MAX_STATUS_SEGMENTS];
     uint32_t           plugin_status_next_token;   /* monotonic counter, starts at 1 */
@@ -456,6 +464,14 @@ void sol_ui_render_command_flow_panel(SolUISystem *ui);
  * ui  UI system.
  */
 void sol_ui_render_workspace_tree(SolUISystem *ui);
+
+/*
+ * Render the integrated terminal panel (tab strip + cell viewport).
+ * Called from workspace.c when the terminal manager is visible.
+ *
+ * ui  UI system (terminal_mgr must be non-NULL).
+ */
+void sol_ui_render_terminal_panel(SolUISystem *ui);
 
 /*
  * Render the file tree explorer panel (top-level).

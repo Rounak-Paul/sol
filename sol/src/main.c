@@ -44,6 +44,7 @@
 #include "sol_settings.h"
 #include "sol_system_manager.h"
 #include "sol_syntax.h"
+#include "sol_terminal.h"
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
 #include "sol_ui_constants.h"
@@ -143,6 +144,7 @@ typedef struct SolAppContext {
     int                   command_flows_loaded;
     SolUISystem          *ui;
     SolSyntaxRegistry    *syntax_registry;
+    SolTerminalManager   *terminal_mgr;
     Ca_Instance          *instance;
     SolInputRouter       *router;
     bool                  explorer_focused;
@@ -216,6 +218,35 @@ static void sol_register_search_command_defaults(SolUISystem *ui)
         .sequence = content_sequence,
         .sequence_length = 2u,
     });
+}
+
+/*
+ * Register default terminal command flows.
+ * All flows use 'T' as the second key; final keys select the action.
+ *
+ * ui  The UI system to register flows with.
+ */
+static void sol_register_terminal_command_defaults(SolUISystem *ui)
+{
+    if (!ui) return;
+    struct { const char *action; const char *label; char key; } flows[] = {
+        { "terminal.toggle",           "Focus/toggle terminal",    'T' },
+        { "terminal.position.bottom",  "Terminal: bottom",         'H' },
+        { "terminal.position.right",   "Terminal: right",          'V' },
+        { "terminal.kill",             "Kill terminal",            'X' },
+        { "terminal.tab.new",          "New terminal tab",         'C' },
+        { "terminal.tab.next",         "Next terminal tab",        'N' },
+        { "terminal.tab.prev",         "Prev terminal tab",        'P' },
+    };
+    for (size_t i = 0; i < sizeof(flows) / sizeof(flows[0]); ++i) {
+        SolKeyCode seq[2] = { 'T', (SolKeyCode)(unsigned char)flows[i].key };
+        (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+            .action          = flows[i].action,
+            .label           = flows[i].label,
+            .sequence        = seq,
+            .sequence_length = 2u,
+        });
+    }
 }
 
 /* Open `path` into the active leaf, deduping against an existing
@@ -1161,6 +1192,76 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return true;
     }
 
+    /* ---- terminal.* actions ---- */
+    if (strncmp(p->action, "terminal.", 9) == 0) {
+        SolTerminalManager *mgr = app->terminal_mgr;
+        if (!mgr) return false;
+
+        if (strcmp(p->action, "terminal.toggle") == 0) {
+            if (sol_terminal_manager_count(mgr) == 0u) {
+                if (!sol_terminal_manager_new_tab(mgr)) return false;
+            }
+            const bool currently_focused = sol_terminal_manager_focused(mgr);
+            const bool currently_visible = sol_terminal_manager_visible(mgr);
+            if (!currently_visible) {
+                sol_terminal_manager_set_visible(mgr, true);
+                sol_terminal_manager_set_focused(mgr, true);
+            } else if (!currently_focused) {
+                sol_terminal_manager_set_focused(mgr, true);
+            } else {
+                /* Already visible and focused: defocus (keep visible). */
+                sol_terminal_manager_set_focused(mgr, false);
+            }
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.position.bottom") == 0) {
+            sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_BOTTOM);
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.position.right") == 0) {
+            sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_RIGHT);
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.kill") == 0) {
+            if (sol_terminal_manager_count(mgr) == 0u) return false;
+            sol_terminal_kill(sol_terminal_manager_active(mgr));
+            sol_terminal_manager_close_active(mgr);
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.tab.new") == 0) {
+            SolTerminal *t = sol_terminal_manager_new_tab(mgr);
+            if (!t) return false;
+            sol_terminal_manager_set_visible(mgr, true);
+            sol_terminal_manager_set_focused(mgr, true);
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.tab.next") == 0) {
+            if (sol_terminal_manager_count(mgr) == 0u) return false;
+            sol_terminal_manager_next_tab(mgr);
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.tab.prev") == 0) {
+            if (sol_terminal_manager_count(mgr) == 0u) return false;
+            sol_terminal_manager_prev_tab(mgr);
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        return false;
+    }
+
     /* Unknown action — let other subscribers (plugins) try. */
     return false;
 }
@@ -1288,6 +1389,7 @@ int main(int argc, char **argv)
         });
 
     sol_register_search_command_defaults(app.ui);
+    sol_register_terminal_command_defaults(app.ui);
     app.command_flows_loaded = sol_config_load_bindings(app.ui);
     if (app.command_flows_loaded < 0) {
         fprintf(stderr, "sol: failed to load key bindings from ~/.sol/bindings.conf\n");
@@ -1301,6 +1403,13 @@ int main(int argc, char **argv)
         ca_instance_destroy(instance);
         sol_system_manager_destroy(app.systems);
         return 1;
+    }
+
+    app.terminal_mgr = sol_terminal_manager_create(instance);
+    if (!app.terminal_mgr) {
+        fprintf(stderr, "[sol] warning: terminal manager creation failed; terminal unavailable\n");
+    } else {
+        sol_ui_system_set_terminal_manager(app.ui, app.terminal_mgr);
     }
 
     Ca_Window *window = sol_ui_system_primary_window(app.ui);
@@ -1382,6 +1491,10 @@ int main(int argc, char **argv)
     sol_system_unregister_service(app.systems, "ca.instance");
 
     sol_input_router_destroy(app.router);
+    /* Destroy the terminal manager before the UI system so PTY reader threads
+       stop before causality signals are freed. */
+    sol_ui_system_set_terminal_manager(app.ui, NULL);
+    sol_terminal_manager_destroy(app.terminal_mgr);
     sol_ui_system_destroy(app.ui);
     sol_syntax_registry_destroy(app.syntax_registry);
     ca_instance_destroy(instance);

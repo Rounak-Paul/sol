@@ -17,6 +17,7 @@
 
 #include "sol_buffer.h"
 #include "sol_input.h"
+#include "sol_terminal.h"
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
 #include "sol_ui_constants.h"
@@ -283,6 +284,10 @@ static bool handle_text_buffer_key(SolInputRouter *r,
  * UI system and input system, and dispatch non-printable editing keys to
  * the active text buffer.  Latches a one-shot text-input suppression when
  * the UI consumes a printable key chord.
+ *
+ * When the terminal panel has keyboard focus, ALL key events (including the
+ * leader modifier) are forwarded directly to the PTY. ESC defocuses the
+ * terminal instead of being sent to the PTY.
  */
 static void on_key(const Ca_Event *ev, void *user_data)
 {
@@ -305,6 +310,42 @@ static void on_key(const Ca_Event *ev, void *user_data)
     ie.data.key.key       = (SolKeyCode)ev->key.key;
     ie.data.key.modifiers = modifiers_from_ca(ev->key.mods);
     ie.data.key.repeated  = (ev->key.action == CA_REPEAT);
+
+    /* Terminal-focused path: bypass all UI processing. */
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+    if (tmgr && sol_terminal_manager_focused(tmgr)) {
+        if (ie.type == SOL_INPUT_EVENT_KEY_DOWN) {
+            if (ie.data.key.key == SOL_KEY_ESCAPE) {
+                /* ESC defocuses without sending to the PTY. */
+                sol_terminal_manager_set_focused(tmgr, false);
+                sol_ui_system_terminal_notify(r->ui);
+            } else {
+                const bool has_ctrl_alt =
+                    (ie.data.key.modifiers &
+                     (SOL_MOD_CTRL | SOL_MOD_ALT | SOL_MOD_SUPER)) != 0u;
+                /* Unmodified printable chars are handled by on_char (which
+                   carries the correctly decoded Unicode codepoint). Only send
+                   via sol_terminal_send_key for non-printable keys or
+                   Ctrl/Alt chords that need VT encoding. */
+                if (!key_is_printable_alpha(ie.data.key.key) || has_ctrl_alt) {
+                    SolTerminal *term = sol_terminal_manager_active(tmgr);
+                    if (term) {
+                        sol_terminal_set_view_scroll(term, 0);
+                        sol_terminal_send_key(term, ie.data.key.key,
+                                             ie.data.key.modifiers);
+                    }
+                    /* Suppress CHAR for Ctrl/Alt chords (e.g. Ctrl+C → 0x03
+                       already sent; prevent on_char from also sending 'c'). */
+                    if (has_ctrl_alt && key_is_printable_alpha(ie.data.key.key)) {
+                        r->suppress_next_text_input = true;
+                    }
+                }
+                /* Unmodified printable keys: leave suppress_next_text_input
+                   untouched so on_char can forward the codepoint to the PTY. */
+            }
+        }
+        return;
+    }
 
     const bool ui_consumed = sol_ui_system_handle_input_event(r->ui, &ie);
     sol_input_system_process_event(r->input, &ie);
@@ -330,6 +371,9 @@ static void on_key(const Ca_Event *ev, void *user_data)
  * Handle CA_EVENT_CHAR (decoded text input) events: insert the codepoint
  * into the active text buffer unless suppressed (by a consumed command chord),
  * the leader popup is active, or the buffer input region is not focused.
+ *
+ * When the terminal has focus, printable codepoints are UTF-8 encoded and
+ * written directly to the PTY.
  */
 static void on_char(const Ca_Event *ev, void *user_data)
 {
@@ -348,6 +392,40 @@ static void on_char(const Ca_Event *ev, void *user_data)
 
     if (r->suppress_next_text_input) {
         r->suppress_next_text_input = false;
+        return;
+    }
+
+    /* Terminal-focused path: send codepoint to PTY as UTF-8. */
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+    if (tmgr && sol_terminal_manager_focused(tmgr)) {
+        const uint32_t cp = ev->character.codepoint;
+        if (cp != 0u && cp >= 0x20u && cp != 0x7Fu) {
+            SolTerminal *term = sol_terminal_manager_active(tmgr);
+            if (term) {
+                sol_terminal_set_view_scroll(term, 0);
+                /* Encode codepoint as UTF-8 and send to PTY. */
+                char utf8[5] = {0};
+                if (cp < 0x80u) {
+                    utf8[0] = (char)cp;
+                    sol_terminal_send_text(term, utf8, 1u);
+                } else if (cp < 0x800u) {
+                    utf8[0] = (char)(0xC0u | (cp >> 6));
+                    utf8[1] = (char)(0x80u | (cp & 0x3Fu));
+                    sol_terminal_send_text(term, utf8, 2u);
+                } else if (cp < 0x10000u) {
+                    utf8[0] = (char)(0xE0u | (cp >> 12));
+                    utf8[1] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                    utf8[2] = (char)(0x80u | (cp & 0x3Fu));
+                    sol_terminal_send_text(term, utf8, 3u);
+                } else {
+                    utf8[0] = (char)(0xF0u | (cp >> 18));
+                    utf8[1] = (char)(0x80u | ((cp >> 12) & 0x3Fu));
+                    utf8[2] = (char)(0x80u | ((cp >> 6) & 0x3Fu));
+                    utf8[3] = (char)(0x80u | (cp & 0x3Fu));
+                    sol_terminal_send_text(term, utf8, 4u);
+                }
+            }
+        }
         return;
     }
 
@@ -448,6 +526,35 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     int win_w = 0, win_h = 0;
     sol_ui_system_window_size(r->ui, &win_w, &win_h);
     if (win_w <= 0 || win_h <= 0) return;
+
+    /* Route vertical scroll to terminal scrollback when the mouse is over the
+       terminal panel, regardless of keyboard focus.  Natural scroll convention:
+       dy > 0 (finger up) moves the view toward older content (view_scroll up). */
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+    if (tmgr && sol_terminal_manager_visible(tmgr) && ev->mouse_scroll.dy != 0.0) {
+        bool over_terminal = false;
+        const float ratio = sol_terminal_manager_ratio(tmgr);
+        const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
+        if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
+            const float term_top = (float)win_h * (1.0f - ratio);
+            over_terminal = (float)r->mouse_y >= term_top;
+        } else {   /* SOL_TERMINAL_POSITION_RIGHT */
+            const float term_left = (float)win_w * (1.0f - ratio);
+            over_terminal = (float)r->mouse_x >= term_left;
+        }
+        if (over_terminal) {
+            SolTerminal *term = sol_terminal_manager_active(tmgr);
+            if (term) {
+                const double raw = ev->mouse_scroll.dy * 3.0;
+                int delta = (raw > 0.0) ? (int)raw : -(int)-raw;
+                if (delta == 0) delta = ev->mouse_scroll.dy > 0.0 ? 1 : -1;
+                sol_terminal_set_view_scroll(term,
+                    sol_terminal_view_scroll(term) + delta);
+                sol_ui_system_terminal_notify(r->ui);
+                return;
+            }
+        }
+    }
 
     SolBufferRect root_rect = {0};
     SolBufferNodeId target_leaf = 0u;
