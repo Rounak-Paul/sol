@@ -69,9 +69,8 @@ typedef struct SolWorkspaceVisitorContext {
     SolUISystem *ui;
 } SolWorkspaceVisitorContext;
 
-/* Causality places its custom title bar at a fixed 30 px height (see
-   causality/src/ui/title_bar.c). */
-#define SOL_UI_TITLE_BAR_HEIGHT_PX  30
+/* Causality title bar: 22px at ui_scale=1.0 (title_bar.c: tb.height = 22.0f * sc). */
+#define SOL_UI_TITLE_BAR_HEIGHT_PX  22
 /* Buffer split-tree root geometry.
    The tree lives below the global tab strip and inside the right pane of
    the workspace split. */
@@ -705,6 +704,7 @@ void sol_ui_system_terminal_notify(SolUISystem *ui)
 static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible)
 {
     if (!term_visible) {
+        ui->term_panel_host = NULL;
         sol_ui_render_global_tab_strip(ui);
         sol_ui_render_workspace_tree(ui);
         return;
@@ -735,8 +735,9 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
     ca_div_end();
     sol_ui_attach_workspace_context_menu(ui);
 
-    /* Second pane: terminal panel */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "term-panel" });
+    /* Second pane: terminal panel — retain handle for layout-height queries. */
+    ui->term_panel_host =
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "term-panel" });
     sol_ui_render_terminal_panel(ui);
     ca_div_end();   /* term-panel */
 
@@ -956,35 +957,83 @@ static void sol_ui_on_frame(void *user_data)
 }
 
 /*
- * Update tree-scroll signal and sticky-header width before the frame tick.
+ * Cell geometry constants for 13px monospace terminal font.
+ * Used to derive row/col counts from terminal-panel pixel dimensions.
  *
- * Called before ca_instance_tick to sync the tree's scroll offset into the
- * reactive signal system and clamp the sticky-header overlay width to the
- * tree panel's laid-out dimensions (accounting for scrollbar).
+ * TERM_CELL_H_PX: Causality allocates 20px per leaf text node as its
+ * content_size fallback (20.0f * node_ui_scale at ui_scale=1.0).
+ * Each term-line (CA_HORIZONTAL) propagates this value as its own height.
+ * Must stay in sync with Causality's layout.c leaf fallback.
+ *
+ * TERM_HEADER_PX: matches .term-header { height: 28px }.
+ * TERM_PAD_V_PX / TERM_PAD_H_PX: match .term-viewport { padding: 4px 6px }.
+ */
+#define TERM_CELL_H_PX  20.0f
+#define TERM_CELL_W_PX   8.0f
+#define TERM_HEADER_PX  28.0f
+#define TERM_PAD_V_PX    4.0f
+#define TERM_PAD_H_PX    6.0f
+
+/*
+ * Update tree-scroll signal, sticky-header width, and terminal grid size
+ * before each frame tick.
+ *
+ * Called before ca_instance_tick every frame.  Terminal grid dimensions are
+ * read directly from the Causality-computed layout of term_panel_host (set
+ * by the builder the previous frame), so no manual geometry calculation is
+ * needed and the values are always exact.
  *
  * ui  The UI system to update.
  */
 void sol_ui_system_pre_tick(SolUISystem *ui)
 {
     if (!ui || !ui->primary_window || !ui->sig_tree_scroll) return;
-    /* Poll the tree scroll container's current offset and update the signal.
-       ca_signal_set_float is a no-op when the value is unchanged (memcmp),
-       so the sticky-builder effect only re-runs on frames where the scroll
-       actually moved.  Called before ca_instance_tick so the effect fires
-       within the same frame's reactive flush. */
+
     float sy = ca_get_scroll_y(ui->primary_window, "tree-list");
     ca_signal_set_float(ui->sig_tree_scroll, sy);
 
-    /* Keep the sticky overlay's width clamped to the tree panel's actual
-       laid-out pixel width.  tree_panel_host->w is the computed value from
-       the previous frame's layout pass — accurate enough for a one-frame
-       lag that is never visible. */
     if (ui->tree_sticky_host && ui->tree_panel_host) {
         float panel_w = ca_div_get_layout_width(ui->tree_panel_host);
-        /* Subtract the built-in scrollbar width (14px) so sticky rows
-           don't overdraw it. */
         if (panel_w > 14.0f)
             ca_div_set_width(ui->tree_sticky_host, panel_w - 14.0f);
+    }
+
+    /* Resize terminal grids to match the Causality-laid-out panel dimensions.
+     * term_panel_host is stored by the builder each frame; its w/h values are
+     * from the previous layout pass (one-frame lag, never perceptible).
+     * sol_terminal_resize is idempotent — no-ops when cols/rows are unchanged. */
+    if (ui->terminal_mgr &&
+        ui->term_panel_host &&
+        sol_terminal_manager_visible(ui->terminal_mgr) &&
+        sol_terminal_manager_count(ui->terminal_mgr) > 0u) {
+
+        const float pane_h = ca_div_get_layout_height(ui->term_panel_host);
+        const float pane_w = ca_div_get_layout_width(ui->term_panel_host);
+
+        if (pane_h > 0.0f && pane_w > 0.0f) {
+            const float usable_h = pane_h - TERM_HEADER_PX - TERM_PAD_V_PX * 2.0f;
+            const float usable_w = pane_w - TERM_PAD_H_PX * 2.0f;
+
+            if (usable_h >= TERM_CELL_H_PX && usable_w >= TERM_CELL_W_PX) {
+                int new_rows = (int)(usable_h / TERM_CELL_H_PX);
+                int new_cols = (int)(usable_w / TERM_CELL_W_PX);
+                if (new_rows < 2)  new_rows = 2;
+                if (new_cols < 10) new_cols = 10;
+
+                const size_t count = sol_terminal_manager_count(ui->terminal_mgr);
+                bool any_resized = false;
+                for (size_t i = 0; i < count; ++i) {
+                    SolTerminal *t = sol_terminal_manager_at(ui->terminal_mgr, i);
+                    if (t && (sol_terminal_cols(t) != new_cols ||
+                              sol_terminal_rows(t) != new_rows)) {
+                        sol_terminal_resize(t, new_cols, new_rows);
+                        any_resized = true;
+                    }
+                }
+                if (any_resized)
+                    sol_ui_bump_u32(ui->sig_terminal_rev);
+            }
+        }
     }
 }
 

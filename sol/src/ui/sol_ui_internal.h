@@ -149,6 +149,10 @@ struct SolUISystem {
        re-runs the affected builder(s). NULL until build_layout runs. */
     Ca_Div           *tree_panel_host;
     Ca_Div           *buffer_area_host;
+    /* Retained handle to the terminal pane div for layout-height queries in
+       sol_ui_system_pre_tick.  Updated each builder run; NULL when the
+       terminal panel is not in the current layout tree. */
+    Ca_Div           *term_panel_host;
     /* Floating which-key popup host — absolute-positioned overlay
        sibling of workspace_content_host. Its builder subscribes to
        sig_popup_version and re-runs in isolation; the workspace

@@ -1827,6 +1827,7 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "}"
     ".term-viewport {"
     "  width: 100%;"
+    "  height: 100%;"
     "  min-width: 0px;"
     "  min-height: 0px;"
     "  flex-grow: 1;"
