@@ -35,7 +35,12 @@
 /* Maximum number of undoable records kept per buffer. */
 #define TB_UNDO_MAX 512
 
-/* One atomic change on the undo/redo stack. */
+/*
+ * One atomic change on the undo/redo stack.
+ *
+ * Represents a single edit operation that can be undone or redone,
+ * including the bytes removed, inserted, cursor positions, and selection state.
+ */
 typedef struct {
     size_t byte_offset;
     char  *old_bytes;   /* bytes that were removed; NULL = pure insert */
@@ -75,9 +80,17 @@ struct SolTextBuffer {
     int                   undo_end;
 };
 
-/* Publish sol.text.edited. `removed` and `inserted` are byte counts;
-   `at` is the byte offset in the rope BEFORE the change took effect
-   (so observers see a consistent pre-edit coordinate). */
+/*
+ * Publish sol.text.edited event with change metadata.
+ *
+ * Notifies subscribers of text edits with byte counts and offset.
+ * Reparses syntax highlighter to keep highlighting in sync with rope.
+ *
+ * tb        The text buffer.
+ * at        Byte offset in rope before the change took effect.
+ * removed   Count of bytes removed.
+ * inserted  Count of bytes inserted.
+ */
 static void tb_publish_edit(const SolTextBuffer *tb, size_t at,
                             size_t removed, size_t inserted)
 {
@@ -98,6 +111,12 @@ static void tb_publish_edit(const SolTextBuffer *tb, size_t at,
 /* Small helpers                                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Allocate a duplicate of the null-terminated string.
+ *
+ * s  The string to duplicate; returns NULL if NULL.
+ * Returns  Newly allocated copy, or NULL on allocation failure.
+ */
 static char *tb_strdup(const char *s)
 {
     if (!s) return NULL;
@@ -108,6 +127,12 @@ static char *tb_strdup(const char *s)
     return o;
 }
 
+/*
+ * Extract the basename from a file path.
+ *
+ * path  The file path; returns "untitled" if NULL or empty.
+ * Returns  Basename portion of the path or the default "untitled".
+ */
 static const char *tb_basename(const char *path)
 {
     if (!path || !*path) return "untitled";
@@ -117,6 +142,13 @@ static const char *tb_basename(const char *path)
 
 /* ---- UTF-8 codec -------------------------------------------------- */
 
+/*
+ * Encode a Unicode codepoint to UTF-8 bytes.
+ *
+ * cp   The Unicode codepoint to encode.
+ * out  Output buffer for up to 4 encoded bytes.
+ * Returns  Number of bytes written (1-4), or 0 if codepoint is invalid.
+ */
 static int tb_utf8_encode(uint32_t cp, uint8_t out[4])
 {
     if (cp < 0x80u)   { out[0] = (uint8_t)cp; return 1; }
@@ -142,8 +174,12 @@ static int tb_utf8_encode(uint32_t cp, uint8_t out[4])
     return 0;
 }
 
-/* Byte length of the UTF-8 codepoint whose lead byte is `b`. Returns
-   1 for malformed lead bytes so we always advance. */
+/*
+ * Get the byte length of the UTF-8 codepoint starting with the given lead byte.
+ *
+ * b  The first byte of a potential UTF-8 sequence.
+ * Returns  Length in bytes (1, 2, 3, or 4); returns 1 for malformed lead bytes.
+ */
 static size_t tb_utf8_lead_len(uint8_t b)
 {
     if ((b & 0x80u) == 0x00u) return 1u;
@@ -153,6 +189,12 @@ static size_t tb_utf8_lead_len(uint8_t b)
     return 1u;
 }
 
+/*
+ * Check if a byte is a UTF-8 continuation byte.
+ *
+ * b  The byte to check.
+ * Returns  True if the byte is a continuation byte (10xxxxxx).
+ */
 static bool tb_is_continuation(uint8_t b)
 {
     return (b & 0xC0u) == 0x80u;
@@ -160,16 +202,28 @@ static bool tb_is_continuation(uint8_t b)
 
 /* ---- Rope reading helpers ---------------------------------------- */
 
-/* Read 1..max bytes starting at `byte_offset` into `out`. Clamped to
-   the rope size. Returns bytes read. */
+/*
+ * Read bytes from the rope at a given offset.
+ *
+ * r    The rope to read from.
+ * at   The byte offset to start reading.
+ * out  Output buffer for bytes.
+ * max  Maximum number of bytes to read.
+ * Returns  Number of bytes actually read (clamped to rope size).
+ */
 static size_t tb_rope_read_at(const SolRope *r, size_t at,
                               uint8_t *out, size_t max)
 {
     return sol_rope_read(r, at, out, max);
 }
 
-/* Length of the UTF-8 codepoint starting at byte offset `at`. Returns
-   0 at or past EOF. */
+/*
+ * Get the byte length of the UTF-8 codepoint starting at a byte offset.
+ *
+ * r   The rope.
+ * at  The byte offset to check.
+ * Returns  Byte length of the codepoint (1-4), or 0 if at or past EOF.
+ */
 static size_t tb_cp_len_at(const SolRope *r, size_t at)
 {
     if (at >= sol_rope_byte_len(r)) return 0u;
@@ -182,8 +236,13 @@ static size_t tb_cp_len_at(const SolRope *r, size_t at)
     return len;
 }
 
-/* Length of the UTF-8 codepoint ending immediately before byte offset
-   `at`. Returns 0 when at start of rope. */
+/*
+ * Get the byte length of the UTF-8 codepoint ending immediately before a byte offset.
+ *
+ * r   The rope.
+ * at  The byte offset (start looking backward from here).
+ * Returns  Byte length of the prior codepoint, or 0 if at start of rope.
+ */
 static size_t tb_cp_len_before(const SolRope *r, size_t at)
 {
     if (at == 0u) return 0u;
@@ -201,7 +260,13 @@ static size_t tb_cp_len_before(const SolRope *r, size_t at)
     return n - (i - 1u);
 }
 
-/* Byte length of `line` excluding the trailing '\n'. */
+/*
+ * Get the byte length of a line excluding the trailing newline.
+ *
+ * r     The rope.
+ * line  The line number.
+ * Returns  Byte count for the line content (newline not included).
+ */
 static size_t tb_line_byte_len(const SolRope *r, size_t line)
 {
     const size_t total_lines = sol_rope_line_count(r);
@@ -218,7 +283,14 @@ static size_t tb_line_byte_len(const SolRope *r, size_t line)
     return end - start;
 }
 
-/* Codepoint count of the first `len` bytes of `line`. */
+/*
+ * Count the number of Unicode codepoints in a line prefix.
+ *
+ * r         The rope.
+ * line      The line number.
+ * byte_len  Number of bytes to count within the line.
+ * Returns   Count of codepoints in the specified byte range.
+ */
 static size_t tb_line_cp_count(const SolRope *r, size_t line, size_t byte_len)
 {
     const size_t start = sol_rope_byte_of_line(r, line);
@@ -234,9 +306,16 @@ static size_t tb_line_cp_count(const SolRope *r, size_t line, size_t byte_len)
     return cp_count;
 }
 
-/* Rendered visual-column count of the first `byte_len` bytes of `line`.
-   Tabs occupy four columns, printable codepoints occupy one, and controls
-   occupy zero so cursor settling matches the text view geometry. */
+/*
+ * Count the rendered visual columns in a line prefix.
+ *
+ * Tabs count as 4 columns, printable codepoints as 1, and controls as 0.
+ *
+ * r         The rope.
+ * line      The line number.
+ * byte_len  Number of bytes to measure.
+ * Returns   Visual column count for display rendering.
+ */
 static size_t tb_line_visual_col_count(const SolRope *r, size_t line,
                                        size_t byte_len)
 {
@@ -264,8 +343,14 @@ static size_t tb_line_visual_col_count(const SolRope *r, size_t line,
     return visual;
 }
 
-/* Byte offset within `line` corresponding to codepoint column `cp_col`,
-   clamped to the line's byte length. */
+/*
+ * Get the byte offset within a line corresponding to a codepoint column.
+ *
+ * r       The rope.
+ * line    The line number.
+ * cp_col  The target codepoint column.
+ * Returns  Byte offset within the line, clamped to line length.
+ */
 static size_t tb_line_byte_of_cp(const SolRope *r, size_t line, size_t cp_col)
 {
     const size_t line_bytes = tb_line_byte_len(r, line);
@@ -287,8 +372,14 @@ static size_t tb_line_byte_of_cp(const SolRope *r, size_t line, size_t cp_col)
 /* Undo / redo helpers                                                 */
 /* ------------------------------------------------------------------ */
 
-/* Read `len` bytes from the rope at `at` into a malloc'd buffer.
-   Returns NULL on OOM or len == 0. */
+/*
+ * Allocate and read bytes from the rope.
+ *
+ * r    The rope to read from.
+ * at   The byte offset to start reading.
+ * len  Number of bytes to read.
+ * Returns  Newly allocated buffer with rope contents, or NULL on OOM or if len is 0.
+ */
 static char *tb_read_rope_bytes(const SolRope *r, size_t at, size_t len)
 {
     if (len == 0u) return NULL;
@@ -299,9 +390,21 @@ static char *tb_read_rope_bytes(const SolRope *r, size_t at, size_t len)
     return buf;
 }
 
-/* Push one record onto the undo stack.  cursor_before / cursor_after
-   are the cursor positions immediately before and after the edit.
-   Consecutive single-codepoint inserts are grouped automatically. */
+/*
+ * Record an edit on the undo stack for later undo/redo.
+ *
+ * Consecutive single-codepoint inserts are grouped automatically.
+ * Clears the redo stack when a new edit is pushed.
+ *
+ * tb             The text buffer.
+ * at             The byte offset where the change occurred.
+ * old_bytes      The bytes that were removed (NULL for pure insert).
+ * old_len        Count of removed bytes.
+ * new_bytes      The bytes that were inserted (NULL for pure delete).
+ * new_len        Count of inserted bytes.
+ * cursor_before  Cursor position before the edit.
+ * cursor_after   Cursor position after the edit.
+ */
 static void tb_push_undo(SolTextBuffer *tb,
                          size_t at,
                          const char *old_bytes, size_t old_len,
@@ -385,6 +488,12 @@ static void tb_push_undo(SolTextBuffer *tb,
 /* Word-character classification                                       */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Check if a byte is a valid word character.
+ *
+ * b  The byte to classify.
+ * Returns  True if the byte is alphanumeric, underscore, or non-ASCII.
+ */
 static bool tb_is_word_char(uint8_t b)
 {
     return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
@@ -395,6 +504,11 @@ static bool tb_is_word_char(uint8_t b)
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Destroy a text buffer and free all associated resources.
+ *
+ * state  Pointer to the SolTextBuffer to destroy (NULL-safe).
+ */
 static void tb_destroy(void *state)
 {
     SolTextBuffer *tb = (SolTextBuffer *)state;
@@ -410,6 +524,13 @@ static void tb_destroy(void *state)
     free(tb);
 }
 
+/*
+ * Create a text buffer wrapping an existing rope.
+ *
+ * rope         The rope to wrap (ownership transferred).
+ * source_path  Optional file path for the buffer (copied).
+ * Returns      New text buffer, or NULL on allocation failure.
+ */
 static SolTextBuffer *tb_create_from_rope(SolRope *rope, const char *source_path)
 {
     if (!rope) return NULL;
@@ -426,6 +547,18 @@ static SolTextBuffer *tb_create_from_rope(SolRope *rope, const char *source_path
     return tb;
 }
 
+/*
+ * Register a text buffer with the buffer system.
+ *
+ * Associates the buffer with the system, attaches syntax highlighting if available,
+ * and stores event bus and buffer ID references.
+ *
+ * system        The buffer system.
+ * tb            The text buffer to register.
+ * display_name  The display name for the buffer.
+ * render        The render function for the buffer.
+ * Returns       The allocated buffer ID, or 0 on failure.
+ */
 static SolBufferId tb_register(SolBufferSystem *system, SolTextBuffer *tb,
                                const char *display_name,
                                SolBufferRenderFn render)
@@ -467,6 +600,14 @@ static SolBufferId tb_register(SolBufferSystem *system, SolTextBuffer *tb,
     return id;
 }
 
+/*
+ * Create and register an empty text buffer.
+ *
+ * system        The buffer system.
+ * display_name  Optional display name for the buffer; defaults to "untitled".
+ * render        The render function for the buffer.
+ * Returns       The allocated buffer ID, or 0 on failure.
+ */
 SolBufferId sol_text_buffer_open_empty(SolBufferSystem *system,
                                        const char *display_name,
                                        SolBufferRenderFn render)
@@ -479,6 +620,16 @@ SolBufferId sol_text_buffer_open_empty(SolBufferSystem *system,
                        render);
 }
 
+/*
+ * Load a file and register it as a text buffer.
+ *
+ * system        The buffer system.
+ * path          The file path to load.
+ * display_name  Optional display name; defaults to the file basename.
+ * render        The render function for the buffer.
+ * out_error     Optional error message output on failure.
+ * Returns       The allocated buffer ID, or 0 on failure.
+ */
 SolBufferId sol_text_buffer_open_file(SolBufferSystem *system,
                                       const char *path,
                                       const char *display_name,
@@ -506,6 +657,17 @@ SolBufferId sol_text_buffer_open_file(SolBufferSystem *system,
     return id;
 }
 
+/*
+ * Create a text buffer from a string with optional source path.
+ *
+ * system        The buffer system.
+ * display_name  Optional display name; derived from source_path or "untitled" if not provided.
+ * text          The text content; may be NULL.
+ * len           Length of the text in bytes.
+ * source_path   Optional file path for syntax highlighting lookup.
+ * render        The render function for the buffer.
+ * Returns       The allocated buffer ID, or 0 on failure.
+ */
 SolBufferId sol_text_buffer_open_string(SolBufferSystem *system,
                                         const char *display_name,
                                         const char *text, size_t len,
@@ -528,11 +690,25 @@ SolBufferId sol_text_buffer_open_string(SolBufferSystem *system,
 /* Find / accessors                                                    */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Get the syntax highlighter for a text buffer.
+ *
+ * tb  The text buffer.
+ * Returns  The highlighter if present, or NULL.
+ */
 SolSyntaxHighlighter *sol_text_buffer_highlighter(const SolTextBuffer *tb)
 {
     return tb ? tb->highlighter : NULL;
 }
 
+/*
+ * Remove syntax highlighters for a specific language from all buffers.
+ *
+ * Invalidates highlighters when a language definition has been updated or removed.
+ *
+ * system    The buffer system.
+ * language  The language pointer to invalidate.
+ */
 void sol_text_buffer_invalidate_language(SolBufferSystem *system,
                                           const void      *language)
 {
@@ -550,6 +726,14 @@ void sol_text_buffer_invalidate_language(SolBufferSystem *system,
     }
 }
 
+/*
+ * Attach syntax highlighters to all buffers that don't yet have one.
+ *
+ * Scans the buffer system and attempts to create highlighters for buffers
+ * with source paths that match registered languages.
+ *
+ * system  The buffer system.
+ */
 void sol_text_buffer_refresh_highlighters(SolBufferSystem *system)
 {
     if (!system) return;
@@ -570,6 +754,13 @@ void sol_text_buffer_refresh_highlighters(SolBufferSystem *system)
     }
 }
 
+/*
+ * Find a text buffer by its source file path.
+ *
+ * system  The buffer system.
+ * path    The file path to search for.
+ * Returns  The buffer ID if found, or 0 if not found.
+ */
 SolBufferId sol_text_buffer_find_by_path(SolBufferSystem *system, const char *path)
 {
     if (!system || !path) return 0u;
@@ -586,6 +777,12 @@ SolBufferId sol_text_buffer_find_by_path(SolBufferSystem *system, const char *pa
     return 0u;
 }
 
+/*
+ * Extract the text buffer state from a generic buffer.
+ *
+ * buffer  The buffer handle.
+ * Returns  The text buffer, or NULL if not a text buffer.
+ */
 SolTextBuffer *sol_text_buffer_state(SolBuffer *buffer)
 {
     if (!buffer) return NULL;
@@ -593,6 +790,12 @@ SolTextBuffer *sol_text_buffer_state(SolBuffer *buffer)
     return (SolTextBuffer *)sol_buffer_state(buffer);
 }
 
+/*
+ * Get the currently active text buffer from the buffer system.
+ *
+ * system  The buffer system.
+ * Returns  The active text buffer, or NULL if none is active.
+ */
 SolTextBuffer *sol_text_buffer_active(SolBufferSystem *system)
 {
     if (!system) return NULL;
@@ -602,12 +805,24 @@ SolTextBuffer *sol_text_buffer_active(SolBufferSystem *system)
     return sol_text_buffer_state(buf);
 }
 
+/*
+ * Get the rope backing a buffer.
+ *
+ * buffer  The buffer handle.
+ * Returns  The rope if the buffer is a text buffer, or NULL.
+ */
 SolRope *sol_text_buffer_rope(SolBuffer *buffer)
 {
     SolTextBuffer *tb = sol_text_buffer_state(buffer);
     return tb ? tb->rope : NULL;
 }
 
+/*
+ * Get the source file path of a text buffer.
+ *
+ * tb  The text buffer.
+ * Returns  The file path, or NULL if the buffer is unsaved or has no path.
+ */
 const char *sol_text_buffer_source_path(const SolTextBuffer *tb)
 {
     return tb ? tb->source_path : NULL;
@@ -617,17 +832,35 @@ const char *sol_text_buffer_source_path(const SolTextBuffer *tb)
 /* Cursor / scroll metrics                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Get the cursor position as an absolute byte offset.
+ *
+ * tb  The text buffer.
+ * Returns  The cursor byte offset into the rope.
+ */
 size_t sol_text_buffer_cursor_byte(const SolTextBuffer *tb)
 {
     return tb ? tb->cursor_byte : 0u;
 }
 
+/*
+ * Get the line number of the cursor.
+ *
+ * tb  The text buffer.
+ * Returns  The cursor line number (0-indexed).
+ */
 size_t sol_text_buffer_cursor_line(const SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return 0u;
     return sol_rope_line_of_byte(tb->rope, tb->cursor_byte);
 }
 
+/*
+ * Get the column (byte offset within line) of the cursor.
+ *
+ * tb  The text buffer.
+ * Returns  The cursor column as a byte offset from the line start.
+ */
 size_t sol_text_buffer_cursor_col(const SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return 0u;
@@ -636,11 +869,23 @@ size_t sol_text_buffer_cursor_col(const SolTextBuffer *tb)
     return tb->cursor_byte - line_start;
 }
 
+/*
+ * Get the topmost visible line in the scroll view.
+ *
+ * tb  The text buffer.
+ * Returns  The line number of the first visible line.
+ */
 int sol_text_buffer_scroll_top(const SolTextBuffer *tb)
 {
     return tb ? tb->scroll_top_line : 0;
 }
 
+/*
+ * Set the topmost visible line in the scroll view.
+ *
+ * tb    The text buffer.
+ * line  The new top line number (clamped to non-negative).
+ */
 void sol_text_buffer_set_scroll_top(SolTextBuffer *tb, int line)
 {
     if (!tb) return;
@@ -648,11 +893,23 @@ void sol_text_buffer_set_scroll_top(SolTextBuffer *tb, int line)
     tb->scroll_top_line = line;
 }
 
+/*
+ * Get the leftmost visible column in the scroll view.
+ *
+ * tb  The text buffer.
+ * Returns  The column of the first visible character.
+ */
 int sol_text_buffer_scroll_left(const SolTextBuffer *tb)
 {
     return tb ? tb->scroll_left_col : 0;
 }
 
+/*
+ * Set the leftmost visible column in the scroll view.
+ *
+ * tb   The text buffer.
+ * col  The new left column (clamped to non-negative).
+ */
 void sol_text_buffer_set_scroll_left(SolTextBuffer *tb, int col)
 {
     if (!tb) return;
@@ -660,6 +917,12 @@ void sol_text_buffer_set_scroll_left(SolTextBuffer *tb, int col)
     tb->scroll_left_col = col;
 }
 
+/*
+ * Get the total number of visible lines in the buffer.
+ *
+ * tb  The text buffer.
+ * Returns  The line count, including partial lines after the last newline.
+ */
 size_t sol_text_buffer_line_count(const SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return 1u;
@@ -679,6 +942,13 @@ size_t sol_text_buffer_line_count(const SolTextBuffer *tb)
     return lc + (has_trailing_partial ? 1u : 0u);
 }
 
+/*
+ * Get the byte length of a specific line excluding the newline.
+ *
+ * tb    The text buffer.
+ * line  The line number.
+ * Returns  The byte count for the line, or 0 if the line is out of range.
+ */
 size_t sol_text_buffer_line_len(const SolTextBuffer *tb, size_t line)
 {
     if (!tb || !tb->rope) return 0u;
@@ -686,6 +956,15 @@ size_t sol_text_buffer_line_len(const SolTextBuffer *tb, size_t line)
     return tb_line_byte_len(tb->rope, line);
 }
 
+/*
+ * Copy a line's content into a buffer.
+ *
+ * tb    The text buffer.
+ * line  The line number to copy.
+ * out   Output buffer for the line content.
+ * max   Maximum bytes to write (including null terminator).
+ * Returns  Number of bytes copied (null-terminated).
+ */
 size_t sol_text_buffer_copy_line(const SolTextBuffer *tb, size_t line,
                                  char *out, size_t max)
 {
@@ -699,6 +978,12 @@ size_t sol_text_buffer_copy_line(const SolTextBuffer *tb, size_t line,
     return got;
 }
 
+/*
+ * Adjust vertical scroll so the cursor is visible.
+ *
+ * tb        The text buffer.
+ * viewport  The number of visible lines in the viewport.
+ */
 void sol_text_buffer_ensure_cursor_visible(SolTextBuffer *tb, int viewport)
 {
     if (!tb || viewport <= 0) return;
@@ -711,6 +996,13 @@ void sol_text_buffer_ensure_cursor_visible(SolTextBuffer *tb, int viewport)
     if (tb->scroll_top_line < 0) tb->scroll_top_line = 0;
 }
 
+/*
+ * Adjust both vertical and horizontal scroll so the cursor is visible.
+ *
+ * tb              The text buffer.
+ * viewport_lines  The number of visible lines in the viewport.
+ * viewport_cols   The number of visible columns in the viewport.
+ */
 void sol_text_buffer_ensure_cursor_visible_2d(SolTextBuffer *tb,
                                               int viewport_lines,
                                               int viewport_cols)
@@ -740,6 +1032,15 @@ void sol_text_buffer_ensure_cursor_visible_2d(SolTextBuffer *tb,
 /* Cursor mutation helpers                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Set the cursor to a byte offset, snapping to a UTF-8 boundary.
+ *
+ * Walks back through continuation bytes to ensure the cursor lands
+ * on a valid codepoint boundary.
+ *
+ * tb    The text buffer.
+ * byte  The target byte offset (clamped to rope size).
+ */
 static void tb_set_cursor_byte(SolTextBuffer *tb, size_t byte)
 {
     const size_t total = sol_rope_byte_len(tb->rope);
@@ -755,6 +1056,14 @@ static void tb_set_cursor_byte(SolTextBuffer *tb, size_t byte)
     tb->cursor_byte = byte;
 }
 
+/*
+ * Update the preferred column for vertical cursor movement.
+ *
+ * Stores the current column in codepoint units so vertical movement
+ * tries to return to this column when moving up/down.
+ *
+ * tb  The text buffer.
+ */
 static void tb_update_preferred_col(SolTextBuffer *tb)
 {
     const size_t line = sol_rope_line_of_byte(tb->rope, tb->cursor_byte);
@@ -767,6 +1076,16 @@ static void tb_update_preferred_col(SolTextBuffer *tb)
 /* Edits                                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Insert a Unicode codepoint at the cursor position.
+ *
+ * Replaces the selection if active. The codepoint is encoded to UTF-8
+ * and inserted into the rope.
+ *
+ * tb  The text buffer.
+ * cp  The Unicode codepoint to insert.
+ * Returns  True on success, false if the codepoint is invalid or insertion fails.
+ */
 bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
 {
     if (!tb || !tb->rope) return false;
@@ -785,6 +1104,15 @@ bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
     return true;
 }
 
+/*
+ * Insert a newline at the cursor position.
+ *
+ * Replaces the selection if active. Moves the cursor to the start of
+ * the new line.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false on failure.
+ */
 bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -799,6 +1127,15 @@ bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
     return true;
 }
 
+/*
+ * Delete the codepoint before the cursor (backspace).
+ *
+ * Removes the selection if active, otherwise deletes the previous codepoint.
+ * The cursor is moved to the position before the deleted character.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if at start of buffer or deletion fails.
+ */
 bool sol_text_buffer_backspace(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -824,6 +1161,15 @@ bool sol_text_buffer_backspace(SolTextBuffer *tb)
     return true;
 }
 
+/*
+ * Delete the codepoint at the cursor position (forward delete).
+ *
+ * Removes the selection if active, otherwise deletes the next codepoint.
+ * The cursor remains at the same position.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if at end of buffer or deletion fails.
+ */
 bool sol_text_buffer_delete_forward(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -846,6 +1192,17 @@ bool sol_text_buffer_delete_forward(SolTextBuffer *tb)
 /* Raw (selection-neutral) motion helpers                              */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Move the cursor by a specified number of codepoints and/or lines.
+ *
+ * Horizontal movement (dx) moves by codepoints. Vertical movement (dy)
+ * moves by lines while attempting to maintain the preferred column.
+ *
+ * tb         The text buffer.
+ * dx         Horizontal movement in codepoints (can be negative).
+ * dy         Vertical movement in lines (can be negative).
+ * sticky_col If true, vertical movement tries to maintain the preferred column.
+ */
 static void tb_move_cursor_raw(SolTextBuffer *tb, int dx, int dy,
                                 bool sticky_col)
 {
@@ -881,6 +1238,11 @@ static void tb_move_cursor_raw(SolTextBuffer *tb, int dx, int dy,
     }
 }
 
+/*
+ * Move the cursor to the start of the current line.
+ *
+ * tb  The text buffer.
+ */
 static void tb_move_line_start_raw(SolTextBuffer *tb)
 {
     const size_t line = sol_text_buffer_cursor_line(tb);
@@ -888,6 +1250,11 @@ static void tb_move_line_start_raw(SolTextBuffer *tb)
     tb->preferred_col_cp = 0u;
 }
 
+/*
+ * Move the cursor to the end of the current line.
+ *
+ * tb  The text buffer.
+ */
 static void tb_move_line_end_raw(SolTextBuffer *tb)
 {
     const size_t line = sol_text_buffer_cursor_line(tb);
@@ -897,6 +1264,13 @@ static void tb_move_line_end_raw(SolTextBuffer *tb)
     tb_update_preferred_col(tb);
 }
 
+/*
+ * Move the cursor to a specific line and codepoint column.
+ *
+ * tb      The text buffer.
+ * line    The target line number (clamped to valid range).
+ * cp_col  The target column in codepoint units.
+ */
 static void tb_set_cursor_to_raw(SolTextBuffer *tb, size_t line, size_t cp_col)
 {
     const size_t total_lines = sol_text_buffer_line_count(tb);
@@ -908,6 +1282,14 @@ static void tb_set_cursor_to_raw(SolTextBuffer *tb, size_t line, size_t cp_col)
 }
 
 
+/*
+ * Move the cursor by a displacement and clear any active selection.
+ *
+ * tb         The text buffer.
+ * dx         Horizontal movement in codepoints.
+ * dy         Vertical movement in lines.
+ * sticky_col If true, vertical movement tries to maintain the preferred column.
+ */
 void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
                                  bool sticky_col)
 {
@@ -916,6 +1298,11 @@ void sol_text_buffer_move_cursor(SolTextBuffer *tb, int dx, int dy,
     tb_move_cursor_raw(tb, dx, dy, sticky_col);
 }
 
+/*
+ * Move the cursor to the start of the current line and clear selection.
+ *
+ * tb  The text buffer.
+ */
 void sol_text_buffer_move_line_start(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return;
@@ -923,6 +1310,11 @@ void sol_text_buffer_move_line_start(SolTextBuffer *tb)
     tb_move_line_start_raw(tb);
 }
 
+/*
+ * Move the cursor to the end of the current line and clear selection.
+ *
+ * tb  The text buffer.
+ */
 void sol_text_buffer_move_line_end(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return;
@@ -930,6 +1322,13 @@ void sol_text_buffer_move_line_end(SolTextBuffer *tb)
     tb_move_line_end_raw(tb);
 }
 
+/*
+ * Set the cursor to a specific line and column and clear selection.
+ *
+ * tb      The text buffer.
+ * line    The target line number.
+ * cp_col  The target column in codepoint units.
+ */
 void sol_text_buffer_set_cursor_to(SolTextBuffer *tb, size_t line, size_t cp_col)
 {
     if (!tb || !tb->rope) return;
@@ -941,6 +1340,18 @@ void sol_text_buffer_set_cursor_to(SolTextBuffer *tb, size_t line, size_t cp_col
 /* Raw byte-offset mutations (plugin / scripting use)                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Insert raw bytes at a specific offset (plugin/scripting use).
+ *
+ * Does not record undo or publish events; useful for scripted bulk edits.
+ * Adjusts cursor if it falls at or after the insertion point.
+ *
+ * tb            The text buffer.
+ * byte_offset   The byte position for insertion.
+ * text          The bytes to insert.
+ * len           Number of bytes to insert.
+ * Returns       True on success, false on invalid arguments or rope failure.
+ */
 bool sol_text_buffer_insert_bytes(SolTextBuffer *tb,
                                    size_t byte_offset,
                                    const char *text, size_t len)
@@ -960,6 +1371,17 @@ bool sol_text_buffer_insert_bytes(SolTextBuffer *tb,
     return true;
 }
 
+/*
+ * Delete raw bytes at a specific offset (plugin/scripting use).
+ *
+ * Does not record undo history; useful for scripted bulk edits.
+ * Clamps the cursor into the rope if it falls in the deleted range.
+ *
+ * tb          The text buffer.
+ * byte_offset The starting byte position for deletion.
+ * byte_count  Number of bytes to delete.
+ * Returns     True on success, false on invalid arguments or rope failure.
+ */
 bool sol_text_buffer_delete_bytes(SolTextBuffer *tb,
                                    size_t byte_offset, size_t byte_count)
 {
@@ -980,6 +1402,12 @@ bool sol_text_buffer_delete_bytes(SolTextBuffer *tb,
     return true;
 }
 
+/*
+ * Set the cursor to a byte offset and clear selection.
+ *
+ * tb            The text buffer.
+ * byte_offset   The target byte offset (clamped to rope size).
+ */
 void sol_text_buffer_set_cursor_byte(SolTextBuffer *tb, size_t byte_offset)
 {
     if (!tb || !tb->rope) return;
@@ -994,11 +1422,24 @@ void sol_text_buffer_set_cursor_byte(SolTextBuffer *tb, size_t byte_offset)
 /* Selection                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Check if a selection is active.
+ *
+ * tb  The text buffer.
+ * Returns  True if a non-zero selection is active.
+ */
 bool sol_text_buffer_has_selection(const SolTextBuffer *tb)
 {
     return tb ? tb->has_selection : false;
 }
 
+/*
+ * Get the byte range of the current selection.
+ *
+ * tb        The text buffer.
+ * out_start Output parameter for the selection start byte offset.
+ * out_end   Output parameter for the selection end byte offset.
+ */
 void sol_text_buffer_selection_range(const SolTextBuffer *tb,
                                      size_t *out_start, size_t *out_end)
 {
@@ -1016,6 +1457,14 @@ void sol_text_buffer_selection_range(const SolTextBuffer *tb,
     }
 }
 
+/*
+ * Set the selection anchor at the cursor position.
+ *
+ * The anchor marks the non-moving end of a selection. A zero-width
+ * selection remains inactive until the cursor moves.
+ *
+ * tb  The text buffer.
+ */
 void sol_text_buffer_set_selection_anchor(SolTextBuffer *tb)
 {
     if (!tb) return;
@@ -1024,12 +1473,26 @@ void sol_text_buffer_set_selection_anchor(SolTextBuffer *tb)
        stays false until the cursor moves while the anchor is held. */
 }
 
+/*
+ * Clear any active selection.
+ *
+ * tb  The text buffer.
+ */
 void sol_text_buffer_clear_selection(SolTextBuffer *tb)
 {
     if (!tb) return;
     tb->has_selection = false;
 }
 
+/*
+ * Delete the selected text.
+ *
+ * Removes the selection from the rope and moves the cursor to the
+ * start of the deleted region. The operation is added to undo history.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if no selection is active.
+ */
 bool sol_text_buffer_delete_selection(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope || !tb->has_selection) return false;
@@ -1049,6 +1512,13 @@ bool sol_text_buffer_delete_selection(SolTextBuffer *tb)
     return true;
 }
 
+/*
+ * Select all text in the buffer.
+ *
+ * Sets the selection to span the entire rope. The cursor moves to the end.
+ *
+ * tb  The text buffer.
+ */
 void sol_text_buffer_select_all(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return;
@@ -1059,6 +1529,14 @@ void sol_text_buffer_select_all(SolTextBuffer *tb)
     tb_update_preferred_col(tb);
 }
 
+/*
+ * Copy the selected text into a buffer.
+ *
+ * tb   The text buffer.
+ * out  Output buffer for the selection bytes.
+ * max  Maximum bytes to copy.
+ * Returns  Number of bytes copied, or 0 if no selection is active.
+ */
 size_t sol_text_buffer_copy_selection_bytes(const SolTextBuffer *tb,
                                              char *out, size_t max)
 {
@@ -1074,8 +1552,15 @@ size_t sol_text_buffer_copy_selection_bytes(const SolTextBuffer *tb,
 /* Motion with optional selection extension                            */
 /* ------------------------------------------------------------------ */
 
-/* Helper: ensure the anchor is set if we are about to extend, or clear
-   the selection if not extending. */
+/*
+ * Prepare for cursor movement with optional selection extension.
+ *
+ * If extending, sets the anchor if not already active.
+ * If not extending, clears any active selection.
+ *
+ * tb      The text buffer.
+ * extend  Whether to extend or clear the selection.
+ */
 static void tb_prep_sel(SolTextBuffer *tb, bool extend)
 {
     if (extend) {
@@ -1088,13 +1573,29 @@ static void tb_prep_sel(SolTextBuffer *tb, bool extend)
     }
 }
 
-/* After moving: if cursor == anchor the selection collapsed — clear it. */
+/*
+ * Finalize selection state after cursor movement.
+ *
+ * If the cursor and anchor are at the same position, clear the selection.
+ *
+ * tb      The text buffer.
+ * extend  Whether selection extension was active.
+ */
 static void tb_finalize_sel(SolTextBuffer *tb, bool extend)
 {
     if (extend && tb->cursor_byte == tb->sel_anchor_byte)
         tb->has_selection = false;
 }
 
+/*
+ * Move the cursor with optional selection extension.
+ *
+ * tb         The text buffer.
+ * dx         Horizontal movement in codepoints.
+ * dy         Vertical movement in lines.
+ * sticky_col If true, vertical movement tries to maintain the preferred column.
+ * extend_sel If true, extend the selection; otherwise clear it.
+ */
 void sol_text_buffer_move_cursor_sel(SolTextBuffer *tb,
                                      int dx, int dy, bool sticky_col,
                                      bool extend_sel)
@@ -1105,6 +1606,12 @@ void sol_text_buffer_move_cursor_sel(SolTextBuffer *tb,
     tb_finalize_sel(tb, extend_sel);
 }
 
+/*
+ * Move the cursor to line start with optional selection extension.
+ *
+ * tb         The text buffer.
+ * extend_sel If true, extend the selection; otherwise clear it.
+ */
 void sol_text_buffer_move_line_start_sel(SolTextBuffer *tb, bool extend_sel)
 {
     if (!tb || !tb->rope) return;
@@ -1113,6 +1620,12 @@ void sol_text_buffer_move_line_start_sel(SolTextBuffer *tb, bool extend_sel)
     tb_finalize_sel(tb, extend_sel);
 }
 
+/*
+ * Move the cursor to line end with optional selection extension.
+ *
+ * tb         The text buffer.
+ * extend_sel If true, extend the selection; otherwise clear it.
+ */
 void sol_text_buffer_move_line_end_sel(SolTextBuffer *tb, bool extend_sel)
 {
     if (!tb || !tb->rope) return;
@@ -1121,6 +1634,14 @@ void sol_text_buffer_move_line_end_sel(SolTextBuffer *tb, bool extend_sel)
     tb_finalize_sel(tb, extend_sel);
 }
 
+/*
+ * Set the cursor to a line and column with optional selection extension.
+ *
+ * tb         The text buffer.
+ * line       The target line number.
+ * cp_col     The target column in codepoint units.
+ * extend_sel If true, extend the selection; otherwise clear it.
+ */
 void sol_text_buffer_set_cursor_to_sel(SolTextBuffer *tb,
                                        size_t line, size_t cp_col,
                                        bool extend_sel)
@@ -1131,6 +1652,14 @@ void sol_text_buffer_set_cursor_to_sel(SolTextBuffer *tb,
     tb_finalize_sel(tb, extend_sel);
 }
 
+/*
+ * Move the cursor by a page with optional selection extension.
+ *
+ * tb              The text buffer.
+ * dir             Page direction: positive for down, negative for up.
+ * extend_sel      If true, extend the selection; otherwise clear it.
+ * viewport_lines  The number of visible lines in the viewport.
+ */
 void sol_text_buffer_move_page(SolTextBuffer *tb, int dir,
                                bool extend_sel, int viewport_lines)
 {
@@ -1145,6 +1674,15 @@ void sol_text_buffer_move_page(SolTextBuffer *tb, int dir,
 /* Word motion                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Move the cursor to the start of the next/previous word.
+ *
+ * Word boundaries are between word characters and non-word characters.
+ *
+ * tb         The text buffer.
+ * dir        Direction: positive for forward, negative for backward.
+ * extend_sel If true, extend the selection; otherwise clear it.
+ */
 void sol_text_buffer_move_word(SolTextBuffer *tb, int dir, bool extend_sel)
 {
     if (!tb || !tb->rope) return;
@@ -1190,6 +1728,15 @@ void sol_text_buffer_move_word(SolTextBuffer *tb, int dir, bool extend_sel)
     tb_finalize_sel(tb, extend_sel);
 }
 
+/*
+ * Delete the word at or before the cursor.
+ *
+ * Removes the selection if active. Otherwise deletes the word containing
+ * the cursor, or the previous word if between words.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if at start of buffer or deletion fails.
+ */
 bool sol_text_buffer_delete_word_back(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -1250,6 +1797,15 @@ bool sol_text_buffer_delete_word_back(SolTextBuffer *tb)
     return true;
 }
 
+/*
+ * Delete the word at or after the cursor.
+ *
+ * Removes the selection if active. Otherwise deletes the word containing
+ * the cursor and any non-word characters after it.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if at end of buffer or deletion fails.
+ */
 bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -1306,6 +1862,15 @@ bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb)
 /* Line operations                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Duplicate the current line and place the copy below it.
+ *
+ * The cursor moves to the same column on the duplicated line.
+ * A newline is inserted before the trailing newline of the original line.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false on allocation or rope failure.
+ */
 bool sol_text_buffer_duplicate_line(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -1338,6 +1903,15 @@ bool sol_text_buffer_duplicate_line(SolTextBuffer *tb)
     return true;
 }
 
+/*
+ * Delete the current line including its trailing newline.
+ *
+ * The cursor moves to the same byte offset (clamped to the new rope size).
+ * If the line is empty or only contains a newline, it is still deleted.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false on rope failure.
+ */
 bool sol_text_buffer_delete_line(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope) return false;
@@ -1374,16 +1948,37 @@ bool sol_text_buffer_delete_line(SolTextBuffer *tb)
 /* Undo / redo                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Check if an undo operation is available.
+ *
+ * tb  The text buffer.
+ * Returns  True if there are undo records on the stack.
+ */
 bool sol_text_buffer_can_undo(const SolTextBuffer *tb)
 {
     return tb && tb->undo_top > 0;
 }
 
+/*
+ * Check if a redo operation is available.
+ *
+ * tb  The text buffer.
+ * Returns  True if there are redo records on the stack.
+ */
 bool sol_text_buffer_can_redo(const SolTextBuffer *tb)
 {
     return tb && tb->undo_top < tb->undo_end;
 }
 
+/*
+ * Undo the most recent edit.
+ *
+ * Removes inserted bytes, re-inserts removed bytes, and restores cursor
+ * and selection state. Moves the undo/redo watermark backward.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if undo stack is empty.
+ */
 bool sol_text_buffer_undo(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope || tb->undo_top <= 0) return false;
@@ -1406,6 +2001,15 @@ bool sol_text_buffer_undo(SolTextBuffer *tb)
     return true;
 }
 
+/*
+ * Redo the most recently undone edit.
+ *
+ * Removes old bytes, re-inserts new bytes, and restores the cursor.
+ * Selection is cleared. Moves the undo/redo watermark forward.
+ *
+ * tb  The text buffer.
+ * Returns  True on success, false if redo stack is empty.
+ */
 bool sol_text_buffer_redo(SolTextBuffer *tb)
 {
     if (!tb || !tb->rope || tb->undo_top >= tb->undo_end) return false;

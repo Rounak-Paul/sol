@@ -294,83 +294,286 @@ struct SolUISystem {
 /* Cross-module helpers                                                */
 /* ------------------------------------------------------------------ */
 
-/* Bump a u32 revision signal: read-current + set-plus-one. Cheap when
-   nothing has subscribed. Use this for UI-only revision counters
-   (sig_leader_prefix_rev, sig_flow_registry_rev, sig_window_rev).
-   Data-layer signals (sig_buffer_rev, sig_file_tree_rev) are bumped
-   by the data systems themselves — callers don't touch them. */
+/*
+ * Increment a u32 revision signal (read current + write incremented value).
+ *
+ * sig  Causality signal to increment.
+ */
 void sol_ui_bump_u32(Ca_Signal *sig);
 
-/* Search window lifecycle (search_window.c). */
+/*
+ * Open the search window in file mode (search for files by name).
+ *
+ * ui  UI system.
+ */
 void sol_ui_search_window_open_files(SolUISystem *ui);
+
+/*
+ * Open the search window in content mode (search file contents).
+ *
+ * ui  UI system.
+ */
 void sol_ui_search_window_open_contents(SolUISystem *ui);
+
+/*
+ * Update the search window each frame (process input, render).
+ */
 void sol_ui_search_window_tick(void);
 
-/* Key utilities (command_flow.c) */
+/*
+ * Check if a key code represents a modifier key (Shift, Alt, Control, etc.).
+ *
+ * key  Key code to test.
+ * Returns True if the key is a modifier.
+ */
 bool        sol_ui_is_modifier_key(SolKeyCode key);
+
+/*
+ * Check if a key code matches the UI system's leader key.
+ *
+ * ui   UI system.
+ * key  Key code to test.
+ * Returns True if the key matches the configured leader.
+ */
 bool        sol_ui_is_leader_key(const SolUISystem *ui, SolKeyCode key);
+
+/*
+ * Normalize a key code for command flow matching (strip redundant variants).
+ *
+ * key  Key code to normalize.
+ * Returns Normalized key code.
+ */
 SolKeyCode  sol_ui_normalize_flow_key(SolKeyCode key);
+
+/*
+ * Format a key code into a human-readable name string.
+ *
+ * key       Key code to format.
+ * out       Output buffer.
+ * out_size  Size of the output buffer.
+ */
 void        sol_ui_format_key_name(SolKeyCode key, char *out, size_t out_size);
+
+/*
+ * Format a modifier mask and key code into a combined readable string.
+ *
+ * modifiers  Modifier mask (Shift, Alt, Control).
+ * key        Key code.
+ * out        Output buffer.
+ * out_size   Size of the output buffer.
+ */
 void        sol_ui_format_modified_key(SolModifierMask modifiers, SolKeyCode key,
                                        char *out, size_t out_size);
 
-/* Status bar (status_bar.c) */
+/*
+ * Set the status bar text and kind badge.
+ *
+ * ui    UI system.
+ * kind  Single character badge kind (K/C/L).
+ * text  Status text to display.
+ */
 void sol_ui_set_status_text(SolUISystem *ui, char kind, const char *text);
+
+/*
+ * Set the status bar to display a single key binding.
+ *
+ * ui        UI system.
+ * key       Key code to display.
+ * modifiers Modifier mask for the key.
+ */
 void sol_ui_set_status_key(SolUISystem *ui, SolKeyCode key, SolModifierMask modifiers);
+
+/*
+ * Set the status bar to display a key sequence binding.
+ *
+ * ui               UI system.
+ * sequence         Array of key codes in the sequence.
+ * length           Number of keys in the sequence.
+ * step_modifiers   Optional modifier mask per step.
+ * last_modifiers   Final modifier mask for completion display.
+ */
 void sol_ui_set_status_sequence(SolUISystem *ui, const SolKeyCode *sequence,
                                 size_t length,
                                 const SolModifierMask *step_modifiers,
                                 SolModifierMask last_modifiers);
+
+/*
+ * Render the status bar to the causality widget tree.
+ *
+ * ui  UI system.
+ */
 void sol_ui_render_status_bar(SolUISystem *ui);
 
-/* Leader popup (command_flow.c) */
+/*
+ * Open the leader (which-key) popup overlay.
+ *
+ * ui  UI system.
+ */
 void sol_ui_open_leader_popup(SolUISystem *ui);
+
+/*
+ * Close the leader (which-key) popup overlay.
+ *
+ * ui  UI system.
+ */
 void sol_ui_close_leader_popup(SolUISystem *ui);
 
-/* Flow matching (command_flow.c). `prefix_modifiers` may be NULL to
-   match purely on key (legacy behaviour); when non-NULL, each prefix
-   step must agree with the flow's `step_modifiers[i]`. */
+/*
+ * Check if a command flow matches the given key prefix.
+ *
+ * flow             Command flow to test.
+ * prefix           Key codes in the prefix.
+ * prefix_modifiers Modifier masks per prefix step (may be NULL).
+ * prefix_length    Number of keys in the prefix.
+ * Returns True if the flow matches the prefix.
+ */
 bool   sol_ui_flow_matches_prefix(const SolCommandFlowBinding *flow,
                                   const SolKeyCode *prefix,
                                   const SolModifierMask *prefix_modifiers,
                                   size_t prefix_length);
+
+/*
+ * Collect all viable next key suggestions for the current leader prefix.
+ *
+ * ui        UI system.
+ * out       Output array for suggestions.
+ * capacity  Maximum number of suggestions to return.
+ * Returns Number of suggestions collected.
+ */
 size_t sol_ui_collect_suggestions(SolUISystem *ui,
                                   SolFlowSuggestion *out, size_t capacity);
 
-/* Render passes (command_panel.c, workspace.c) */
+/*
+ * Render the command flow (leader) popup panel.
+ *
+ * ui  UI system.
+ */
 void sol_ui_render_command_flow_panel(SolUISystem *ui);
+
+/*
+ * Render the workspace tree structure (buffers and splits).
+ *
+ * ui  UI system.
+ */
 void sol_ui_render_workspace_tree(SolUISystem *ui);
+
+/*
+ * Render the file tree explorer panel (top-level).
+ *
+ * ui  UI system.
+ */
 void sol_ui_render_file_tree_panel(SolUISystem *ui);
+
+/*
+ * Render the file tree explorer panel body (tree rows).
+ *
+ * ui  UI system.
+ */
 void sol_ui_render_file_tree_panel_body(SolUISystem *ui);
 
-/* Sticky-scroll ancestor builder — registered as the reactive builder
-   on tree_sticky_host in workspace.c; defined in file_tree_panel.c. */
+/*
+ * Render builder for sticky-scroll ancestor headers in the file tree.
+ *
+ * div       Causality div element to populate.
+ * user_data User data (cast to SolUISystem*).
+ */
 void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data);
 
-/* Context menus (context_menu.c). */
+/*
+ * Allocate a context menu context from the pool.
+ *
+ * ui  UI system.
+ * Returns Newly allocated context menu context (or existing if pool full).
+ */
 SolContextMenuCtx *sol_ui_acquire_context_menu_ctx(SolUISystem *ui);
+
+/*
+ * Clear all context menu contexts in the pool.
+ *
+ * ui  UI system.
+ */
 void sol_ui_reset_context_menu_ctxs(SolUISystem *ui);
+
+/*
+ * Attach a context menu to the workspace background.
+ *
+ * ui  UI system.
+ */
 void sol_ui_attach_workspace_context_menu(SolUISystem *ui);
+
+/*
+ * Attach a context menu to an explorer root folder.
+ *
+ * ui         UI system.
+ * root_path  Path to the root folder.
+ */
 void sol_ui_attach_explorer_root_context_menu(SolUISystem *ui, const char *root_path);
+
+/*
+ * Attach a context menu to the empty explorer area.
+ *
+ * ui         UI system.
+ * root_path  Path to the root folder context.
+ */
 void sol_ui_attach_explorer_empty_context_menu(SolUISystem *ui, const char *root_path);
+
+/*
+ * Attach a context menu to a file tree item.
+ *
+ * ui      UI system.
+ * path    Full path to the file or directory.
+ * is_dir  True if the item is a directory.
+ */
 void sol_ui_attach_explorer_item_context_menu(SolUISystem *ui,
                                               const char *path,
                                               bool is_dir);
+
+/*
+ * Attach a context menu to a buffer pane body (editor area).
+ *
+ * ui        UI system.
+ * leaf_id   ID of the buffer node (pane).
+ * buffer_id ID of the buffer in the pane.
+ */
 void sol_ui_attach_buffer_body_context_menu(SolUISystem *ui,
                                             SolBufferNodeId leaf_id,
                                             SolBufferId buffer_id);
+
+/*
+ * Attach a context menu to a buffer tab.
+ *
+ * ui        UI system.
+ * leaf_id   ID of the buffer node (pane).
+ * buffer_id ID of the buffer whose tab was clicked.
+ */
 void sol_ui_attach_buffer_tab_context_menu(SolUISystem *ui,
                                            SolBufferNodeId leaf_id,
                                            SolBufferId buffer_id);
 
-/* Plugin Manager window — open/tick called from workspace.c;
-   defined in plugin_window.c.                                        */
+/*
+ * Open the plugin manager window.
+ *
+ * instance  Causality instance for the window.
+ * pm        Plugin manager to display.
+ */
 void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm);
+
+/*
+ * Update the plugin manager window each frame.
+ */
 void sol_ui_plugin_window_tick(void);
 
-/* Settings window — open/tick called from workspace.c;
-   defined in settings_window.c.                                      */
+/*
+ * Open the settings window.
+ *
+ * instance  Causality instance for the window.
+ * settings  Settings object to edit.
+ */
 void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings);
+
+/*
+ * Update the settings window each frame.
+ */
 void sol_ui_settings_window_tick(void);
 
 #endif /* SOL_UI_INTERNAL_H */

@@ -24,6 +24,11 @@
 /* Defaults                                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Get default settings.
+ *
+ * Returns a SolSettings struct with default values.
+ */
 SolSettings sol_settings_defaults(void)
 {
     return (SolSettings){
@@ -39,12 +44,23 @@ typedef struct {
     const char *p;
 } JP;  /* JSON parser cursor */
 
+/*
+ * Skip whitespace in JSON parser.
+ *
+ * j  Parser cursor.
+ */
 static void jp_skip_ws(JP *j)
 {
     while (*j->p && isspace((unsigned char)*j->p)) ++j->p;
 }
 
-/* Consume `c` after skipping whitespace. Returns false if not found. */
+/*
+ * Expect and consume a character in JSON after skipping whitespace.
+ *
+ * j  Parser cursor.
+ * c  Character to expect.
+ * Returns false if character not found; true on success.
+ */
 static bool jp_expect(JP *j, char c)
 {
     jp_skip_ws(j);
@@ -53,8 +69,14 @@ static bool jp_expect(JP *j, char c)
     return true;
 }
 
-/* Read a JSON string (between quotes) into buf. Returns false when the
- * next non-whitespace character is not `"`. */
+/*
+ * Parse a JSON string value.
+ *
+ * j      Parser cursor.
+ * buf    Buffer to store string content.
+ * bufsz  Buffer size (including null terminator).
+ * Returns false if no quoted string found; true on success.
+ */
 static bool jp_string(JP *j, char *buf, size_t bufsz)
 {
     jp_skip_ws(j);
@@ -71,7 +93,12 @@ static bool jp_string(JP *j, char *buf, size_t bufsz)
     return true;
 }
 
-/* Read a JSON number (integer or floating-point). Returns NAN on failure. */
+/*
+ * Parse a JSON number value.
+ *
+ * j  Parser cursor.
+ * Returns parsed float, or NAN if invalid or no number found.
+ */
 static float jp_float(JP *j)
 {
     jp_skip_ws(j);
@@ -96,7 +123,11 @@ static float jp_float(JP *j)
     return (float)strtod(tmp, NULL);
 }
 
-/* Skip any JSON value (string, number, bool, null, object, array). */
+/*
+ * Skip any JSON value (string, number, bool, null, object, array).
+ *
+ * j  Parser cursor.
+ */
 static void jp_skip_value(JP *j)
 {
     jp_skip_ws(j);
@@ -136,7 +167,12 @@ static void jp_skip_value(JP *j)
         ++j->p;
 }
 
-/* Parse {"scale": <float>} into s->ui_scale. */
+/*
+ * Parse theme object from JSON.
+ *
+ * j  Parser cursor positioned at theme object.
+ * s  Settings struct to populate.
+ */
 static void jp_parse_theme(JP *j, SolSettings *s)
 {
     if (!jp_expect(j, '{')) return;
@@ -160,7 +196,12 @@ static void jp_parse_theme(JP *j, SolSettings *s)
     }
 }
 
-/* Top-level: {"theme": {...}, ...}. */
+/*
+ * Parse top-level settings object from JSON.
+ *
+ * j  Parser cursor positioned at root object.
+ * s  Settings struct to populate.
+ */
 static void jp_parse_root(JP *j, SolSettings *s)
 {
     if (!jp_expect(j, '{')) return;
@@ -184,6 +225,12 @@ static void jp_parse_root(JP *j, SolSettings *s)
 /* Public API                                                          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Load settings from disk.
+ *
+ * out  Pointer to SolSettings to populate.
+ * Returns true if loaded (or defaults used); false on critical error.
+ */
 bool sol_settings_load(SolSettings *out)
 {
     if (!out) return false;
@@ -218,6 +265,12 @@ bool sol_settings_load(SolSettings *out)
     return ok;
 }
 
+/*
+ * Save settings to disk.
+ *
+ * settings  Settings to save.
+ * Returns false on write error or invalid arguments; true on success.
+ */
 bool sol_settings_save(const SolSettings *settings)
 {
     if (!settings) return false;

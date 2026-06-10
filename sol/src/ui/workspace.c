@@ -143,10 +143,6 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
 /* Reactive helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Bump a u32 revision signal: read current value (no subscription —
-   this runs outside any effect context), then write +1. Notifies
-   every effect that subscribed via ca_signal_get_u32 during its last
-   evaluation. */
 /*
  * Increment a u32 revision signal, notifying every effect that subscribed
  * to it during its last evaluation.
@@ -178,11 +174,23 @@ void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible)
     }
 }
 
+/*
+ * Check whether the file-tree explorer panel is currently visible.
+ *
+ * ui  The UI system to query.
+ * Returns true if the file tree is visible and the root exists, false otherwise.
+ */
 bool sol_ui_system_file_tree_visible(const SolUISystem *ui)
 {
     return ui ? ui->file_tree_visible : false;
 }
 
+/*
+ * Get the root directory path of the currently-loaded file tree, if any.
+ *
+ * ui  The UI system to query.
+ * Returns the root directory path, or NULL if no tree is loaded or ui is NULL.
+ */
 const char *sol_ui_system_file_tree_root(const SolUISystem *ui)
 {
     return (ui && ui->file_tree) ? sol_file_tree_root(ui->file_tree) : NULL;
@@ -199,11 +207,23 @@ const char *sol_ui_system_file_tree_root(const SolUISystem *ui)
  * direction  The Sol buffer split direction.
  * Returns    CA_HORIZONTAL for vertical splits, CA_VERTICAL for horizontal.
  */
+/*
+ * Convert a Sol buffer split direction to Causality's orthogonal direction.
+ *
+ * direction  The Sol buffer split direction.
+ * Returns    CA_HORIZONTAL for vertical splits, CA_VERTICAL for horizontal splits.
+ */
 static int sol_ui_split_direction_to_ca(SolBufferSplitDirection direction)
 {
     return direction == SOL_BUFFER_SPLIT_VERTICAL ? CA_HORIZONTAL : CA_VERTICAL;
 }
 
+/*
+ * Handle buffer split-pane resize events and persist the new ratio.
+ *
+ * ratio      The new ratio (0.0 to 1.0) the user dragged to.
+ * user_data  A SolSplitCallbackCtx carrying the UI and node context.
+ */
 static void sol_ui_split_on_resize(float ratio, void *user_data)
 {
     SolSplitCallbackCtx *ctx = (SolSplitCallbackCtx *)user_data;
@@ -213,6 +233,14 @@ static void sol_ui_split_on_resize(float ratio, void *user_data)
     sol_buffer_set_split_ratio(ctx->ui->buffers, ctx->node_id, ratio);
 }
 
+/*
+ * Begin a split pane during buffer-workspace traversal and attach resize handling.
+ *
+ * direction  The direction of the split (vertical or horizontal).
+ * ratio      The initial split ratio (0.0 to 1.0).
+ * node_id    The buffer split node identifier to persist resize events.
+ * user_data  A SolWorkspaceVisitorContext carrying the UI system.
+ */
 static void sol_ui_visit_begin_split(SolBufferSplitDirection direction,
                                      float ratio, SolBufferNodeId node_id,
                                      void *user_data)
@@ -245,6 +273,11 @@ static void sol_ui_visit_begin_split(SolBufferSplitDirection direction,
     });
 }
 
+/*
+ * End a split pane during buffer-workspace traversal.
+ *
+ * user_data  Unused (required by the visitor pattern).
+ */
 static void sol_ui_visit_end_split(void *user_data)
 {
     (void)user_data;
@@ -255,6 +288,12 @@ static void sol_ui_visit_end_split(void *user_data)
 /* Pane-click context pool                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Allocate or grow the pane-click context pool and return the next available slot.
+ *
+ * ui  The UI system owning the pool.
+ * Returns a pointer to an available SolPaneClickCtx, or NULL if allocation fails.
+ */
 static SolPaneClickCtx *sol_ui_acquire_pane_click_ctx(SolUISystem *ui)
 {
     if (!ui) return NULL;
@@ -271,6 +310,12 @@ static SolPaneClickCtx *sol_ui_acquire_pane_click_ctx(SolUISystem *ui)
     return &ui->pane_click_ctxs[ui->pane_click_ctx_count++];
 }
 
+/*
+ * Handle a click on a buffer pane area and focus that pane's leaf.
+ *
+ * button     The clicked button (unused).
+ * user_data  A SolPaneClickCtx identifying the pane to activate.
+ */
 static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
 {
     (void)button;
@@ -284,6 +329,12 @@ static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
     (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
 }
 
+/*
+ * Handle a click on a buffer tab and switch to that buffer in the active leaf.
+ *
+ * button     The clicked button (unused).
+ * user_data  A SolPaneClickCtx identifying the tab buffer and target leaf.
+ */
 static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
 {
     (void)button;
@@ -301,6 +352,12 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
     }
 }
 
+/*
+ * Handle a click on a tab close button and remove the buffer from all leaves.
+ *
+ * button     The clicked button (unused).
+ * user_data  A SolPaneClickCtx identifying the buffer to close.
+ */
 static void sol_ui_on_tab_close(Ca_Button *button, void *user_data)
 {
     (void)button;
@@ -311,10 +368,15 @@ static void sol_ui_on_tab_close(Ca_Button *button, void *user_data)
     }
 }
 
-/* Global tab strip rendered ONCE above the entire split tree (Neovim
-   tabline style). Each tab is one live buffer; clicking a tab focuses
-   the currently-active leaf and swaps in that buffer. The active tab
-   is the one whose buffer the active leaf is currently showing. */
+/*
+ * Render the global buffer tab strip above the split-pane tree (Neovim tabline style).
+ *
+ * Each tab represents one live buffer. Clicking a tab focuses the active leaf
+ * and switches it to display that buffer. The active tab highlights the buffer
+ * currently shown by the active leaf.
+ *
+ * ui  The UI system containing the buffers and pane context pool.
+ */
 static void sol_ui_render_global_tab_strip(SolUISystem *ui)
 {
     if (!ui || !ui->buffers) return;
@@ -379,6 +441,15 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
     ca_div_end();   /* buffer-tabs-row */
 }
 
+/*
+ * Render a single buffer leaf pane with its content and click handlers.
+ *
+ * buffer     The buffer to display, or NULL if the leaf is empty.
+ * leaf_id    The leaf node identifier.
+ * is_active  Whether this is the currently active leaf.
+ * rect       The layout rectangle for the pane, or NULL to use dynamic layout.
+ * user_data  A SolWorkspaceVisitorContext carrying the UI system.
+ */
 static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
                                      bool is_active, const SolBufferRect *rect,
                                      void *user_data)
@@ -431,6 +502,14 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
     ca_div_end();  /* buffer-pane */
 }
 
+/*
+ * Render the buffer split-pane tree or the welcome screen if no buffers exist.
+ *
+ * Traverses the buffer workspace tree, emitting split containers and leaf panes.
+ * When no buffers are open, displays an interactive welcome screen.
+ *
+ * ui  The UI system containing the buffers and workspace state.
+ */
 void sol_ui_render_workspace_tree(SolUISystem *ui)
 {
     if (!ui || !ui->buffers) {
@@ -573,6 +652,12 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     sol_buffer_workspace_visit(ui->buffers, &root_rect, &visitor, &visitor_context);
 }
 
+/*
+ * Handle file-tree panel resize and persist the new split ratio.
+ *
+ * ratio      The new ratio (0.0 to 1.0) the user dragged to.
+ * user_data  The SolUISystem owning the panel.
+ */
 static void sol_ui_on_panel_resize(float ratio, void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -583,6 +668,16 @@ static void sol_ui_on_panel_resize(float ratio, void *user_data)
 /* Reactive content builder                                            */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Build the reactive workspace content (file tree panel and buffer area).
+ *
+ * Subscribes to buffer revision, file tree revision, file tree visibility,
+ * and window size signals to respond to changes. Emits the file-tree split
+ * (if visible) and the global tab strip and split-pane tree.
+ *
+ * div       The workspace content host div (unused).
+ * user_data The SolUISystem containing the buffers and file tree.
+ */
 static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -676,11 +771,17 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
        tree (file tree + buffer split + tabs) is untouched. */
 }
 
-/* Builder installed on the popup host. The host is an absolute-positioned
-   overlay covering workspace_host; while the popup is inactive the builder
-   emits no children, so the host is an inert transparent rectangle —
-   causality only dispatches input to buttons / focusables, so an empty
-   absolute div with no background and no handlers blocks nothing. */
+/*
+ * Build the reactive command-flow popup overlay (leader prefix suggestions).
+ *
+ * The popup host is an absolute-positioned transparent overlay. When inactive,
+ * the builder emits no children, leaving the host inert. When active, it renders
+ * the command-flow panel. Subscribes to leader-active, leader-prefix-rev, and
+ * flow-registry-rev signals.
+ *
+ * div       The popup host div (unused).
+ * user_data The SolUISystem containing the leader state and command flows.
+ */
 static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
 {
     (void)div;
@@ -703,9 +804,15 @@ static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
     sol_ui_render_command_flow_panel(ui);
 }
 
-/* Builder installed into the system-managed status bar via
-   ca_window_set_status_bar. Causality has already entered the bar's
-   widget context, so this only emits children. */
+/*
+ * Build the status bar content (key hints, leader state, search status).
+ *
+ * Causality owns the status bar container; this builder only emits children.
+ * Called from within the bar's widget context.
+ *
+ * window    The causality window (unused).
+ * user_data The SolUISystem containing the status bar state.
+ */
 static void sol_ui_status_bar_builder(Ca_Window *window, void *user_data)
 {
     (void)window;
@@ -716,6 +823,15 @@ static void sol_ui_status_bar_builder(Ca_Window *window, void *user_data)
     sol_ui_render_status_bar(ui);
 }
 
+/*
+ * Handle per-frame events (reap file pickers, drive caret blink).
+ *
+ * Reaps closed file-picker and settings windows, bumps the buffer signal
+ * for caret blink animation when a buffer is focused, and calls other
+ * per-tick maintenance handlers. Called between layout and paint phases.
+ *
+ * user_data The SolUISystem to tick.
+ */
 static void sol_ui_on_frame(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -744,6 +860,15 @@ static void sol_ui_on_frame(void *user_data)
     }
 }
 
+/*
+ * Update tree-scroll signal and sticky-header width before the frame tick.
+ *
+ * Called before ca_instance_tick to sync the tree's scroll offset into the
+ * reactive signal system and clamp the sticky-header overlay width to the
+ * tree panel's laid-out dimensions (accounting for scrollbar).
+ *
+ * ui  The UI system to update.
+ */
 void sol_ui_system_pre_tick(SolUISystem *ui)
 {
     if (!ui || !ui->primary_window || !ui->sig_tree_scroll) return;
@@ -768,6 +893,16 @@ void sol_ui_system_pre_tick(SolUISystem *ui)
     }
 }
 
+/*
+ * Build and install the main UI layout tree (workspace host and nested builders).
+ *
+ * Constructs the app-root container, workspace host, content host with reactive
+ * builder, popup overlay host, and sticky-tree header host. Installs reactive
+ * builders and frame callback.
+ *
+ * ui  The UI system to populate with the layout.
+ * Returns true on success, false if layout construction fails.
+ */
 static bool sol_ui_build_layout(SolUISystem *ui)
 {
     if (!ui || !ui->primary_window) {
@@ -841,6 +976,17 @@ static bool sol_ui_build_layout(SolUISystem *ui)
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Create and initialize a new Sol UI system.
+ *
+ * Allocates the UI system, creates reactive signals, initializes the file tree,
+ * parses the stylesheet, creates the primary window, and builds the layout tree.
+ * The buffer system's revision signal is attached to auto-notify on mutations.
+ *
+ * instance  The Causality instance to attach the window to.
+ * buffers   The buffer system to manage.
+ * Returns   A new SolUISystem, or NULL if initialization fails.
+ */
 SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffers)
 {
     if (!instance || !buffers) {
@@ -947,6 +1093,14 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     return ui;
 }
 
+/*
+ * Destroy a Sol UI system and free its resources.
+ *
+ * Frees the file tree, click context pools, context menu contexts, window,
+ * stylesheet, and the UI system itself. Safe to call with NULL.
+ *
+ * ui  The UI system to destroy.
+ */
 void sol_ui_system_destroy(SolUISystem *ui)
 {
     if (!ui) {
@@ -984,6 +1138,12 @@ void sol_ui_system_destroy(SolUISystem *ui)
     free(ui);
 }
 
+/*
+ * Get the primary Causality window from the UI system.
+ *
+ * ui  The UI system to query.
+ * Returns the primary window, or NULL if ui is NULL or the window is not created.
+ */
 Ca_Window *sol_ui_system_primary_window(SolUISystem *ui)
 {
     return ui ? ui->primary_window : NULL;
@@ -993,6 +1153,17 @@ Ca_Window *sol_ui_system_primary_window(SolUISystem *ui)
 /* Input event routing                                                 */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Route an input event through the UI system's key binding and command-flow handlers.
+ *
+ * Manages leader-key state, prefix matching, command-flow dispatch, and status
+ * bar updates. Returns true if the event was consumed (handled by a binding or
+ * leader state), false to allow propagation to the app layer.
+ *
+ * ui     The UI system to route through.
+ * event  The input event to process.
+ * Returns true if the event was handled, false to allow further processing.
+ */
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event)
 {
     if (!ui || !event || event->type != SOL_INPUT_EVENT_KEY_DOWN) {
@@ -1149,6 +1320,15 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
 /* Window event hooks                                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Handle window close event and invalidate UI references.
+ *
+ * Called when the primary window is being destroyed. Clears all cached
+ * widget pointers to prevent dangling references after window destruction.
+ *
+ * ui      The UI system being closed.
+ * window  The window being closed (must be the primary window).
+ */
 void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
 {
     if (!ui || !window || ui->primary_window != window) {
@@ -1162,6 +1342,17 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
     ui->popup_host             = NULL;
 }
 
+/*
+ * Handle window resize event and invalidate size-sensitive layouts.
+ *
+ * Updates the cached window dimensions and bumps the window-revision signal
+ * to trigger re-layout of size-sensitive builders. Causality automatically
+ * reflows the title and status bars.
+ *
+ * ui      The UI system to update.
+ * width   The new window width in pixels.
+ * height  The new window height in pixels.
+ */
 void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
 {
     /* No pixel math here — causality reflows the title/status strips and
@@ -1179,6 +1370,13 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
 /* Title-bar menu                                                      */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Menu action handler for "New Buffer" (File > New or Cmd+N equivalent).
+ *
+ * Delegates to the installed menu callback if one exists.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
 static void sol_ui_menu_new_buffer_action(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -1187,6 +1385,13 @@ static void sol_ui_menu_new_buffer_action(void *user_data)
     }
 }
 
+/*
+ * Menu action handler for "Open File" (File > Open File).
+ *
+ * Delegates to the installed menu callback if one exists.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
 static void sol_ui_menu_open_file_action(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -1195,6 +1400,13 @@ static void sol_ui_menu_open_file_action(void *user_data)
     }
 }
 
+/*
+ * Menu action handler for "Open Folder" (File > Open Folder).
+ *
+ * Delegates to the installed menu callback if one exists.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
 static void sol_ui_menu_open_folder_action(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -1203,35 +1415,84 @@ static void sol_ui_menu_open_folder_action(void *user_data)
     }
 }
 
+/*
+ * Menu action handler for "Plugin Manager" (Sol > Plugin Manager).
+ *
+ * Opens the plugin manager window via the UI system.
+ *
+ * user_data  The SolUISystem to open the plugin window in.
+ */
 static void sol_ui_menu_open_plugin_manager_action(void *user_data)
 {
     sol_ui_system_open_plugin_window((SolUISystem *)user_data);
 }
 
+/*
+ * Menu action handler for "Settings" (Sol > Settings).
+ *
+ * Opens the settings window via the UI system.
+ *
+ * user_data  The SolUISystem to open the settings window in.
+ */
 static void sol_ui_menu_open_settings_action(void *user_data)
 {
     sol_ui_system_open_settings_window((SolUISystem *)user_data);
 }
 
-/* Ca_ClickFn-compatible wrappers for welcome-screen buttons */
+/*
+ * Welcome-screen button click handler for "New Buffer".
+ *
+ * Adapts Ca_ClickFn signature to call the menu action handler.
+ *
+ * btn       The clicked button (unused).
+ * user_data The SolUISystem.
+ */
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     sol_ui_menu_new_buffer_action(user_data);
 }
 
+/*
+ * Welcome-screen button click handler for "Open File".
+ *
+ * Adapts Ca_ClickFn signature to call the menu action handler.
+ *
+ * btn       The clicked button (unused).
+ * user_data The SolUISystem.
+ */
 static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     sol_ui_menu_open_file_action(user_data);
 }
 
+/*
+ * Welcome-screen button click handler for "Open Folder".
+ *
+ * Adapts Ca_ClickFn signature to call the menu action handler.
+ *
+ * btn       The clicked button (unused).
+ * user_data The SolUISystem.
+ */
 static void sol_ui_welcome_click_open_folder(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     sol_ui_menu_open_folder_action(user_data);
 }
 
+/*
+ * Install menu callbacks and build the title-bar menu structure.
+ *
+ * Creates and registers the File, Sol, and Plugins menus with the primary
+ * window's title bar. Menu actions delegate to the installed callbacks.
+ *
+ * ui              The UI system to install the menu in.
+ * on_new_buffer   Callback for "New Buffer" action, or NULL.
+ * on_open_file    Callback for "Open File" action, or NULL.
+ * on_open_folder  Callback for "Open Folder" action, or NULL.
+ * user_data       Context passed to the menu callbacks.
+ */
 void sol_ui_system_install_menu(SolUISystem      *ui,
                                 SolUIMenuActionFn on_new_buffer,
                                 SolUIMenuActionFn on_open_file,
@@ -1300,6 +1561,15 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
                                   (int)(sizeof(menus) / sizeof(menus[0])));
 }
 
+/*
+ * Tick the UI system's async tasks (file picker, plugin window, settings, search).
+ *
+ * Public API for hosts driving the event loop themselves. Equivalent to the
+ * on_frame reaping path but can be called independently to keep async windows
+ * responsive without relying on the primary window's frame callback.
+ *
+ * ui  The UI system (currently unused, kept for future expansion).
+ */
 void sol_ui_system_tick(SolUISystem *ui)
 {
     (void)ui;
@@ -1313,48 +1583,101 @@ void sol_ui_system_tick(SolUISystem *ui)
     sol_ui_search_window_tick();
 }
 
+/*
+ * Attach a plugin manager to the UI system.
+ *
+ * ui  The UI system to update.
+ * pm  The plugin manager, or NULL to detach.
+ */
 void sol_ui_system_set_plugin_manager(SolUISystem *ui, SolPluginManager *pm)
 {
     if (ui) ui->plugin_manager = pm;
 }
 
+/*
+ * Get the current leader modifier key for command-flow activation.
+ *
+ * ui  The UI system to query.
+ * Returns the leader modifier mask (typically SOL_MOD_CTRL), or SOL_MOD_NONE if ui is NULL.
+ */
 SolModifierMask sol_ui_system_leader_modifier(const SolUISystem *ui)
 {
     return ui ? ui->leader_modifier : SOL_MOD_NONE;
 }
 
+/*
+ * Set the leader modifier key for command-flow activation.
+ *
+ * ui   The UI system to update.
+ * mod  The modifier mask to use (e.g., SOL_MOD_CTRL, SOL_MOD_ALT).
+ */
 void sol_ui_system_set_leader_modifier(SolUISystem *ui, SolModifierMask mod)
 {
     if (ui) ui->leader_modifier = mod;
 }
 
+/*
+ * Open the plugin manager window.
+ *
+ * ui  The UI system owning the instance and plugin manager.
+ */
 void sol_ui_system_open_plugin_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance) return;
     sol_ui_plugin_window_open(ui->instance, ui->plugin_manager);
 }
 
+/*
+ * Attach a settings object to the UI system.
+ *
+ * ui       The UI system to update.
+ * settings The settings object, or NULL to detach.
+ */
 void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
 {
     if (ui) ui->settings = settings;
 }
 
+/*
+ * Open the settings window.
+ *
+ * ui  The UI system owning the instance and settings.
+ */
 void sol_ui_system_open_settings_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance || !ui->settings) return;
     sol_ui_settings_window_open(ui->instance, ui->settings);
 }
 
+/*
+ * Open the file search window (find files by name in the current directory tree).
+ *
+ * ui  The UI system to open the search window for.
+ */
 void sol_ui_system_open_file_search(SolUISystem *ui)
 {
     sol_ui_search_window_open_files(ui);
 }
 
+/*
+ * Open the content search window (find text in open buffers).
+ *
+ * ui  The UI system to open the search window for.
+ */
 void sol_ui_system_open_content_search(SolUISystem *ui)
 {
     sol_ui_search_window_open_contents(ui);
 }
 
+/*
+ * Force a redraw of the buffer area (back-compat shim).
+ *
+ * The buffer system auto-notifies via sig_buffer_rev on mutations. This
+ * function allows external callers (e.g., legacy code paths) to trigger
+ * a manual redraw by bumping the same signal.
+ *
+ * ui  The UI system to invalidate.
+ */
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
 {
     /* Back-compat shim. The buffer system self-notifies through
@@ -1365,12 +1688,31 @@ void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
     if (ui) sol_ui_bump_u32(ui->sig_buffer_rev);
 }
 
+/*
+ * Get the current window dimensions.
+ *
+ * ui     The UI system to query.
+ * out_w  Receives the window width in pixels, or 0 if ui is NULL.
+ * out_h  Receives the window height in pixels, or 0 if ui is NULL.
+ */
 void sol_ui_system_window_size(const SolUISystem *ui, int *out_w, int *out_h)
 {
     if (out_w) *out_w = ui ? ui->window_w : 0;
     if (out_h) *out_h = ui ? ui->window_h : 0;
 }
 
+/*
+ * Get the bounding rectangle of the buffer display area in logical pixels.
+ *
+ * Accounts for title bar, status bar, tab strip, and optional file-tree panel.
+ *
+ * ui     The UI system to query.
+ * out_x  Receives the left edge in pixels.
+ * out_y  Receives the top edge in pixels.
+ * out_w  Receives the width in pixels.
+ * out_h  Receives the height in pixels.
+ * Returns true if the window dimensions are valid, false otherwise.
+ */
 bool sol_ui_system_buffer_area_rect(const SolUISystem *ui,
                                     float *out_x,
                                     float *out_y,
@@ -1385,18 +1727,36 @@ bool sol_ui_system_buffer_area_rect(const SolUISystem *ui,
    these in sync if either changes. */
 #define SOL_UI_TREE_PANEL_WIDTH_PX  240
 
+/*
+ * Get the height of the title bar in pixels.
+ *
+ * ui  The UI system (unused, fixed value).
+ * Returns the title bar height in pixels (30px).
+ */
 int sol_ui_system_title_bar_height(const SolUISystem *ui)
 {
     (void)ui;
     return SOL_UI_TITLE_BAR_HEIGHT_PX;
 }
 
+/*
+ * Get the height of the status bar in pixels.
+ *
+ * ui  The UI system (unused, fixed value).
+ * Returns the status bar height in pixels.
+ */
 int sol_ui_system_status_bar_height(const SolUISystem *ui)
 {
     (void)ui;
     return (int)SOL_UI_STATUS_BAR_HEIGHT;
 }
 
+/*
+ * Get the width of the file-tree panel if visible, or 0 if hidden.
+ *
+ * ui  The UI system to query.
+ * Returns the panel width in pixels (240px if visible), or 0 if not visible.
+ */
 int sol_ui_system_tree_panel_width(const SolUISystem *ui)
 {
     if (!ui || !ui->file_tree || !sol_ui_system_file_tree_visible(ui) ||
@@ -1404,11 +1764,27 @@ int sol_ui_system_tree_panel_width(const SolUISystem *ui)
     return SOL_UI_TREE_PANEL_WIDTH_PX;
 }
 
+/*
+ * Check whether the command-flow leader popup is currently open.
+ *
+ * ui  The UI system to query.
+ * Returns true if the leader popup is active, false otherwise.
+ */
 bool sol_ui_system_is_leader_active(const SolUISystem *ui)
 {
     return ui ? ui->leader_active : false;
 }
 
+/*
+ * Focus a buffer leaf pane, activating it in the split tree.
+ *
+ * Invokes the focus-region callback (if installed) and sets the leaf as the
+ * active pane. The buffer system auto-notifies on success.
+ *
+ * ui       The UI system owning the buffers.
+ * leaf_id  The leaf node ID to focus.
+ * Returns true on success, false if invalid leaf or no buffers.
+ */
 bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
 {
     if (!ui || !ui->buffers || leaf_id == 0u) return false;
@@ -1419,6 +1795,16 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
     return sol_buffer_set_active_leaf(ui->buffers, leaf_id);
 }
 
+/*
+ * Install a callback to be invoked when a pane or leaf is focused.
+ *
+ * The callback receives a boolean flag and user context. Used to manage
+ * external UI state (e.g., hiding search or command panels) when focus shifts.
+ *
+ * ui        The UI system to update.
+ * callback  The callback function, or NULL to uninstall.
+ * user_data Context passed to the callback.
+ */
 void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
                                              SolUIFocusRegionFn callback,
                                              void *user_data)
@@ -1428,6 +1814,16 @@ void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
     ui->focus_region_user_data = user_data;
 }
 
+/*
+ * Install a callback to be invoked when a context menu action is selected.
+ *
+ * The callback receives an action code, buffer/file IDs, and user context.
+ * Used to respond to operations like "Copy Path" or "Rename" in context menus.
+ *
+ * ui        The UI system to update.
+ * callback  The callback function, or NULL to uninstall.
+ * user_data Context passed to the callback.
+ */
 void sol_ui_system_set_context_action_callback(SolUISystem *ui,
                                                SolUIContextActionFn callback,
                                                void *user_data)

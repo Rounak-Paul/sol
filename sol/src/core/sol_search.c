@@ -27,6 +27,12 @@ struct SolSearchIndex {
     size_t         file_capacity;
 };
 
+/*
+ * Allocate and copy a string.
+ *
+ * text  String to copy (may be NULL).
+ * Returns allocated copy, or NULL if text is NULL or OOM.
+ */
 static char *search_strdup(const char *text)
 {
     if (!text) return NULL;
@@ -36,6 +42,11 @@ static char *search_strdup(const char *text)
     return copy;
 }
 
+/*
+ * Normalize path separators to forward slashes.
+ *
+ * path  Path to normalize (may be NULL).
+ */
 static void search_normalize_relative_path(char *path)
 {
     if (!path) return;
@@ -44,6 +55,12 @@ static void search_normalize_relative_path(char *path)
     }
 }
 
+/*
+ * Check whether a directory should be excluded from indexing.
+ *
+ * name  Directory name.
+ * Returns true if directory should be ignored.
+ */
 static bool search_is_ignored_dir(const char *name)
 {
     if (!name || !name[0]) return true;
@@ -53,6 +70,15 @@ static bool search_is_ignored_dir(const char *name)
            strcmp(name, "node_modules") == 0;
 }
 
+/*
+ * Add a file to the search index.
+ *
+ * index          Index to add to.
+ * full_path      Absolute file path.
+ * relative_path  Relative path from root.
+ * size_bytes     File size in bytes.
+ * Returns false on OOM or if index is full; true on success.
+ */
 static bool search_index_add_file(SolSearchIndex *index,
                                   const char *full_path,
                                   const char *relative_path,
@@ -83,6 +109,14 @@ static bool search_index_add_file(SolSearchIndex *index,
     return true;
 }
 
+/*
+ * Recursively walk a directory tree and index files.
+ *
+ * index               Index to populate.
+ * directory           Absolute directory path to walk.
+ * relative_directory  Relative directory path from root.
+ * depth               Current recursion depth.
+ */
 static void search_index_walk(SolSearchIndex *index,
                               const char *directory,
                               const char *relative_directory,
@@ -128,6 +162,12 @@ static void search_index_walk(SolSearchIndex *index,
     sol_platform_dir_close(&iter);
 }
 
+/*
+ * Create and build a file search index for a directory tree.
+ *
+ * root_path  Root directory to index.
+ * Returns a new index, or NULL if root_path is invalid or OOM.
+ */
 SolSearchIndex *sol_search_index_create(const char *root_path)
 {
     if (!root_path || !root_path[0]) return NULL;
@@ -147,6 +187,11 @@ SolSearchIndex *sol_search_index_create(const char *root_path)
     return index;
 }
 
+/*
+ * Destroy a search index and free all associated memory.
+ *
+ * index  Index to destroy (may be NULL).
+ */
 void sol_search_index_destroy(SolSearchIndex *index)
 {
     if (!index) return;
@@ -159,16 +204,35 @@ void sol_search_index_destroy(SolSearchIndex *index)
     free(index);
 }
 
+/*
+ * Get the root path of a search index.
+ *
+ * index  Index to query (may be NULL).
+ * Returns root path, or NULL if index is NULL.
+ */
 const char *sol_search_index_root(const SolSearchIndex *index)
 {
     return index ? index->root_path : NULL;
 }
 
+/*
+ * Get the number of files in a search index.
+ *
+ * index  Index to query (may be NULL).
+ * Returns file count, or 0 if index is NULL.
+ */
 size_t sol_search_index_file_count(const SolSearchIndex *index)
 {
     return index ? index->file_count : 0u;
 }
 
+/*
+ * Score a candidate path against a fuzzy query.
+ *
+ * candidate  Path to score.
+ * query      Fuzzy search query.
+ * Returns positive score if match, -1 if no match, 0 if empty query.
+ */
 int sol_search_fuzzy_score(const char *candidate, const char *query)
 {
     if (!candidate || !query) return -1;
@@ -198,6 +262,13 @@ int sol_search_fuzzy_score(const char *candidate, const char *query)
     return score;
 }
 
+/*
+ * Comparator for qsort to rank search results.
+ *
+ * a  First result.
+ * b  Second result.
+ * Returns comparison value for sorting by score, line number, and path.
+ */
 static int search_result_compare(const void *a, const void *b)
 {
     const SolSearchResult *x = (const SolSearchResult *)a;
@@ -209,6 +280,14 @@ static int search_result_compare(const void *a, const void *b)
     return strcmp(x->relative_path, y->relative_path);
 }
 
+/*
+ * Add a result to a ranked results array, maintaining top-N candidates.
+ *
+ * results     Results array.
+ * count       Pointer to current count.
+ * capacity    Maximum number of results to keep.
+ * candidate   Result to consider adding.
+ */
 static void search_add_ranked(SolSearchResult *results,
                               size_t *count,
                               size_t capacity,
@@ -226,6 +305,15 @@ static void search_add_ranked(SolSearchResult *results,
     if (candidate->score > results[worst].score) results[worst] = *candidate;
 }
 
+/*
+ * Search for files in the index matching a fuzzy query.
+ *
+ * index            Index to search.
+ * query            Fuzzy search query.
+ * results          Array to store results.
+ * result_capacity  Maximum results to return.
+ * Returns number of results found (sorted by score).
+ */
 size_t sol_search_files(const SolSearchIndex *index,
                         const char *query,
                         SolSearchResult *results,
@@ -248,6 +336,16 @@ size_t sol_search_files(const SolSearchIndex *index,
     return count;
 }
 
+/*
+ * Find a substring in text using Boyer-Moore skip table (case-insensitive).
+ *
+ * text         Text to search.
+ * text_len     Length of text.
+ * query_lower  Lowercase query bytes.
+ * query_len    Length of query.
+ * skip         Boyer-Moore skip table.
+ * Returns pointer to match, or NULL if not found.
+ */
 static const uint8_t *search_find_nocase(const uint8_t *text,
                                          size_t text_len,
                                          const uint8_t *query_lower,
@@ -269,6 +367,13 @@ static const uint8_t *search_find_nocase(const uint8_t *text,
     return NULL;
 }
 
+/*
+ * Detect if data appears to be binary based on null byte presence.
+ *
+ * data  Data to inspect.
+ * size  Number of bytes to inspect.
+ * Returns true if data appears binary.
+ */
 static bool search_looks_binary(const uint8_t *data, size_t size)
 {
     const size_t inspect = size < 4096u ? size : 4096u;
@@ -278,6 +383,17 @@ static bool search_looks_binary(const uint8_t *data, size_t size)
     return false;
 }
 
+/*
+ * Search file contents for a query with progress callback.
+ *
+ * index            Index to search.
+ * query            Search query (non-empty).
+ * results          Array to store results.
+ * result_capacity  Maximum results to return.
+ * progress         Progress callback (optional, called with results and status).
+ * progress_data    User data for progress callback.
+ * Returns number of results found (sorted by score).
+ */
 size_t sol_search_contents_progress(const SolSearchIndex *index,
                                     const char *query,
                                     SolSearchResult *results,
@@ -389,6 +505,15 @@ size_t sol_search_contents_progress(const SolSearchIndex *index,
     return count;
 }
 
+/*
+ * Search file contents for a query without progress callback.
+ *
+ * index            Index to search.
+ * query            Search query (non-empty).
+ * results          Array to store results.
+ * result_capacity  Maximum results to return.
+ * Returns number of results found (sorted by score).
+ */
 size_t sol_search_contents(const SolSearchIndex *index,
                            const char *query,
                            SolSearchResult *results,

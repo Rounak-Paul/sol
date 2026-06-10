@@ -81,6 +81,12 @@ struct SolSyntaxHighlighter {
 /* CSS class ← capture name                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Map a tree-sitter capture name to a CSS class for syntax highlighting.
+ *
+ * name  Tree-sitter capture name (e.g., "string", "comment.line").
+ * Returns CSS class string or NULL if the capture should not be colored.
+ */
 static const char *capture_name_to_css(const char *name)
 {
     if (!name || !*name) return NULL;
@@ -149,6 +155,13 @@ static const char *capture_name_to_css(const char *name)
 /* Regex preprocessing: replace tree-sitter \d \w \s with POSIX BRE  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Convert tree-sitter regex syntax (\d, \w, \s) to POSIX basic regular expression.
+ *
+ * src     Input pattern string.
+ * dst     Output buffer.
+ * dst_sz  Size of the output buffer.
+ */
 static void preprocess_pattern(const char *src, char *dst, size_t dst_sz)
 {
     size_t di = 0u;
@@ -179,6 +192,13 @@ static void preprocess_pattern(const char *src, char *dst, size_t dst_sz)
     dst[di] = '\0';
 }
 
+/*
+ * Allocate and copy a fixed-length string segment.
+ *
+ * src  Source buffer.
+ * len  Number of bytes to copy.
+ * Returns Newly allocated null-terminated string or NULL on failure.
+ */
 static char *sol_syntax_strdup_len(const char *src, size_t len)
 {
     char *out = (char *)malloc(len + 1u);
@@ -188,6 +208,13 @@ static char *sol_syntax_strdup_len(const char *src, size_t len)
     return out;
 }
 
+/*
+ * Compile a regular expression and store it in the predicate.
+ *
+ * pred     Predicate to receive the compiled regex.
+ * pattern  POSIX regex pattern string.
+ * Returns True if compilation succeeded.
+ */
 static bool sol_syntax_regex_compile(SolPred *pred, const char *pattern)
 {
 #if defined(_WIN32)
@@ -197,6 +224,13 @@ static bool sol_syntax_regex_compile(SolPred *pred, const char *pattern)
 #endif
 }
 
+/*
+ * Test if compiled regex matches the given text.
+ *
+ * pred  Predicate containing compiled regex.
+ * text  Text to match against.
+ * Returns True if the regex matches.
+ */
 static bool sol_syntax_regex_match(const SolPred *pred, const char *text)
 {
 #if defined(_WIN32)
@@ -206,6 +240,11 @@ static bool sol_syntax_regex_match(const SolPred *pred, const char *text)
 #endif
 }
 
+/*
+ * Free the compiled regex in the predicate.
+ *
+ * pred  Predicate whose regex should be freed.
+ */
 static void sol_syntax_regex_destroy(SolPred *pred)
 {
 #if defined(_WIN32)
@@ -219,6 +258,11 @@ static void sol_syntax_regex_destroy(SolPred *pred)
 /* Build per-pattern predicate table                                  */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Build the predicate table for all patterns in the highlighter's query.
+ *
+ * h  Syntax highlighter whose pattern_preds array will be populated.
+ */
 static void build_preds(struct SolSyntaxHighlighter *h)
 {
     for (uint32_t pi = 0u; pi < h->pattern_count; pi++) {
@@ -270,6 +314,15 @@ static void build_preds(struct SolSyntaxHighlighter *h)
 /* Predicate evaluation for a single match                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Evaluate a single predicate against a query match and source text.
+ *
+ * pred     Predicate to evaluate.
+ * match    Tree-sitter query match containing captured nodes.
+ * src      Source text buffer.
+ * src_len  Length of the source text.
+ * Returns True if the predicate passes.
+ */
 static bool eval_pred(const SolPred *pred, const TSQueryMatch *match,
                       const char *src, uint32_t src_len)
 {
@@ -332,6 +385,14 @@ static bool eval_pred(const SolPred *pred, const TSQueryMatch *match,
 /* Span management                                                     */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Add a syntax span to the highlighter's output, expanding capacity as needed.
+ *
+ * h     Syntax highlighter to receive the span.
+ * start Byte offset of the span start.
+ * end   Byte offset of the span end.
+ * css   CSS class name for the span.
+ */
 static void push_span(struct SolSyntaxHighlighter *h,
                       uint32_t start, uint32_t end, const char *css)
 {
@@ -351,6 +412,13 @@ static void push_span(struct SolSyntaxHighlighter *h,
     };
 }
 
+/*
+ * Comparator for sorting syntax spans by position (for qsort).
+ *
+ * a  First span.
+ * b  Second span.
+ * Returns Comparison result for qsort.
+ */
 static int span_cmp(const void *a, const void *b)
 {
     const SolSyntaxSpan *x = (const SolSyntaxSpan *)a;
@@ -367,6 +435,13 @@ static int span_cmp(const void *a, const void *b)
 /* Query-based span collection                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Execute the tree-sitter query and collect all matching syntax spans.
+ *
+ * h       Syntax highlighter with compiled query.
+ * src     Source text buffer.
+ * src_len Length of the source text.
+ */
 static void collect_query_spans(struct SolSyntaxHighlighter *h,
                                  const char *src, uint32_t src_len)
 {
@@ -400,6 +475,12 @@ static void collect_query_spans(struct SolSyntaxHighlighter *h,
 /* Legacy DFS walker (fallback when no highlights.scm query)          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Check if a character is a word character (alphanumeric or underscore).
+ *
+ * c  Character to check.
+ * Returns True if the character is a word character.
+ */
 static bool is_word_char(char c)
 {
     return (c >= 'a' && c <= 'z') ||
@@ -408,6 +489,12 @@ static bool is_word_char(char c)
             c == '_';
 }
 
+/*
+ * Check if a string contains only word characters.
+ *
+ * s  String to check.
+ * Returns True if all characters are word characters.
+ */
 static bool type_is_word(const char *s)
 {
     if (!s || !*s) return false;
@@ -417,6 +504,14 @@ static bool type_is_word(const char *s)
     return true;
 }
 
+/*
+ * Map a tree-sitter node type to CSS class for legacy DFS-based highlighting.
+ *
+ * type        Node type name from tree-sitter.
+ * is_named    Whether the node is a named node.
+ * parent_type Node type of the parent node.
+ * Returns CSS class string or NULL if the node should not be colored.
+ */
 static const char *type_to_css_legacy(const char *type, bool is_named,
                                        const char *parent_type)
 {
@@ -502,6 +597,13 @@ static const char *type_to_css_legacy(const char *type, bool is_named,
     return NULL;
 }
 
+/*
+ * Depth-first walk the syntax tree and collect spans (legacy fallback).
+ *
+ * node        Current tree-sitter node.
+ * parent_type Node type of the parent (for context-sensitive coloring).
+ * h           Syntax highlighter to receive the spans.
+ */
 static void collect_spans_legacy(TSNode node, const char *parent_type,
                                   struct SolSyntaxHighlighter *h)
 {
@@ -522,6 +624,13 @@ static void collect_spans_legacy(TSNode node, const char *parent_type,
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Create a syntax highlighter for the given language.
+ *
+ * language     Tree-sitter language pointer.
+ * query_text   Optional highlights.scm query string (may be NULL or empty).
+ * Returns Newly allocated highlighter or NULL on failure.
+ */
 SolSyntaxHighlighter *sol_syntax_highlight_create(const void *language,
                                                    const char *query_text)
 {
@@ -582,6 +691,11 @@ SolSyntaxHighlighter *sol_syntax_highlight_create(const void *language,
     return h;
 }
 
+/*
+ * Deallocate a syntax highlighter and all associated resources.
+ *
+ * h  Highlighter to destroy (NULL-safe).
+ */
 void sol_syntax_highlight_destroy(SolSyntaxHighlighter *h)
 {
     if (!h) return;
@@ -608,6 +722,12 @@ void sol_syntax_highlight_destroy(SolSyntaxHighlighter *h)
 /* Parsing                                                             */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Reparse the rope content and recalculate all syntax spans.
+ *
+ * h     Syntax highlighter.
+ * rope  Rope containing the source text.
+ */
 void sol_syntax_highlight_reparse(SolSyntaxHighlighter *h,
                                    const SolRope        *rope)
 {
@@ -642,6 +762,16 @@ void sol_syntax_highlight_reparse(SolSyntaxHighlighter *h,
 /* Query                                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Query syntax spans that overlap a given byte range.
+ *
+ * h               Syntax highlighter.
+ * line_start_byte Start byte offset of the range.
+ * line_end_byte   End byte offset of the range.
+ * out             Output buffer for spans.
+ * max_out         Maximum number of spans to write.
+ * Returns Number of spans written to the output buffer.
+ */
 size_t sol_syntax_highlight_spans_for_range(
     const SolSyntaxHighlighter *h,
     uint32_t                    line_start_byte,
@@ -662,11 +792,23 @@ size_t sol_syntax_highlight_spans_for_range(
     return written;
 }
 
+/*
+ * Check if the highlighter has been parsed and contains valid spans.
+ *
+ * h  Syntax highlighter.
+ * Returns True if the highlighter has valid parsed data.
+ */
 bool sol_syntax_highlight_is_valid(const SolSyntaxHighlighter *h)
 {
     return h && h->valid;
 }
 
+/*
+ * Get the tree-sitter language associated with the highlighter.
+ *
+ * h  Syntax highlighter.
+ * Returns Tree-sitter language pointer or NULL.
+ */
 const void *sol_syntax_highlight_get_language(const SolSyntaxHighlighter *h)
 {
     return h ? h->language : NULL;

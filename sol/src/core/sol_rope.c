@@ -67,6 +67,13 @@ struct SolRope {
 
 /* ---- Chunk refcount ----------------------------------------------- */
 
+/*
+ * Create a new heap-owned chunk from the given data.
+ *
+ * data  Source bytes to copy (may be NULL if len == 0).
+ * len   Number of bytes to copy.
+ * Returns a new SolRopeChunk with initialized ref_count = 0, or NULL on OOM.
+ */
 static SolRopeChunk *chunk_new_owned(const uint8_t *data, size_t len)
 {
     SolRopeChunk *c = (SolRopeChunk *)malloc(sizeof(*c));
@@ -80,6 +87,12 @@ static SolRopeChunk *chunk_new_owned(const uint8_t *data, size_t len)
     return c;
 }
 
+/*
+ * Create a new memory-mapped chunk from the given SolMappedFile.
+ *
+ * mapped  Pointer to mapped file structure.
+ * Returns a new SolRopeChunk with initialized ref_count = 0, or NULL on OOM.
+ */
 static SolRopeChunk *chunk_new_mapped(const SolMappedFile *mapped)
 {
     SolRopeChunk *c = (SolRopeChunk *)malloc(sizeof(*c));
@@ -91,11 +104,21 @@ static SolRopeChunk *chunk_new_mapped(const SolMappedFile *mapped)
     return c;
 }
 
+/*
+ * Increment the reference count of a chunk.
+ *
+ * c  Chunk to retain (may be NULL, in which case this is a no-op).
+ */
 static void chunk_retain(SolRopeChunk *c)
 {
     if (c) c->ref_count++;
 }
 
+/*
+ * Decrement the reference count and free the chunk when count reaches 0.
+ *
+ * c  Chunk to release (may be NULL, in which case this is a no-op).
+ */
 static void chunk_release(SolRopeChunk *c)
 {
     if (!c) return;
@@ -111,6 +134,14 @@ static void chunk_release(SolRopeChunk *c)
 
 /* ---- UTF-8 / line metrics ----------------------------------------- */
 
+/*
+ * Count UTF-8 characters and newlines in a byte slice.
+ *
+ * p          Source bytes.
+ * len        Number of bytes to scan.
+ * out_chars  Pointer to store character count.
+ * out_lines  Pointer to store newline count.
+ */
 static void slice_metrics(const uint8_t *p, size_t len,
                           size_t *out_chars, size_t *out_lines)
 {
@@ -126,6 +157,11 @@ static void slice_metrics(const uint8_t *p, size_t len,
 
 /* ---- Node lifecycle ----------------------------------------------- */
 
+/*
+ * Recompute aggregated metrics (bytes, chars, lines) for a branch node.
+ *
+ * n  Branch node whose metrics should be updated from its children.
+ */
 static void node_recompute_branch_metrics(SolRopeNode *n)
 {
     assert(!n->is_leaf);
@@ -141,6 +177,14 @@ static void node_recompute_branch_metrics(SolRopeNode *n)
     n->lines = l;
 }
 
+/*
+ * Create a new leaf node referencing a slice of a chunk.
+ *
+ * chunk  Chunk to reference.
+ * start  Byte offset within the chunk.
+ * len    Slice length in bytes.
+ * Returns a new leaf node, or NULL on OOM.
+ */
 static SolRopeNode *node_new_leaf(SolRopeChunk *chunk, uint32_t start, uint32_t len)
 {
     SolRopeNode *n = (SolRopeNode *)malloc(sizeof(*n));
@@ -158,6 +202,11 @@ static SolRopeNode *node_new_leaf(SolRopeChunk *chunk, uint32_t start, uint32_t 
     return n;
 }
 
+/*
+ * Create a new empty branch node.
+ *
+ * Returns a new branch node with zero children, or NULL on OOM.
+ */
 static SolRopeNode *node_new_branch(void)
 {
     SolRopeNode *n = (SolRopeNode *)malloc(sizeof(*n));
@@ -168,6 +217,11 @@ static SolRopeNode *node_new_branch(void)
     return n;
 }
 
+/*
+ * Recursively destroy a node and all its descendants.
+ *
+ * n  Node to destroy (may be NULL, in which case this is a no-op).
+ */
 static void node_destroy(SolRopeNode *n)
 {
     if (!n) return;
@@ -182,10 +236,13 @@ static void node_destroy(SolRopeNode *n)
 
 /* ---- Bottom-up tree builder --------------------------------------- */
 
-/* Build a balanced tree from a flat array of leaves. Consumes the
-   array contents (transferring ownership to the returned tree).
-   Returns NULL on OOM (in which case the caller still owns the
-   leaves and must destroy them). */
+/*
+ * Build a balanced B-tree from a flat array of leaves.
+ *
+ * leaves  Array of leaf nodes (ownership transferred to result).
+ * count   Number of leaves in the array.
+ * Returns balanced tree root, or NULL on OOM (caller retains ownership of leaves).
+ */
 static SolRopeNode *build_tree_from_leaves(SolRopeNode **leaves, size_t count)
 {
     if (count == 0) return NULL;
@@ -248,8 +305,14 @@ static SolRopeNode *build_tree_from_leaves(SolRopeNode **leaves, size_t count)
 
 /* ---- Construction helpers ----------------------------------------- */
 
-/* Slice an existing chunk into a sequence of leaves of size <= LEAF_TARGET.
-   On OOM, frees any partial leaves and returns NULL. */
+/*
+ * Slice a chunk into leaf nodes of size <= LEAF_TARGET.
+ *
+ * chunk       Chunk to slice.
+ * total_len   Total slice length in bytes.
+ * out_count   Pointer to store number of leaves created.
+ * Returns array of leaf nodes, or NULL on OOM (frees partial leaves on error).
+ */
 static SolRopeNode **leaves_from_chunk(SolRopeChunk *chunk, size_t total_len,
                                        size_t *out_count)
 {
@@ -280,6 +343,11 @@ static SolRopeNode **leaves_from_chunk(SolRopeChunk *chunk, size_t total_len,
     return leaves;
 }
 
+/*
+ * Create an empty rope.
+ *
+ * Returns a new empty rope, or NULL on OOM.
+ */
 SolRope *sol_rope_create(void)
 {
     SolRope *r = (SolRope *)malloc(sizeof(*r));
@@ -288,6 +356,13 @@ SolRope *sol_rope_create(void)
     return r;
 }
 
+/*
+ * Create a rope initialized with the given byte data.
+ *
+ * data  Source bytes.
+ * len   Number of bytes to copy.
+ * Returns a new rope, or NULL on OOM.
+ */
 SolRope *sol_rope_from_bytes(const uint8_t *data, size_t len)
 {
     SolRope *r = sol_rope_create();
@@ -318,6 +393,13 @@ SolRope *sol_rope_from_bytes(const uint8_t *data, size_t len)
     return r;
 }
 
+/*
+ * Create a rope initialized from a file via memory mapping.
+ *
+ * path       File path.
+ * out_error  Pointer to store error message on failure (may be NULL).
+ * Returns a new rope, or NULL on error (and sets out_error if provided).
+ */
 SolRope *sol_rope_from_file(const char *path, const char **out_error)
 {
     if (!path) {
@@ -373,6 +455,11 @@ SolRope *sol_rope_from_file(const char *path, const char **out_error)
     return r;
 }
 
+/*
+ * Destroy a rope and free all associated memory.
+ *
+ * rope  Rope to destroy (may be NULL, in which case this is a no-op).
+ */
 void sol_rope_destroy(SolRope *rope)
 {
     if (!rope) return;
@@ -382,15 +469,40 @@ void sol_rope_destroy(SolRope *rope)
 
 /* ---- Metrics ------------------------------------------------------ */
 
+/*
+ * Get the total byte length of the rope.
+ *
+ * r  Rope (may be NULL).
+ * Returns total bytes, or 0 if rope is NULL or empty.
+ */
 size_t sol_rope_byte_len(const SolRope *r)   { return r && r->root ? r->root->bytes : 0; }
+
+/*
+ * Get the total character count of the rope.
+ *
+ * r  Rope (may be NULL).
+ * Returns character count, or 0 if rope is NULL or empty.
+ */
 size_t sol_rope_char_len(const SolRope *r)   { return r && r->root ? r->root->chars : 0; }
+
+/*
+ * Get the total line count of the rope.
+ *
+ * r  Rope (may be NULL).
+ * Returns newline count, or 0 if rope is NULL or empty.
+ */
 size_t sol_rope_line_count(const SolRope *r) { return r && r->root ? r->root->lines : 0; }
 
 /* ---- Index conversions -------------------------------------------- */
 
-/* Walk the tree to find the byte offset where the `target`-th newline
-   ends. Line 0 starts at byte 0; line k (1..lines) starts at the byte
-   immediately after the k-th newline. */
+/*
+ * Find the byte offset where a given line starts.
+ *
+ * n       Root node (or subtree).
+ * target  Target line number to locate.
+ * byte_acc  Accumulated byte offset (used during recursion).
+ * Returns byte offset of the target line's start, or end of rope if not found.
+ */
 static size_t find_line_start(const SolRopeNode *n, size_t target,
                               size_t byte_acc)
 {
@@ -415,6 +527,13 @@ static size_t find_line_start(const SolRopeNode *n, size_t target,
     return byte_acc;
 }
 
+/*
+ * Get the byte offset of a given line number.
+ *
+ * r     Rope (may be NULL).
+ * line  Line number (0-indexed).
+ * Returns byte offset of the line, or rope length if out of bounds.
+ */
 size_t sol_rope_byte_of_line(const SolRope *r, size_t line)
 {
     if (!r || !r->root) return 0;
@@ -423,6 +542,14 @@ size_t sol_rope_byte_of_line(const SolRope *r, size_t line)
     return find_line_start(r->root, line, 0);
 }
 
+/*
+ * Count newlines from the start of a subtree up to a given byte offset.
+ *
+ * n         Root node (or subtree).
+ * byte_off  Byte offset limit within the subtree.
+ * lines_acc Accumulated line count (used during recursion).
+ * Returns total newline count up to the offset.
+ */
 static size_t count_newlines_to_offset(const SolRopeNode *n, size_t byte_off,
                                        size_t lines_acc)
 {
@@ -443,6 +570,13 @@ static size_t count_newlines_to_offset(const SolRopeNode *n, size_t byte_off,
     return lines_acc;
 }
 
+/*
+ * Get the line number containing a given byte offset.
+ *
+ * r     Rope (may be NULL).
+ * byte  Byte offset in the rope.
+ * Returns line number of the byte, or total line count if out of bounds.
+ */
 size_t sol_rope_line_of_byte(const SolRope *r, size_t byte)
 {
     if (!r || !r->root) return 0;
@@ -452,6 +586,15 @@ size_t sol_rope_line_of_byte(const SolRope *r, size_t byte)
 
 /* ---- Read --------------------------------------------------------- */
 
+/*
+ * Read bytes from a subtree starting at a given offset.
+ *
+ * n    Root node (or subtree).
+ * off  Byte offset within the subtree.
+ * out  Buffer to store the read bytes.
+ * max  Maximum bytes to read.
+ * Returns actual number of bytes read.
+ */
 static size_t node_read(const SolRopeNode *n, size_t off, uint8_t *out, size_t max)
 {
     if (n->is_leaf) {
@@ -472,6 +615,15 @@ static size_t node_read(const SolRopeNode *n, size_t off, uint8_t *out, size_t m
     return copied;
 }
 
+/*
+ * Read bytes from the rope starting at a given byte offset.
+ *
+ * r             Rope (may be NULL).
+ * byte_offset   Starting byte offset.
+ * out           Buffer to store the read bytes.
+ * max           Maximum bytes to read.
+ * Returns actual number of bytes read.
+ */
 size_t sol_rope_read(const SolRope *r, size_t byte_offset,
                      uint8_t *out, size_t max)
 {
@@ -495,6 +647,13 @@ typedef struct IterFrame {
 
 _Static_assert(sizeof(IterFrame) <= sizeof(void *) * 2, "iter frame fits");
 
+/*
+ * Push a frame onto the iterator stack.
+ *
+ * it   Iterator to modify.
+ * n    Node pointer to push.
+ * idx  Child index to push.
+ */
 static void iter_push(SolRopeChunkIter *it, const SolRopeNode *n, uint32_t idx)
 {
     /* Use two slots per frame so we can store the full IterFrame. */
@@ -504,6 +663,13 @@ static void iter_push(SolRopeChunkIter *it, const SolRopeNode *n, uint32_t idx)
     it->depth += 2;
 }
 
+/*
+ * Pop a frame from the iterator stack.
+ *
+ * it   Iterator to modify.
+ * out  Pointer to receive the popped frame.
+ * Returns true if a frame was popped, false if stack is empty.
+ */
 static bool iter_pop(SolRopeChunkIter *it, IterFrame *out)
 {
     if (it->depth < 2) return false;
@@ -512,6 +678,12 @@ static bool iter_pop(SolRopeChunkIter *it, IterFrame *out)
     return true;
 }
 
+/*
+ * Initialize a chunk iterator for the given rope.
+ *
+ * it    Iterator to initialize.
+ * rope  Rope to iterate over.
+ */
 void sol_rope_chunk_iter_init(SolRopeChunkIter *it, const SolRope *rope)
 {
     it->rope     = rope;
@@ -520,6 +692,15 @@ void sol_rope_chunk_iter_init(SolRopeChunkIter *it, const SolRope *rope)
     if (rope && rope->root) iter_push(it, rope->root, 0);
 }
 
+/*
+ * Advance the iterator to the next leaf chunk.
+ *
+ * it              Iterator to advance.
+ * out_data        Pointer to receive chunk data pointer (optional).
+ * out_len         Pointer to receive chunk length (optional).
+ * out_byte_offset Pointer to receive byte offset in rope (optional).
+ * Returns true if a chunk was retrieved, false if end of rope reached.
+ */
 bool sol_rope_chunk_iter_next(SolRopeChunkIter *it,
                               const uint8_t **out_data, size_t *out_len,
                               size_t *out_byte_offset)
@@ -557,9 +738,14 @@ static SolRopeNode *node_clone_leaf_slice(const SolRopeNode *leaf,
                                           uint32_t new_start, uint32_t new_len);
 static void normalise_root(SolRope *r);
 
-/* Remove [off, off+len) within node n. May replace n with a different
-   node (or NULL if the result is empty). Returns the new node. The
-   old `n` is consumed (destroyed or repurposed). */
+/*
+ * Remove bytes from a subtree.
+ *
+ * n    Root node (replaced by result).
+ * off  Byte offset of range to remove.
+ * len  Length of range to remove.
+ * Returns the modified subtree root, or NULL if subtree becomes empty.
+ */
 static SolRopeNode *node_remove(SolRopeNode *n, size_t off, size_t len)
 {
     if (len == 0) return n;
@@ -631,10 +817,15 @@ static SolRopeNode *node_remove(SolRopeNode *n, size_t off, size_t len)
 
 /* ---- Edit: insert ------------------------------------------------- */
 
-/* Insert `new_node` into branch `parent` at child position `at`. If the
-   branch overflows, returns a freshly allocated sibling holding the
-   right half via *out_split; otherwise *out_split = NULL. Returns
-   false on OOM (parent is left in a consistent pre-call state). */
+/*
+ * Insert a child into a branch node with potential split.
+ *
+ * parent    Branch node to modify.
+ * at        Child index where new node should be inserted.
+ * new_node  Node to insert.
+ * out_split Pointer to receive new sibling if split occurs, otherwise NULL.
+ * Returns false on OOM (parent unchanged); true on success.
+ */
 static bool branch_insert_child_split(SolRopeNode *parent, uint32_t at,
                                       SolRopeNode *new_node,
                                       SolRopeNode **out_split)
@@ -674,9 +865,17 @@ static bool branch_insert_child_split(SolRopeNode *parent, uint32_t at,
     return true;
 }
 
-/* Recursive insert. On success, *out_node receives the (possibly new)
-   replacement for the subtree rooted at n, and *out_split (if non-NULL)
-   receives a sibling node when the parent must adopt one. */
+/*
+ * Insert leaf nodes into a subtree.
+ *
+ * n          Root node of subtree (replaced by result).
+ * off        Byte offset where new leaves should be inserted.
+ * leaves     Array of leaf nodes to insert (ownership transferred).
+ * leaf_count Number of leaves to insert.
+ * out_node   Pointer to receive modified subtree root.
+ * out_split  Pointer to receive sibling if split occurs, otherwise NULL.
+ * Returns false on OOM; true on success.
+ */
 static bool node_insert(SolRopeNode *n, size_t off,
                         SolRopeNode **leaves, size_t leaf_count,
                         SolRopeNode **out_node, SolRopeNode **out_split)
@@ -754,6 +953,14 @@ static bool node_insert(SolRopeNode *n, size_t off,
 
 /* ---- Helpers ------------------------------------------------------ */
 
+/*
+ * Create a new leaf node referencing a different slice of the same chunk.
+ *
+ * leaf      Existing leaf node.
+ * new_start Byte offset within the chunk.
+ * new_len   Slice length in bytes.
+ * Returns a new leaf node.
+ */
 static SolRopeNode *node_clone_leaf_slice(const SolRopeNode *leaf,
                                           uint32_t new_start, uint32_t new_len)
 {
@@ -761,6 +968,11 @@ static SolRopeNode *node_clone_leaf_slice(const SolRopeNode *leaf,
     return node_new_leaf(leaf->as.leaf.chunk, new_start, new_len);
 }
 
+/*
+ * Collapse single-child root chains for normalization.
+ *
+ * r  Rope whose root should be normalized.
+ */
 static void normalise_root(SolRope *r)
 {
     /* Collapse single-child root chains. */
@@ -773,6 +985,15 @@ static void normalise_root(SolRope *r)
 
 /* ---- Public edit entry points ------------------------------------- */
 
+/*
+ * Insert bytes into the rope at a given position.
+ *
+ * r     Rope (may not be NULL).
+ * at    Byte offset where data should be inserted.
+ * data  Source bytes.
+ * len   Number of bytes to insert.
+ * Returns false on error (invalid position or OOM); true on success.
+ */
 bool sol_rope_insert(SolRope *r, size_t at, const uint8_t *data, size_t len)
 {
     if (!r) return false;
@@ -826,6 +1047,14 @@ bool sol_rope_insert(SolRope *r, size_t at, const uint8_t *data, size_t len)
     return true;
 }
 
+/*
+ * Remove bytes from the rope at a given position.
+ *
+ * r    Rope (may be NULL).
+ * at   Byte offset of range to remove.
+ * len  Length of range to remove.
+ * Returns true (always succeeds); does nothing if rope is empty or range is empty.
+ */
 bool sol_rope_remove(SolRope *r, size_t at, size_t len)
 {
     if (!r || !r->root) return true;

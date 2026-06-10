@@ -14,11 +14,21 @@
 
 static SolSyntaxRegistry *g_global_registry = NULL;
 
+/*
+ * Set the global syntax registry.
+ *
+ * reg  Registry to set as global (may be NULL).
+ */
 void sol_syntax_set_global_registry(SolSyntaxRegistry *reg)
 {
     g_global_registry = reg;
 }
 
+/*
+ * Get the global syntax registry.
+ *
+ * Returns the current global registry, or NULL if not set.
+ */
 SolSyntaxRegistry *sol_syntax_get_global_registry(void)
 {
     return g_global_registry;
@@ -53,6 +63,11 @@ struct SolSyntaxRegistry {
 /* Lifecycle                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Create a new empty syntax registry.
+ *
+ * Returns a new registry, or NULL on OOM.
+ */
 SolSyntaxRegistry *sol_syntax_registry_create(void)
 {
     SolSyntaxRegistry *reg =
@@ -60,6 +75,11 @@ SolSyntaxRegistry *sol_syntax_registry_create(void)
     return reg;
 }
 
+/*
+ * Destroy a syntax registry and free all memory.
+ *
+ * reg  Registry to destroy (may be NULL).
+ */
 void sol_syntax_registry_destroy(SolSyntaxRegistry *reg)
 {
     free(reg);
@@ -69,6 +89,15 @@ void sol_syntax_registry_destroy(SolSyntaxRegistry *reg)
 /* Registration                                                        */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Register a language grammar with the registry.
+ *
+ * reg         Registry to register in.
+ * lang_id     Unique language identifier.
+ * language    Language grammar pointer (typically TSLanguage*).
+ * extensions  NULL-terminated array of file extensions (e.g., {".c", ".h", NULL}).
+ * Returns false on invalid arguments or if registry is full; true on success.
+ */
 bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
                                    const char         *lang_id,
                                    const void         *language,
@@ -107,6 +136,12 @@ bool sol_syntax_registry_register(SolSyntaxRegistry  *reg,
     return true;
 }
 
+/*
+ * Unregister a language from the registry.
+ *
+ * reg     Registry to unregister from.
+ * lang_id Language identifier to remove.
+ */
 void sol_syntax_registry_unregister(SolSyntaxRegistry *reg, const char *lang_id)
 {
     if (!reg || !lang_id) return;
@@ -121,9 +156,16 @@ void sol_syntax_registry_unregister(SolSyntaxRegistry *reg, const char *lang_id)
     }
 }
 
-/* Register with an optional highlights.scm query string pointer.
- * query_text must point to a string that outlives the registry entry
- * (typically a static constant in the plugin). */
+/*
+ * Register a language with an optional highlights.scm query.
+ *
+ * reg         Registry to register in.
+ * lang_id     Unique language identifier.
+ * language    Language grammar pointer.
+ * extensions  NULL-terminated array of file extensions.
+ * query_text  Pointer to highlights.scm text (must outlive the registry entry).
+ * Returns false on invalid arguments or if registry is full; true on success.
+ */
 bool sol_syntax_registry_register_with_query(
         SolSyntaxRegistry  *reg,
         const char         *lang_id,
@@ -147,6 +189,13 @@ bool sol_syntax_registry_register_with_query(
 /* Query                                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Lookup a language by file extension.
+ *
+ * reg        Registry to search.
+ * extension  File extension (e.g., ".c", ".py").
+ * Returns language grammar pointer, or NULL if not found.
+ */
 const void *sol_syntax_get_by_extension(const SolSyntaxRegistry *reg,
                                          const char              *extension)
 {
@@ -162,6 +211,13 @@ const void *sol_syntax_get_by_extension(const SolSyntaxRegistry *reg,
     return NULL;
 }
 
+/*
+ * Lookup a language by file path.
+ *
+ * reg   Registry to search.
+ * path  Full file path.
+ * Returns language grammar pointer, or NULL if not found.
+ */
 const void *sol_syntax_get_for_path(const SolSyntaxRegistry *reg,
                                      const char              *path)
 {
@@ -193,13 +249,24 @@ const void *sol_syntax_get_for_path(const SolSyntaxRegistry *reg,
     return NULL;
 }
 
+/*
+ * Get the number of languages registered.
+ *
+ * reg  Registry to query (may be NULL).
+ * Returns number of registered languages.
+ */
 size_t sol_syntax_registry_count(const SolSyntaxRegistry *reg)
 {
     return reg ? reg->count : 0u;
 }
 
-/* Return the raw highlights.scm query text for the language matching
- * the given file path, or NULL when none was registered.             */
+/*
+ * Get the highlights.scm query for the language matching a file path.
+ *
+ * reg   Registry to search.
+ * path  File path.
+ * Returns query text, or NULL if not found or not registered.
+ */
 const char *sol_syntax_get_query_for_path(const SolSyntaxRegistry *reg,
                                            const char              *path)
 {
