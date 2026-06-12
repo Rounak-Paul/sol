@@ -1219,12 +1219,18 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
 
         if (strcmp(p->action, "terminal.position.bottom") == 0) {
             sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_BOTTOM);
+            if (sol_terminal_manager_visible(mgr)) {
+                sol_terminal_manager_set_focused(mgr, true);
+            }
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }
 
         if (strcmp(p->action, "terminal.position.right") == 0) {
             sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_RIGHT);
+            if (sol_terminal_manager_visible(mgr)) {
+                sol_terminal_manager_set_focused(mgr, true);
+            }
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }
@@ -1250,6 +1256,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         if (strcmp(p->action, "terminal.tab.next") == 0) {
             if (sol_terminal_manager_count(mgr) == 0u) return false;
             sol_terminal_manager_next_tab(mgr);
+            sol_terminal_manager_set_visible(mgr, true);
+            sol_terminal_manager_set_focused(mgr, true);
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }
@@ -1257,6 +1265,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         if (strcmp(p->action, "terminal.tab.prev") == 0) {
             if (sol_terminal_manager_count(mgr) == 0u) return false;
             sol_terminal_manager_prev_tab(mgr);
+            sol_terminal_manager_set_visible(mgr, true);
+            sol_terminal_manager_set_focused(mgr, true);
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }

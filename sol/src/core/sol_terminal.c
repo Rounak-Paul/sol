@@ -49,14 +49,21 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
 /* Constants                                                           */
 /* ================================================================== */
 
-#define SOL_TERM_DEFAULT_COLS       80
-#define SOL_TERM_DEFAULT_ROWS       24
-#define SOL_TERM_MAX_PARAMS         16
-#define SOL_TERM_SCROLLBACK_MAX   5000
+#define SOL_TERM_DEFAULT_COLS        80
+#define SOL_TERM_DEFAULT_ROWS        24
+#define SOL_TERM_MAX_PARAMS          16
+#define SOL_TERM_SCROLLBACK_MAX    5000
 #define SOL_TERM_OUTPUT_RING_SIZE 524288   /* 512 KB — handles large cmatrix bursts */
-#define SOL_TERM_TITLE_MAX          256
+#define SOL_TERM_TITLE_MAX           256
 #define SOL_TERM_OSC_MAX            1024
 /* SOL_TERM_MAX_TABS is defined in sol_terminal.h */
+
+/* Maximum bytes consumed from the ring per drain call.  Bounding this caps
+   per-frame VT-parse work so flood output (yes, cmatrix) cannot starve the
+   rest of the UI.  Remaining bytes are left in the ring and consumed the next
+   frame.  At 60 fps this still processes up to ~3.8 MB/s of terminal output
+   before any frames are dropped — far above any realistic interactive use. */
+#define SOL_TERM_DRAIN_BYTES_PER_FRAME 65536u
 
 /* ================================================================== */
 /* VT parser states                                                    */
@@ -164,6 +171,10 @@ struct SolTerminal {
     pthread_t    reader_thread;
     bool         reader_started;
     atomic_bool  stop_reader;
+    /* Set by reader after each ca_instance_wake(); cleared by drain before
+       processing so the reader only wakes once per drain cycle even under
+       flood output (e.g. yes, cmatrix at max speed). */
+    atomic_bool  wake_pending;
 
     /* Lock-free ring buffer (reader thread writes, main reads). */
     pthread_mutex_t output_mutex;
@@ -1308,7 +1319,16 @@ static void *sol_terminal_reader_thread(void *arg)
         }
         pthread_mutex_unlock(&term->output_mutex);
 
-        ca_instance_wake();
+        /* Rate-limit wakes: only call ca_instance_wake() if the main thread
+           has already consumed the previous wake (i.e. cleared wake_pending
+           during drain).  Under flood output this keeps wake rate at one per
+           drain cycle (~one per display frame) instead of one per read(). */
+        bool expected = false;
+        if (atomic_compare_exchange_strong_explicit(
+                &term->wake_pending, &expected, true,
+                memory_order_acq_rel, memory_order_relaxed)) {
+            ca_instance_wake();
+        }
     }
 
     term->is_alive = false;
@@ -1433,7 +1453,13 @@ static void *sol_terminal_reader_thread(void *arg)
             }
         }
         pthread_mutex_unlock(&term->output_mutex);
-        ca_instance_wake();
+
+        bool expected = false;
+        if (atomic_compare_exchange_strong_explicit(
+                &term->wake_pending, &expected, true,
+                memory_order_acq_rel, memory_order_relaxed)) {
+            ca_instance_wake();
+        }
     }
 
     term->is_alive = false;
@@ -1797,16 +1823,26 @@ bool sol_terminal_manager_drain(SolTerminalManager *mgr)
         }
 #endif
 
-        /* Drain ring buffer into VT parser — consume all available bytes in
-           one call so fast-output programs like cmatrix never accumulate a
-           multi-frame backlog that causes perceptible lag or ring overflow. */
-        char local[SOL_TERM_OUTPUT_RING_SIZE];
+        /* Clear wake_pending before touching the ring so the reader thread
+           can schedule the next wake as soon as new bytes arrive after we
+           finish consuming.  Clearing first (not after) ensures we never
+           miss a wake when bytes arrive mid-drain. */
+        atomic_store_explicit(&term->wake_pending, false, memory_order_release);
+
+        /* Drain at most SOL_TERM_DRAIN_BYTES_PER_FRAME bytes per call.
+           This bounds per-frame VT-parse work so flood-output programs
+           (yes, cmatrix) cannot starve the rest of the UI.  Any bytes left
+           in the ring are consumed in subsequent frames; the reader will
+           schedule another wake if needed. */
+        char local[SOL_TERM_DRAIN_BYTES_PER_FRAME];
         size_t n = 0;
         pthread_mutex_lock(&term->output_mutex);
-        while (term->output_tail != term->output_head) {
+        while (n < SOL_TERM_DRAIN_BYTES_PER_FRAME &&
+               term->output_tail != term->output_head) {
             local[n++] = term->output_ring[term->output_tail];
             term->output_tail = (term->output_tail + 1) % SOL_TERM_OUTPUT_RING_SIZE;
         }
+        const bool ring_has_more = (term->output_tail != term->output_head);
         pthread_mutex_unlock(&term->output_mutex);
 
         if (n > 0) {
@@ -1815,6 +1851,15 @@ bool sol_terminal_manager_drain(SolTerminalManager *mgr)
             for (size_t j = 0; j < n; ++j)
                 vt_utf8_feed(term, &u, (uint8_t)local[j]);
             any_dirty = true;
+        }
+
+        /* If we hit the per-frame cap and bytes remain, schedule another
+           wake so the next frame picks up where we left off.  The reader
+           thread won't do this for us because wake_pending is now false
+           but no new read() has fired yet. */
+        if (ring_has_more) {
+            atomic_store_explicit(&term->wake_pending, true, memory_order_release);
+            ca_instance_wake();
         }
     }
     return any_dirty;

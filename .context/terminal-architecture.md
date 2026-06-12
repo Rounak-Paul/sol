@@ -47,10 +47,19 @@ Child execs `$SHELL`. Master fd kept in parent. `TIOCSWINSZ` ioctl for resize.
 
 ## Threading
 
-Reader thread reads from master fd (blocking `read`/`ReadFile`) into a 64KB circular ring buffer.
-After each deposit it calls `ca_instance_wake()`. Main thread drains in `sol_ui_on_frame` via
-`sol_terminal_manager_drain(ui->terminal_mgr)` → VT parser processes bytes → bumps
-`sig_terminal_rev` if dirty.
+Reader thread reads from master fd (blocking `read`/`ReadFile`) into a 512KB circular ring buffer.
+After each deposit it rate-limits wakes via `wake_pending` atomic: only calls `ca_instance_wake()`
+if the previous wake has been consumed (drain clears `wake_pending` at the start of each call).
+This bounds wake rate to ~one per display frame even under flood output (yes, cmatrix).
+
+Main thread drains in `sol_ui_on_frame` via `sol_terminal_manager_drain()`:
+- Clears `wake_pending` first so reader can schedule the next wake immediately
+- Consumes at most `SOL_TERM_DRAIN_BYTES_PER_FRAME` (64KB) per call
+- If ring has more bytes, sets `wake_pending=true` and calls `ca_instance_wake()` itself to schedule next frame drain
+- VT parser processes drained bytes → bumps `sig_terminal_rev` if dirty
+
+This caps per-frame VT-parse CPU at ~64KB × parse overhead, keeping the UI responsive at ≤60 fps
+even when a process floods the terminal at MB/s rates.
 
 ## Workspace Integration
 
@@ -92,21 +101,29 @@ Defocus happens on ESC keypress.
 
 ## Command Flows (registered in main.c via `sol_register_terminal_command_defaults`)
 
+Bindings are also written to `~/.sol/bindings.conf` on first launch via `SOL_DEFAULT_BINDINGS_CONF`.
+
 | Action | Binding | Description |
 |--------|---------|-------------|
-| `terminal.toggle` | L t T | Show/hide terminal + focus toggle |
-| `terminal.position.bottom` | L t H | Move terminal to horizontal bottom |
-| `terminal.position.right` | L t V | Move terminal to vertical right |
-| `terminal.kill` | L t X | Kill active terminal tab |
-| `terminal.tab.new` | L t C | Open new terminal tab |
-| `terminal.tab.next` | L t N | Switch to next tab |
-| `terminal.tab.prev` | L t P | Switch to previous tab |
+| `terminal.toggle` | L t t | Show/hide terminal + focus toggle |
+| `terminal.position.bottom` | L t h | Dock at bottom; retains focus if visible |
+| `terminal.position.right` | L t v | Dock on right; retains focus if visible |
+| `terminal.kill` | L t x | Kill active terminal tab |
+| `terminal.tab.new` | L t c | Open new terminal tab + focus it |
+| `terminal.tab.next` | L t n | Switch to next tab + show + focus |
+| `terminal.tab.prev` | L t p | Switch to prev tab + show + focus |
 
 The `terminal.toggle` action:
 1. If no tabs exist: creates one first
 2. If not visible: show + focus
 3. If visible but not focused: focus
 4. If visible and focused: defocus (panel stays visible)
+
+`terminal.tab.next` / `terminal.tab.prev`: always show + focus terminal after tab switch
+so the user can immediately type without pressing ESC first.
+
+`terminal.position.bottom` / `terminal.position.right`: only set focus if the terminal
+is already visible (avoids surprise focus steal when configuring layout while editing).
 
 ## Key Encoding
 
