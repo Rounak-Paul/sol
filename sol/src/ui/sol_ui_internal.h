@@ -53,6 +53,17 @@
 #define SOL_UI_TREE_STICKY_TOP        (SOL_UI_TREE_SECTION_H + SOL_UI_TREE_ROOT_ROW_H)
 #define SOL_UI_TREE_STICKY_MAX        8
 
+/* Terminal panel layout constants — kept in sync with the CSS in style.h.
+ * TERM_CELL_H_PX must match ca_text()'s default height: widget.c sets
+ * lbl->node->desc.height = s(16.0f) for any label without an explicit height
+ * or text-wrap, so each term-line's content_size is 16 * ui_scale, NOT the
+ * generic leaf fallback of 20 * ui_scale. */
+#define SOL_UI_TERM_CELL_H_PX         16.0f   /* .term-line row height        */
+#define SOL_UI_TERM_CELL_W_PX          8.0f   /* per-cell glyph width         */
+#define SOL_UI_TERM_HEADER_PX         28.0f   /* .term-header height          */
+#define SOL_UI_TERM_PAD_V_PX           4.0f   /* .term-viewport padding-top/bottom */
+#define SOL_UI_TERM_PAD_H_PX           6.0f   /* .term-viewport padding-left/right */
+
 /* Status badge kinds — single byte to keep the struct compact. */
 #define SOL_UI_STATUS_KIND_KEY        'K'
 #define SOL_UI_STATUS_KIND_COMMAND    'C'
@@ -153,6 +164,13 @@ struct SolUISystem {
        sol_ui_system_pre_tick.  Updated each builder run; NULL when the
        terminal panel is not in the current layout tree. */
     Ca_Div           *term_panel_host;
+    /* Retained handle to the term-viewport Ca_Button for exact inner-size
+       queries in sol_ui_system_pre_tick.  Reading inner dimensions from this
+       node gives the actual usable area consistent with the current layout pass
+       (including stale CSS values during a ui_scale slider drag), eliminating
+       the one-frame mismatch that caused rows to overflow and be clipped.
+       NULL when the terminal panel is not in the current layout tree. */
+    Ca_Button        *term_viewport_host;
     /* Floating which-key popup host — absolute-positioned overlay
        sibling of workspace_content_host. Its builder subscribes to
        sig_popup_version and re-runs in isolation; the workspace

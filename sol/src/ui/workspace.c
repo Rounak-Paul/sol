@@ -704,7 +704,8 @@ void sol_ui_system_terminal_notify(SolUISystem *ui)
 static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible)
 {
     if (!term_visible) {
-        ui->term_panel_host = NULL;
+        ui->term_panel_host    = NULL;
+        ui->term_viewport_host = NULL;
         sol_ui_render_global_tab_strip(ui);
         sol_ui_render_workspace_tree(ui);
         return;
@@ -956,32 +957,22 @@ static void sol_ui_on_frame(void *user_data)
     }
 }
 
-/*
- * Cell geometry constants for 13px monospace terminal font.
- * Used to derive row/col counts from terminal-panel pixel dimensions.
- *
- * TERM_CELL_H_PX: Causality allocates 20px per leaf text node as its
- * content_size fallback (20.0f * node_ui_scale at ui_scale=1.0).
- * Each term-line (CA_HORIZONTAL) propagates this value as its own height.
- * Must stay in sync with Causality's layout.c leaf fallback.
- *
- * TERM_HEADER_PX: matches .term-header { height: 28px }.
- * TERM_PAD_V_PX / TERM_PAD_H_PX: match .term-viewport { padding: 4px 6px }.
- */
-#define TERM_CELL_H_PX  20.0f
-#define TERM_CELL_W_PX   8.0f
-#define TERM_HEADER_PX  28.0f
-#define TERM_PAD_V_PX    4.0f
-#define TERM_PAD_H_PX    6.0f
+#define TERM_CELL_H_PX  SOL_UI_TERM_CELL_H_PX
+#define TERM_CELL_W_PX  SOL_UI_TERM_CELL_W_PX
+#define TERM_HEADER_PX  SOL_UI_TERM_HEADER_PX
+#define TERM_PAD_V_PX   SOL_UI_TERM_PAD_V_PX
+#define TERM_PAD_H_PX   SOL_UI_TERM_PAD_H_PX
 
 /*
  * Update tree-scroll signal, sticky-header width, and terminal grid size
  * before each frame tick.
  *
  * Called before ca_instance_tick every frame.  Terminal grid dimensions are
- * read directly from the Causality-computed layout of term_panel_host (set
- * by the builder the previous frame), so no manual geometry calculation is
- * needed and the values are always exact.
+ * read directly from the Causality-computed layout of term_viewport_host (set
+ * by the builder the previous frame).  Using the viewport's inner layout
+ * dimensions (outer size minus CSS padding from node->desc) keeps row/col
+ * computation consistent with the actual flex layout even while CSS values are
+ * temporarily stale during a ui_scale slider drag.
  *
  * ui  The UI system to update.
  */
@@ -998,41 +989,55 @@ void sol_ui_system_pre_tick(SolUISystem *ui)
             ca_div_set_width(ui->tree_sticky_host, panel_w - 14.0f);
     }
 
-    /* Resize terminal grids to match the Causality-laid-out panel dimensions.
-     * term_panel_host is stored by the builder each frame; its w/h values are
-     * from the previous layout pass (one-frame lag, never perceptible).
+    /* Resize terminal grids to match the Causality-laid-out viewport dimensions.
+     * term_viewport_host is stored by the builder each frame and reflects the
+     * inner content area of the term-viewport button after the previous layout
+     * pass.  Reading inner dimensions directly from this node (layout_h minus
+     * CSS padding) keeps row/col computation consistent with the actual flex
+     * layout even while the ui_scale slider is being dragged — a period where
+     * win->ui_scale is updated immediately but CSS node dimensions are rescaled
+     * only after the drag ends.  Falling back to term_panel_host with scaled
+     * constants when the viewport handle is unavailable covers the edge case
+     * where the builder hasn't run yet (first frame before any layout pass).
      * sol_terminal_resize is idempotent — no-ops when cols/rows are unchanged. */
     if (ui->terminal_mgr &&
-        ui->term_panel_host &&
         sol_terminal_manager_visible(ui->terminal_mgr) &&
         sol_terminal_manager_count(ui->terminal_mgr) > 0u) {
 
-        const float pane_h = ca_div_get_layout_height(ui->term_panel_host);
-        const float pane_w = ca_div_get_layout_width(ui->term_panel_host);
+        const float ui_scale = ca_window_get_scale(ui->primary_window);
+        const float cell_h   = TERM_CELL_H_PX * ui_scale;
+        const float cell_w   = TERM_CELL_W_PX * ui_scale;
 
-        if (pane_h > 0.0f && pane_w > 0.0f) {
-            const float usable_h = pane_h - TERM_HEADER_PX - TERM_PAD_V_PX * 2.0f;
-            const float usable_w = pane_w - TERM_PAD_H_PX * 2.0f;
+        float usable_h = 0.0f, usable_w = 0.0f;
+        if (ui->term_viewport_host) {
+            ca_btn_get_layout_inner_size(ui->term_viewport_host,
+                                         &usable_w, &usable_h);
+        } else if (ui->term_panel_host) {
+            const float pane_h = ca_div_get_layout_height(ui->term_panel_host);
+            const float pane_w = ca_div_get_layout_width(ui->term_panel_host);
+            usable_h = pane_h - TERM_HEADER_PX * ui_scale
+                              - TERM_PAD_V_PX   * ui_scale * 2.0f;
+            usable_w = pane_w - TERM_PAD_H_PX   * ui_scale * 2.0f;
+        }
 
-            if (usable_h >= TERM_CELL_H_PX && usable_w >= TERM_CELL_W_PX) {
-                int new_rows = (int)(usable_h / TERM_CELL_H_PX);
-                int new_cols = (int)(usable_w / TERM_CELL_W_PX);
-                if (new_rows < 2)  new_rows = 2;
-                if (new_cols < 10) new_cols = 10;
+        if (usable_h >= cell_h && usable_w >= cell_w) {
+            int new_rows = (int)(usable_h / cell_h);
+            int new_cols = (int)(usable_w / cell_w);
+            if (new_rows < 2)  new_rows = 2;
+            if (new_cols < 10) new_cols = 10;
 
-                const size_t count = sol_terminal_manager_count(ui->terminal_mgr);
-                bool any_resized = false;
-                for (size_t i = 0; i < count; ++i) {
-                    SolTerminal *t = sol_terminal_manager_at(ui->terminal_mgr, i);
-                    if (t && (sol_terminal_cols(t) != new_cols ||
-                              sol_terminal_rows(t) != new_rows)) {
-                        sol_terminal_resize(t, new_cols, new_rows);
-                        any_resized = true;
-                    }
+            const size_t count = sol_terminal_manager_count(ui->terminal_mgr);
+            bool any_resized = false;
+            for (size_t i = 0; i < count; ++i) {
+                SolTerminal *t = sol_terminal_manager_at(ui->terminal_mgr, i);
+                if (t && (sol_terminal_cols(t) != new_cols ||
+                          sol_terminal_rows(t) != new_rows)) {
+                    sol_terminal_resize(t, new_cols, new_rows);
+                    any_resized = true;
                 }
-                if (any_resized)
-                    sol_ui_bump_u32(ui->sig_terminal_rev);
             }
+            if (any_resized)
+                sol_ui_bump_u32(ui->sig_terminal_rev);
         }
     }
 }

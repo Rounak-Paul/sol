@@ -1827,7 +1827,6 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "}"
     ".term-viewport {"
     "  width: 100%;"
-    "  height: 100%;"
     "  min-width: 0px;"
     "  min-height: 0px;"
     "  flex-grow: 1;"
@@ -1883,6 +1882,12 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  font-family: monospace;"
     "  text-wrap: nowrap;"
     "  border: 1px #c8c8cc;"
+    "}"
+    ".term-filler {"
+    "  flex-grow: 1;"
+    "  flex-shrink: 1;"
+    "  min-height: 0px;"
+    "  background: #0e0e10;"
     "}";
 
 #endif /* SOL_UI_STYLE_H */

@@ -380,7 +380,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
 
     /* ---- Viewport (clickable to claim focus) ---- */
     g_term_viewport_ctx.ui = ui;
-    ca_btn_begin(&(Ca_BtnDesc){
+    ui->term_viewport_host = ca_btn_begin(&(Ca_BtnDesc){
         .style      = "term-viewport",
         .direction  = CA_VERTICAL,
         .background = 0u,
@@ -403,6 +403,14 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
             render_term_row(term, r, cursor_on_row ? cursor_col : -1, focused);
         }
     }
+
+    /* Filler absorbs the fractional pixel remainder that integer row-count
+       truncation leaves below the last rendered row. */
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style     = "term-filler",
+    });
+    ca_div_end();
 
     ca_btn_end();   /* term-viewport */
 }

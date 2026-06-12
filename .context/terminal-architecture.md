@@ -126,9 +126,26 @@ Home=`\033[H`, End=`\033[F`, PageUp=`\033[5~`, PageDown=`\033[6~`.
     - Cursor cell: `term-cursor-focused` (solid inverted block) or `term-cursor-unfocused` (border)
     - `background=0u` for default background (transparent, no overdraw)
 
+The viewport fills the panel below the header via CSS `flex-grow: 1` and `flex-shrink: 1`.
+This requires Causality to implement flex-shrink (see causality/src/ui/layout.c) so that
+when the viewport's content_size (rows + filler) exceeds the available height, it shrinks
+back to exactly `pane_h - header_h` instead of overflowing. The header has `flex-shrink: 0`
+so it never shrinks.
+
+After all rows a `.term-filler` div (flex-grow:1) absorbs the fractional pixel remainder
+that integer row-count truncation leaves; it's clipped by the viewport's `overflow:hidden`.
+
+Row/col calculation in `sol_ui_system_pre_tick` reads `usable_h`/`usable_w` directly from
+the `term_viewport_host` Ca_Button's inner layout dimensions (`ca_btn_get_layout_inner_size`).
+This avoids a stale-CSS mismatch during ui_scale slider drag.  Cell size:
+- Height: `TERM_CELL_H_PX = 16.0f` — matches `ca_text()`'s explicit default height
+  (`lbl->node->desc.height = s(16.0f)` in widget.c).  The generic leaf fallback of 20px
+  is only used for truly empty nodes with no desc.height set; ca_text always sets it.
+- Width:  `TERM_CELL_W_PX = 8.0f`  — matches monospace font advance at 13 px.
+
 CSS classes added to `style.h`: `.term-panel`, `.term-header`, `.term-tab`, `.term-tab-active`,
 `.term-viewport`, `.term-line`, `.term-cell`, `.term-cell-bold`, `.term-cell-italic`,
-`.term-cell-bold-italic`, `.term-cursor-focused`, `.term-cursor-unfocused`
+`.term-cell-bold-italic`, `.term-cursor-focused`, `.term-cursor-unfocused`, `.term-filler`
 
 Color: `sol_term_color_to_rgba(color, is_fg)` converts SolTermColor → packed RGBA uint32.
 ANSI 16-color palette defined as `k_ansi16[]` in `sol_terminal.c`.
