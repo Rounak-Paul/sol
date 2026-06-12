@@ -53,7 +53,7 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
 #define SOL_TERM_DEFAULT_ROWS       24
 #define SOL_TERM_MAX_PARAMS         16
 #define SOL_TERM_SCROLLBACK_MAX   5000
-#define SOL_TERM_OUTPUT_RING_SIZE 65536
+#define SOL_TERM_OUTPUT_RING_SIZE 524288   /* 512 KB — handles large cmatrix bursts */
 #define SOL_TERM_TITLE_MAX          256
 #define SOL_TERM_OSC_MAX            1024
 /* SOL_TERM_MAX_TABS is defined in sol_terminal.h */
@@ -97,6 +97,7 @@ struct SolTerminal {
 
     /* Alt-screen (allocated lazily on first ?1049h). */
     SolTermLine *alt_screen;        /* rows*cols grid, NULL until first use */
+    int          alt_screen_rows;   /* row count at time alt_screen was allocated */
     bool         in_alt_screen;
 
     /* Saved cursors (main-screen and alt-screen). */
@@ -621,9 +622,9 @@ static void vt_set_dec_mode(SolTerminal *term, int param, bool set)
                 term->alt_screen = (SolTermLine *)calloc(
                     (size_t)term->rows, sizeof(SolTermLine));
                 if (term->alt_screen) {
-                    for (int r = 0; r < term->rows; ++r) {
+                    term->alt_screen_rows = term->rows;
+                    for (int r = 0; r < term->rows; ++r)
                         term_line_alloc(&term->alt_screen[r], term->cols);
-                    }
                 }
             }
             if (term->alt_screen) {
@@ -1284,7 +1285,7 @@ static void vt_utf8_feed(SolTerminal *term, VtUtf8 *u, uint8_t byte)
 static void *sol_terminal_reader_thread(void *arg)
 {
     SolTerminal *term = (SolTerminal *)arg;
-    char buf[4096];
+    char buf[32768];
     /* Capture fd locally so struct field changes (set to -1 during stop)
        don't affect the blocking read mid-call. */
     const int fd = term->master_fd;
@@ -1626,7 +1627,7 @@ static void sol_terminal_destroy(SolTerminal *term)
     for (int r = 0; r < SOL_TERM_SCROLLBACK_MAX; ++r)
         term_line_free(&term->scrollback[r]);
     if (term->alt_screen) {
-        for (int r = 0; r < term->rows; ++r)
+        for (int r = 0; r < term->alt_screen_rows; ++r)
             term_line_free(&term->alt_screen[r]);
         free(term->alt_screen);
     }
@@ -1791,12 +1792,13 @@ bool sol_terminal_manager_drain(SolTerminalManager *mgr)
         }
 #endif
 
-        /* Drain ring buffer into VT parser. */
-        char local[4096];
+        /* Drain ring buffer into VT parser — consume all available bytes in
+           one call so fast-output programs like cmatrix never accumulate a
+           multi-frame backlog that causes perceptible lag or ring overflow. */
+        char local[SOL_TERM_OUTPUT_RING_SIZE];
         size_t n = 0;
         pthread_mutex_lock(&term->output_mutex);
-        while (n < sizeof(local) &&
-               term->output_tail != term->output_head) {
+        while (term->output_tail != term->output_head) {
             local[n++] = term->output_ring[term->output_tail];
             term->output_tail = (term->output_tail + 1) % SOL_TERM_OUTPUT_RING_SIZE;
         }
@@ -1849,6 +1851,45 @@ void sol_terminal_resize(SolTerminal *term, int cols, int rows)
     /* Free rows that no longer exist. */
     for (int r = rows; r < term->rows; ++r)
         term_line_free(&term->screen[r]);
+
+    /* Sync alt_screen allocation to match the new dimensions. */
+    if (term->alt_screen) {
+        if (rows > term->alt_screen_rows) {
+            /* Grow: reallocate the array, zero-init new entries, alloc their cells. */
+            SolTermLine *grown = (SolTermLine *)realloc(
+                term->alt_screen, (size_t)rows * sizeof(SolTermLine));
+            if (grown) {
+                term->alt_screen = grown;
+                for (int r = term->alt_screen_rows; r < rows; ++r) {
+                    memset(&term->alt_screen[r], 0, sizeof(SolTermLine));
+                    term_line_alloc(&term->alt_screen[r], cols);
+                }
+                term->alt_screen_rows = rows;
+            }
+            /* On alloc failure, keep old size — safer to clip than to corrupt. */
+        }
+        /* Resize columns for all allocated alt_screen rows. */
+        int resize_rows = (rows < term->alt_screen_rows) ? rows : term->alt_screen_rows;
+        for (int r = 0; r < resize_rows; ++r) {
+            if (cols == term->cols) continue;
+            SolTermCell *newcells = (SolTermCell *)realloc(
+                term->alt_screen[r].cells, (size_t)cols * sizeof(SolTermCell));
+            if (!newcells) continue;
+            if (cols > term->cols) {
+                SolTermCell blank = blank_cell();
+                for (int c = term->cols; c < cols; ++c)
+                    newcells[c] = blank;
+            }
+            term->alt_screen[r].cells = newcells;
+            term->alt_screen[r].cols  = cols;
+        }
+        /* Shrink: rows beyond new count are no longer needed. */
+        if (rows < term->alt_screen_rows) {
+            for (int r = rows; r < term->alt_screen_rows; ++r)
+                term_line_free(&term->alt_screen[r]);
+            term->alt_screen_rows = rows;
+        }
+    }
 
     term->cols = cols;
     term->rows = rows;

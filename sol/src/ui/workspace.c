@@ -44,6 +44,7 @@
 
 #include "sol_file_picker.h"
 #include "sol_event.h"
+#include "sol_platform.h"
 #include "style.h"
 
 #include <assert.h>
@@ -940,20 +941,37 @@ static void sol_ui_on_frame(void *user_data)
         ca_instance_wake();
     }
 
-    /* Drain PTY output for all terminal tabs and rebuild the terminal
-       panel when any cell changed.  Also keep waking the event loop
-       while the focused terminal is alive so the cursor blink and any
-       streaming output land on the next frame. */
+    /* Drain PTY output and rebuild on actual cell changes.
+     *
+     * Cursor blink uses a timer (530 ms half-period) so idle-but-focused
+     * terminals only trigger one rebuild per blink toggle rather than one
+     * per vsync frame.  When output IS flowing (drain returns true) we bump
+     * and wake immediately so every batch of parsed output lands in the next
+     * frame without extra latency. */
     if (ui->terminal_mgr &&
         sol_terminal_manager_visible(ui->terminal_mgr) &&
         sol_terminal_manager_count(ui->terminal_mgr) > 0u) {
-        if (sol_terminal_manager_drain(ui->terminal_mgr)) {
-            sol_ui_bump_u32(ui->sig_terminal_rev);
-        }
+
+        bool needs_rebuild = sol_terminal_manager_drain(ui->terminal_mgr);
+
         if (sol_terminal_manager_focused(ui->terminal_mgr)) {
-            sol_ui_bump_u32(ui->sig_terminal_rev);
+            /* Blink: 530 ms on / 530 ms off — only rebuild at phase toggles. */
+            static uint64_t s_last_blink_toggle_ms = 0u;
+            const uint64_t  now_ms = sol_platform_now_monotonic_ns() / 1000000ull;
+            if (now_ms - s_last_blink_toggle_ms >= 530u) {
+                ui->term_cursor_blink_on = !ui->term_cursor_blink_on;
+                s_last_blink_toggle_ms   = now_ms;
+                needs_rebuild            = true;
+            }
+            /* Keep event loop alive so next blink fires on schedule. */
             ca_instance_wake();
+        } else {
+            /* Cursor always shown when terminal is not focused. */
+            ui->term_cursor_blink_on = true;
         }
+
+        if (needs_rebuild)
+            sol_ui_bump_u32(ui->sig_terminal_rev);
     }
 }
 
@@ -1147,12 +1165,13 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
         return NULL;
     }
 
-    ui->instance        = instance;
-    ui->buffers         = buffers;
-    ui->leader_modifier = SOL_MOD_CTRL;
-    ui->status_bar_kind = SOL_UI_STATUS_KIND_KEY;
-    ui->tree_panel_ratio = 0.20f;
-    ui->file_tree_visible = false;
+    ui->instance             = instance;
+    ui->buffers              = buffers;
+    ui->leader_modifier      = SOL_MOD_CTRL;
+    ui->status_bar_kind      = SOL_UI_STATUS_KIND_KEY;
+    ui->tree_panel_ratio     = 0.20f;
+    ui->file_tree_visible    = false;
+    ui->term_cursor_blink_on = true;
 
     /* ---- Reactive state ----
        All signals are owned by the instance and freed in

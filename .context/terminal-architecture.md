@@ -150,6 +150,46 @@ CSS classes added to `style.h`: `.term-panel`, `.term-header`, `.term-tab`, `.te
 Color: `sol_term_color_to_rgba(color, is_fg)` converts SolTermColor → packed RGBA uint32.
 ANSI 16-color palette defined as `k_ansi16[]` in `sol_terminal.c`.
 
+## Crash Fix — alt_screen resize (2026-06-12)
+
+`SolTerminal` has `alt_screen_rows` (int) tracking how many rows `alt_screen` was
+allocated for.  Before this fix, `sol_terminal_destroy` looped `for (r < term->rows)`
+on `alt_screen`, but `term->rows` grows on resize while `alt_screen` kept its original
+allocation size — `term_line_free` on entries beyond that size freed garbage pointers.
+
+Changes in `sol_terminal.c`:
+- `struct SolTerminal`: added `int alt_screen_rows` field.
+- Allocation site (`vt_set_dec_mode` case 47): sets `term->alt_screen_rows = term->rows`
+  after `calloc`.
+- `sol_terminal_destroy`: uses `alt_screen_rows` (not `term->rows`) for the free loop.
+- `sol_terminal_resize`: after resizing `screen`, syncs `alt_screen` to new dims:
+  - Grow (new rows > alt_screen_rows): `realloc`, zero+alloc new entries, update
+    `alt_screen_rows`.
+  - Column resize: `realloc` each row's `cells` array.
+  - Shrink (new rows < alt_screen_rows): free excess rows, update `alt_screen_rows`.
+  On alloc failure during grow, size is kept at old value (safer to clip than corrupt).
+
+Child process isolation: `forkpty` scopes child signals (SIGSEGV etc.) to the child
+process only.  The reader thread exits cleanly on EIO when the PTY slave closes.
+`sol_terminal_manager_drain` reaps dead children via `waitpid(WNOHANG)` each frame.
+
+## Performance (large terminals / cmatrix)
+
+Three bottlenecks fixed (2026-06-12):
+
+1. **Drain reads only 4 KB/frame** — drain local buffer enlarged to `SOL_TERM_OUTPUT_RING_SIZE`
+   so the entire ring is consumed in one call, eliminating multi-frame backlog and perceived lag.
+
+2. **Ring buffer 64 KB** — raised to 512 KB (`SOL_TERM_OUTPUT_RING_SIZE = 524288`) and reader
+   thread read buffer from 4 KB to 32 KB, handling large bursty output without dropping bytes.
+
+3. **Full terminal rebuild every vsync frame when focused** — `on_frame` was unconditionally
+   bumping `sig_terminal_rev` for cursor blink.  Replaced with a 530 ms timer: blink phase
+   stored in `ui->term_cursor_blink_on` (SolUISystem), toggled in `on_frame`, read by
+   `sol_ui_render_terminal_panel`.  Idle-but-focused terminals now rebuild at ~2 fps instead
+   of 60 fps.  When actual output arrives (drain returns true) the rebuild still fires
+   immediately.
+
 ## Build
 
 CMake uses `file(GLOB_RECURSE)` for src/*.c so no CMakeLists changes needed.

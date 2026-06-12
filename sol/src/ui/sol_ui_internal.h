@@ -182,6 +182,12 @@ struct SolUISystem {
        headers that "pin" at the top of the tree panel while scrolling. */
     Ca_Div           *tree_sticky_host;
 
+    /* Terminal cursor blink phase — toggled at 530 ms intervals by on_frame.
+       Initialised true (cursor visible) so the cursor appears immediately on
+       focus.  Read by sol_ui_render_terminal_panel to decide whether to draw
+       the cursor cell or render it as a normal cell. */
+    bool              term_cursor_blink_on;
+
     /* ---- Reactive state (causality fine-grained signals) ----
      *
      * In the idiomatic causality design, state IS the signal: every

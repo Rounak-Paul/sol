@@ -390,14 +390,16 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
 
     SolTerminal *term = sol_terminal_manager_active(mgr);
     if (term) {
-        const int rows       = sol_terminal_rows(term);
-        const int cursor_row = sol_terminal_cursor_row(term);
-        const int cursor_col = sol_terminal_cursor_col(term);
-        const int view_scroll = sol_terminal_view_scroll(term);
-        const bool cur_vis   = sol_terminal_cursor_visible(term);
+        const int  rows        = sol_terminal_rows(term);
+        const int  cursor_row  = sol_terminal_cursor_row(term);
+        const int  cursor_col  = sol_terminal_cursor_col(term);
+        const int  view_scroll = sol_terminal_view_scroll(term);
+        /* Cursor visible only when DECTCEM is set, scroll is at bottom,
+           and the blink phase is on (toggled at 530 ms by on_frame). */
+        const bool cur_vis = sol_terminal_cursor_visible(term)
+                             && ui->term_cursor_blink_on;
 
         for (int r = 0; r < rows; ++r) {
-            /* When the view is scrolled, the cursor is off-screen. */
             const bool cursor_on_row = cur_vis && (view_scroll == 0) &&
                                        (r == cursor_row);
             render_term_row(term, r, cursor_on_row ? cursor_col : -1, focused);
