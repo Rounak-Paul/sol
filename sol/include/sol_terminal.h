@@ -120,9 +120,11 @@ void sol_terminal_manager_destroy(SolTerminalManager *mgr);
  * Open a new terminal tab, launching $SHELL.
  *
  * mgr   The manager.
+ * cwd   Working directory for the shell, or NULL to inherit the process cwd.
  * Returns  The new terminal, or NULL on PTY/fork failure.
  */
-SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr);
+SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr,
+                                          const char *cwd);
 
 /*
  * Kill and remove the active terminal tab.

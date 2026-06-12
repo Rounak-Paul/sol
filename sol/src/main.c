@@ -1199,7 +1199,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
 
         if (strcmp(p->action, "terminal.toggle") == 0) {
             if (sol_terminal_manager_count(mgr) == 0u) {
-                if (!sol_terminal_manager_new_tab(mgr)) return false;
+                const char *root = sol_ui_system_file_tree_root(app->ui);
+                if (!sol_terminal_manager_new_tab(mgr, root)) return false;
             }
             const bool currently_focused = sol_terminal_manager_focused(mgr);
             const bool currently_visible = sol_terminal_manager_visible(mgr);
@@ -1237,7 +1238,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         }
 
         if (strcmp(p->action, "terminal.tab.new") == 0) {
-            SolTerminal *t = sol_terminal_manager_new_tab(mgr);
+            const char *root = sol_ui_system_file_tree_root(app->ui);
+            SolTerminal *t = sol_terminal_manager_new_tab(mgr, root);
             if (!t) return false;
             sol_terminal_manager_set_visible(mgr, true);
             sol_terminal_manager_set_focused(mgr, true);

@@ -1321,9 +1321,10 @@ static void *sol_terminal_reader_thread(void *arg)
  * the reader thread.
  *
  * term  Terminal to initialise.
+ * cwd   Initial working directory for the child shell, or NULL to inherit.
  * Returns true on success.
  */
-static bool sol_terminal_start_pty(SolTerminal *term)
+static bool sol_terminal_start_pty(SolTerminal *term, const char *cwd)
 {
     struct winsize ws = { 0 };
     ws.ws_col = (unsigned short)term->cols;
@@ -1336,7 +1337,9 @@ static bool sol_terminal_start_pty(SolTerminal *term)
     if (pid < 0) return false;
 
     if (pid == 0) {
-        /* Child: exec the shell. */
+        /* Child: optionally change to project root before exec. */
+        if (cwd && cwd[0] != '\0')
+            chdir(cwd);
         const char *argv[] = { shell, NULL };
         setenv("TERM", "xterm-256color", 1);
         setenv("COLORTERM", "truecolor", 1);
@@ -1565,9 +1568,10 @@ static void sol_terminal_stop_pty(SolTerminal *term)
  * Create and launch a new terminal session.
  *
  * instance  Causality instance for wake signals.
+ * cwd       Initial working directory, or NULL to inherit.
  * Returns   Heap-allocated terminal, or NULL on failure.
  */
-static SolTerminal *sol_terminal_create(Ca_Instance *instance)
+static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
 {
     SolTerminal *term = (SolTerminal *)calloc(1u, sizeof(SolTerminal));
     if (!term) return NULL;
@@ -1603,7 +1607,7 @@ static SolTerminal *sol_terminal_create(Ca_Instance *instance)
         }
     }
 
-    if (!sol_terminal_start_pty(term)) {
+    if (!sol_terminal_start_pty(term, cwd)) {
         for (int r = 0; r < term->rows; ++r) term_line_free(&term->screen[r]);
         pthread_mutex_destroy(&term->output_mutex);
         free(term);
@@ -1659,10 +1663,11 @@ void sol_terminal_manager_destroy(SolTerminalManager *mgr)
     free(mgr);
 }
 
-SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr)
+SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr,
+                                          const char *cwd)
 {
     if (!mgr || mgr->tab_count >= SOL_TERM_MAX_TABS) return NULL;
-    SolTerminal *term = sol_terminal_create(mgr->instance);
+    SolTerminal *term = sol_terminal_create(mgr->instance, cwd);
     if (!term) return NULL;
     mgr->tabs[mgr->tab_count++] = term;
     mgr->active_index = mgr->tab_count - 1;
