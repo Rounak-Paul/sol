@@ -149,6 +149,7 @@ typedef struct SolAppContext {
     SolInputRouter       *router;
     bool                  explorer_focused;
     SolBufferNodeId       focus_before_explorer;
+    SolBufferNodeId       focus_before_terminal;
     char                  file_clipboard_path[4096];
     bool                  file_clipboard_cut;
     SolSettings           settings;
@@ -788,6 +789,19 @@ static void sol_on_ui_focus_region(bool in_tree_panel, void *user_data)
     app->focus_before_explorer = 0u;
 }
 
+/* Snapshot whichever buffer leaf was active just before the terminal claims
+   keyboard focus.  Fired by sol_ui_system_terminal_set_focused(true) — both
+   the command path and the click-on-panel path go through that helper. */
+static void sol_on_terminal_focus_gain(void *user_data)
+{
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !app->buffers) return;
+    const SolBufferNodeId leaf = sol_buffer_active_leaf(app->buffers);
+    if (leaf != 0u) {
+        app->focus_before_terminal = leaf;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Startup event + warmup                                              */
 /* ------------------------------------------------------------------ */
@@ -1206,12 +1220,18 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
             const bool currently_visible = sol_terminal_manager_visible(mgr);
             if (!currently_visible) {
                 sol_terminal_manager_set_visible(mgr, true);
-                sol_terminal_manager_set_focused(mgr, true);
+                sol_ui_system_terminal_set_focused(app->ui, true);
             } else if (!currently_focused) {
-                sol_terminal_manager_set_focused(mgr, true);
+                sol_ui_system_terminal_set_focused(app->ui, true);
             } else {
-                /* Already visible and focused: defocus (keep visible). */
+                /* Already visible and focused: hide and restore prior focus. */
                 sol_terminal_manager_set_focused(mgr, false);
+                sol_terminal_manager_set_visible(mgr, false);
+                const SolBufferNodeId restore = app->focus_before_terminal;
+                if (restore != 0u) {
+                    (void)sol_ui_system_focus_leaf(app->ui, restore);
+                    app->focus_before_terminal = 0u;
+                }
             }
             sol_ui_system_terminal_notify(app->ui);
             return true;
@@ -1220,7 +1240,7 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         if (strcmp(p->action, "terminal.position.bottom") == 0) {
             sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_BOTTOM);
             if (sol_terminal_manager_visible(mgr)) {
-                sol_terminal_manager_set_focused(mgr, true);
+                sol_ui_system_terminal_set_focused(app->ui, true);
             }
             sol_ui_system_terminal_notify(app->ui);
             return true;
@@ -1229,7 +1249,7 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         if (strcmp(p->action, "terminal.position.right") == 0) {
             sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_RIGHT);
             if (sol_terminal_manager_visible(mgr)) {
-                sol_terminal_manager_set_focused(mgr, true);
+                sol_ui_system_terminal_set_focused(app->ui, true);
             }
             sol_ui_system_terminal_notify(app->ui);
             return true;
@@ -1248,7 +1268,7 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
             SolTerminal *t = sol_terminal_manager_new_tab(mgr, root);
             if (!t) return false;
             sol_terminal_manager_set_visible(mgr, true);
-            sol_terminal_manager_set_focused(mgr, true);
+            sol_ui_system_terminal_set_focused(app->ui, true);
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }
@@ -1257,7 +1277,7 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
             if (sol_terminal_manager_count(mgr) == 0u) return false;
             sol_terminal_manager_next_tab(mgr);
             sol_terminal_manager_set_visible(mgr, true);
-            sol_terminal_manager_set_focused(mgr, true);
+            sol_ui_system_terminal_set_focused(app->ui, true);
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }
@@ -1266,7 +1286,7 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
             if (sol_terminal_manager_count(mgr) == 0u) return false;
             sol_terminal_manager_prev_tab(mgr);
             sol_terminal_manager_set_visible(mgr, true);
-            sol_terminal_manager_set_focused(mgr, true);
+            sol_ui_system_terminal_set_focused(app->ui, true);
             sol_ui_system_terminal_notify(app->ui);
             return true;
         }
@@ -1365,6 +1385,7 @@ int main(int argc, char **argv)
 
     sol_ui_system_set_file_open_callback(app.ui, sol_on_tree_file_open, &app);
     sol_ui_system_set_focus_region_callback(app.ui, sol_on_ui_focus_region, &app);
+    sol_ui_system_set_terminal_focus_gain_callback(app.ui, sol_on_terminal_focus_gain, &app);
     sol_ui_system_set_context_action_callback(app.ui, sol_on_context_action, &app);
     if (cli_is_dir && cli_path) {
         if (!sol_set_explorer_root(&app, cli_path)) {

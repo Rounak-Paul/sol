@@ -1335,12 +1335,28 @@ Ca_Window *sol_ui_system_primary_window(SolUISystem *ui)
  */
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event)
 {
-    if (!ui || !event || event->type != SOL_INPUT_EVENT_KEY_DOWN) {
-        return false;
-    }
+    if (!ui || !event) return false;
 
     const SolKeyCode      key  = sol_ui_normalize_flow_key(event->data.key.key);
     const SolModifierMask mods = event->data.key.modifiers;
+
+    /* KEY_UP: only used for tap-detection on the leader key itself.
+       A clean tap (leader pressed and released with no other key in between)
+       opens the popup.  Any other key pressed while leader was held cancels
+       the tap so Ctrl+C, Ctrl+Z, etc. are never intercepted. */
+    if (event->type == SOL_INPUT_EVENT_KEY_UP) {
+        if (sol_ui_is_leader_key(ui, key) && ui->leader_tap_pending) {
+            ui->leader_tap_pending = false;
+            if (!ui->leader_active) {
+                sol_ui_open_leader_popup(ui);
+            }
+            return true;
+        }
+        ui->leader_tap_pending = false;
+        return false;
+    }
+
+    if (event->type != SOL_INPUT_EVENT_KEY_DOWN) return false;
 
     /* Update status bar with the most recent keystroke. */
     if (sol_ui_is_leader_key(ui, key)) {
@@ -1354,6 +1370,7 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
     /* Escape always closes the leader popup, but never blocks the event
        when the popup is closed (so app-level handlers can still see it). */
     if (key == SOL_KEY_ESCAPE) {
+        ui->leader_tap_pending = false;
         if (ui->leader_active) {
             sol_ui_close_leader_popup(ui);
             return true;
@@ -1361,27 +1378,32 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
         return false;
     }
 
-    /* Toggle popup when the leader modifier itself is pressed (debounced
-       against repeats). */
+    /* Leader key down: arm the tap detector.  Do not open the popup yet —
+       wait for the corresponding key-up to confirm it was a clean tap.
+       Repeats consume the tap without opening anything. */
     if (sol_ui_is_leader_key(ui, key)) {
         if (event->data.key.repeated) {
+            ui->leader_tap_pending = false;
             return true;
         }
         if (ui->leader_active) {
+            /* Second tap while popup is open: close it immediately. */
+            ui->leader_tap_pending = false;
             sol_ui_close_leader_popup(ui);
         } else {
-            sol_ui_open_leader_popup(ui);
+            ui->leader_tap_pending = true;
         }
         return true;
     }
 
-    /* Leader-as-chord: leader+key opens flow mode and uses this key as
-       the first step of the sequence. */
+    /* Any other key while leader is held cancels the tap (e.g. Ctrl+C). */
+    ui->leader_tap_pending = false;
+
+    /* If the leader popup is not yet open, only chord sequences (leader
+       already active) are processed below — bare keys with no leader
+       involvement are not our business. */
     if (!ui->leader_active) {
-        if ((mods & ui->leader_modifier) == 0u || sol_ui_is_modifier_key(key)) {
-            return false;
-        }
-        sol_ui_open_leader_popup(ui);
+        return false;
     }
 
     if (sol_ui_is_modifier_key(key)) {
@@ -1981,6 +2003,31 @@ void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
     if (!ui) return;
     ui->focus_region_callback = callback;
     ui->focus_region_user_data = user_data;
+}
+
+void sol_ui_system_set_terminal_focus_gain_callback(SolUISystem *ui,
+                                                    SolUITerminalFocusGainFn callback,
+                                                    void *user_data)
+{
+    if (!ui) return;
+    ui->terminal_focus_gain_callback = callback;
+    ui->terminal_focus_gain_user_data = user_data;
+}
+
+/*
+ * Grant keyboard focus to the terminal and fire the focus-gain callback so
+ * the application can snapshot pre-terminal focus state before it is lost.
+ * All call sites that want to focus the terminal must go through here.
+ *
+ * ui   The UI system owning the terminal manager.
+ */
+void sol_ui_system_terminal_set_focused(SolUISystem *ui, bool focused)
+{
+    if (!ui || !ui->terminal_mgr) return;
+    if (focused && ui->terminal_focus_gain_callback) {
+        ui->terminal_focus_gain_callback(ui->terminal_focus_gain_user_data);
+    }
+    sol_terminal_manager_set_focused(ui->terminal_mgr, focused);
 }
 
 /*

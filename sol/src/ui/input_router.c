@@ -21,6 +21,7 @@
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
 #include "sol_ui_constants.h"
+#include "sol_ui_internal.h"
 #include "sol_ui_system.h"
 
 /* ------------------------------------------------------------------ */
@@ -311,49 +312,63 @@ static void on_key(const Ca_Event *ev, void *user_data)
     ie.data.key.modifiers = modifiers_from_ca(ev->key.mods);
     ie.data.key.repeated  = (ev->key.action == CA_REPEAT);
 
-    /* Terminal-focused path: bypass all UI processing. */
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
-    if (tmgr && sol_terminal_manager_focused(tmgr)) {
+    const bool term_focused = tmgr && sol_terminal_manager_focused(tmgr);
+
+    if (term_focused) {
+        /* KEY_UP: only needed for leader tap detection (Ctrl released alone). */
+        if (ie.type == SOL_INPUT_EVENT_KEY_UP) {
+            sol_ui_system_handle_input_event(r->ui, &ie);
+            sol_input_system_process_event(r->input, &ie);
+            return;
+        }
+
         if (ie.type == SOL_INPUT_EVENT_KEY_DOWN) {
-            if (ie.data.key.key == SOL_KEY_ESCAPE) {
-                /* ESC defocuses without sending to the PTY. */
-                sol_terminal_manager_set_focused(tmgr, false);
-                sol_ui_system_terminal_notify(r->ui);
-            } else {
-                const bool has_ctrl_alt =
-                    (ie.data.key.modifiers &
-                     (SOL_MOD_CTRL | SOL_MOD_ALT | SOL_MOD_SUPER)) != 0u;
-                /* Unmodified printable chars are handled by on_char (which
-                   carries the correctly decoded Unicode codepoint). Only send
-                   via sol_terminal_send_key for non-printable keys or
-                   Ctrl/Alt chords that need VT encoding. */
-                if (!key_is_printable_alpha(ie.data.key.key) || has_ctrl_alt) {
-                    SolTerminal *term = sol_terminal_manager_active(tmgr);
-                    if (term) {
-                        sol_terminal_set_view_scroll(term, 0);
-                        sol_terminal_send_key(term, ie.data.key.key,
-                                             ie.data.key.modifiers);
-                    }
-                    /* Suppress CHAR for Ctrl/Alt chords (e.g. Ctrl+C → 0x03
-                       already sent; prevent on_char from also sending 'c'). */
-                    if (has_ctrl_alt && key_is_printable_alpha(ie.data.key.key)) {
-                        r->suppress_next_text_input = true;
-                    }
+            /* While a leader sequence is in progress route through the chord
+               system — chord steps must not go to the PTY mid-sequence. */
+            if (sol_ui_system_is_leader_active(r->ui)) {
+                const bool ui_consumed = sol_ui_system_handle_input_event(r->ui, &ie);
+                sol_input_system_process_event(r->input, &ie);
+                if (ui_consumed && key_is_printable_alpha(ie.data.key.key)) {
+                    r->suppress_next_text_input = true;
                 }
-                /* Unmodified printable keys: leave suppress_next_text_input
-                   untouched so on_char can forward the codepoint to the PTY. */
+                return;
             }
+
+            /* Leader key down: arm tap detector, do not send to PTY. */
+            if (sol_ui_is_leader_key(r->ui, ie.data.key.key)) {
+                sol_ui_system_handle_input_event(r->ui, &ie);
+                sol_input_system_process_event(r->input, &ie);
+                return;
+            }
+
+            /* Everything else (Ctrl+C, Ctrl+Z, ESC, arrows, etc.) → PTY.
+               Unmodified printable chars are handled by on_char; send via
+               sol_terminal_send_key only for non-printable keys or
+               Ctrl/Alt chords that need VT encoding. */
+            const bool has_ctrl_alt =
+                (ie.data.key.modifiers &
+                 (SOL_MOD_CTRL | SOL_MOD_ALT | SOL_MOD_SUPER)) != 0u;
+            if (!key_is_printable_alpha(ie.data.key.key) || has_ctrl_alt) {
+                SolTerminal *term = sol_terminal_manager_active(tmgr);
+                if (term) {
+                    sol_terminal_set_view_scroll(term, 0);
+                    sol_terminal_send_key(term, ie.data.key.key,
+                                         ie.data.key.modifiers);
+                }
+                if (has_ctrl_alt && key_is_printable_alpha(ie.data.key.key)) {
+                    r->suppress_next_text_input = true;
+                }
+            }
+            return;
         }
         return;
     }
 
+    /* Buffer / non-terminal path: full UI event routing. */
     const bool ui_consumed = sol_ui_system_handle_input_event(r->ui, &ie);
     sol_input_system_process_event(r->input, &ie);
 
-    /* Exact-match command flows can close the leader popup during
-       KEY_DOWN; the corresponding CHAR event may still arrive after
-       that and would otherwise be inserted into the active buffer.
-       Latch a one-shot suppression for printable chord steps. */
     if (ui_consumed && ie.type == SOL_INPUT_EVENT_KEY_DOWN &&
         key_is_printable_alpha(ie.data.key.key)) {
         r->suppress_next_text_input = true;
@@ -395,6 +410,10 @@ static void on_char(const Ca_Event *ev, void *user_data)
         return;
     }
 
+    /* While a leader sequence is in progress the char belongs to the chord,
+       not to the terminal or the buffer. */
+    if (sol_ui_system_is_leader_active(r->ui)) return;
+
     /* Terminal-focused path: send codepoint to PTY as UTF-8. */
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (tmgr && sol_terminal_manager_focused(tmgr)) {
@@ -403,7 +422,6 @@ static void on_char(const Ca_Event *ev, void *user_data)
             SolTerminal *term = sol_terminal_manager_active(tmgr);
             if (term) {
                 sol_terminal_set_view_scroll(term, 0);
-                /* Encode codepoint as UTF-8 and send to PTY. */
                 char utf8[5] = {0};
                 if (cp < 0x80u) {
                     utf8[0] = (char)cp;
@@ -429,7 +447,6 @@ static void on_char(const Ca_Event *ev, void *user_data)
         return;
     }
 
-    if (sol_ui_system_is_leader_active(r->ui)) return;
     if (!r->buffer_input_active) return;
     const uint32_t cp = ev->character.codepoint;
     if (cp == 0u) return;

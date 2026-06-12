@@ -99,7 +99,7 @@ static void on_term_tab_click(Ca_Button *btn, void *user_data)
         else
             sol_terminal_manager_prev_tab(mgr);
     }
-    sol_terminal_manager_set_focused(mgr, true);
+    sol_ui_system_terminal_set_focused(ctx->ui, true);
     sol_ui_system_terminal_notify(ctx->ui);
 }
 
@@ -135,7 +135,7 @@ static void on_term_viewport_click(Ca_Button *btn, void *user_data)
     if (!ctx || !ctx->ui || !ctx->ui->terminal_mgr) return;
     SolTerminalManager *mgr = ctx->ui->terminal_mgr;
     if (!sol_terminal_manager_focused(mgr)) {
-        sol_terminal_manager_set_focused(mgr, true);
+        sol_ui_system_terminal_set_focused(ctx->ui, true);
         sol_ui_system_terminal_notify(ctx->ui);
     }
 }

@@ -235,6 +235,10 @@ struct SolUISystem {
     /* Leader / flow state. */
     SolModifierMask   leader_modifier;
     bool              leader_active;
+    /* Set on leader-key down, cleared when any other key is pressed while
+       the leader is held.  On leader-key up, if still true the press was a
+       clean tap → open the popup.  Prevents Ctrl+C from triggering the leader. */
+    bool              leader_tap_pending;
     bool              leader_no_match;
     SolKeyCode        leader_last_invalid_key;
     SolKeyCode        leader_prefix[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
@@ -290,6 +294,8 @@ struct SolUISystem {
     void            *file_open_user_data;
     SolUIFocusRegionFn focus_region_callback;
     void              *focus_region_user_data;
+    SolUITerminalFocusGainFn terminal_focus_gain_callback;
+    void                    *terminal_focus_gain_user_data;
     SolUIContextActionFn context_action_callback;
     void                *context_action_user_data;
 

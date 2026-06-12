@@ -22,6 +22,9 @@ typedef struct SolUISystem SolUISystem;
  * success — the UI ignores the value today but will surface it later. */
 typedef bool (*SolUIFileOpenFn)(const char *path, void *user_data);
 typedef void (*SolUIFocusRegionFn)(bool in_explorer, void *user_data);
+/* Fired just before terminal keyboard focus is granted so the app can
+   snapshot whatever held focus beforehand and restore it on defocus. */
+typedef void (*SolUITerminalFocusGainFn)(void *user_data);
 
 typedef enum SolUIContextSurface {
     SOL_UI_CONTEXT_SURFACE_WORKSPACE = 0,
@@ -128,6 +131,12 @@ void sol_ui_system_set_file_open_callback(SolUISystem *ui,
 void sol_ui_system_set_focus_region_callback(SolUISystem *ui,
 											 SolUIFocusRegionFn callback,
 											 void *user_data);
+
+/* Register a callback fired just before terminal keyboard focus is granted.
+ * The app uses this to snapshot pre-terminal focus state for later restore. */
+void sol_ui_system_set_terminal_focus_gain_callback(SolUISystem *ui,
+                                                    SolUITerminalFocusGainFn callback,
+                                                    void *user_data);
 
 /* Install the callback used by Causality-backed context menus.
  * The UI only reports typed target/action requests; the application
@@ -267,6 +276,16 @@ SolTerminalManager *sol_ui_system_terminal_manager(const SolUISystem *ui);
  * ui  The UI system.
  */
 void sol_ui_system_terminal_notify(SolUISystem *ui);
+
+/*
+ * Set terminal keyboard focus, firing the focus-gain callback when gaining
+ * focus so the application can snapshot pre-terminal focus state.
+ * Use this instead of calling sol_terminal_manager_set_focused directly.
+ *
+ * ui      The UI system.
+ * focused Whether the terminal should have keyboard focus.
+ */
+void sol_ui_system_terminal_set_focused(SolUISystem *ui, bool focused);
 
 /* ================================================================== */
 /* Plugin status bar segments                                          */
