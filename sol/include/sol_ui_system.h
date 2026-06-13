@@ -11,6 +11,24 @@
 
 typedef struct SolUISystem SolUISystem;
 
+typedef uint32_t SolUISidePanelToken;
+#define SOL_UI_SIDE_PANEL_TOKEN_INVALID 0u
+
+/* Render callback for a plugin-contributed workspace side panel. */
+typedef void (*SolUISidePanelRenderFn)(void *user_data);
+
+/* Per-frame callback for adopting asynchronous panel state on the UI thread. */
+typedef void (*SolUISidePanelTickFn)(void *user_data);
+
+/* Descriptor for a plugin-contributed workspace side panel. */
+typedef struct SolUISidePanelDesc {
+    const char              *id;
+    const char              *title;
+    SolUISidePanelRenderFn   render;
+    SolUISidePanelTickFn     tick;
+    void                    *user_data;
+} SolUISidePanelDesc;
+
 /* Maximum number of chord steps in a single command flow (including
  * the leader). Surfaced publicly so callers (e.g. the bindings config
  * loader) can size their per-flow buffers without depending on the
@@ -150,6 +168,34 @@ void sol_ui_system_set_context_action_callback(SolUISystem *ui,
  * from a file-picker callback) so the new contents render immediately
  * instead of waiting for an unrelated invalidation. */
 void sol_ui_system_invalidate_buffer_area(SolUISystem *ui);
+
+/* Register a workspace side panel and return its stable token. */
+SolUISidePanelToken sol_ui_system_register_side_panel(
+    SolUISystem *ui,
+    const SolUISidePanelDesc *desc);
+
+/* Remove a side-panel contribution. The active panel is hidden if it matches. */
+void sol_ui_system_unregister_side_panel(SolUISystem *ui,
+                                         SolUISidePanelToken token);
+
+/* Show a registered side panel, replacing the explorer until hidden. */
+bool sol_ui_system_show_side_panel(SolUISystem *ui,
+                                   SolUISidePanelToken token);
+
+/* Hide a registered side panel and return the sidebar to the explorer. */
+void sol_ui_system_hide_side_panel(SolUISystem *ui,
+                                   SolUISidePanelToken token);
+
+/* Return whether the token currently owns the visible side panel. */
+bool sol_ui_system_side_panel_visible(const SolUISystem *ui,
+                                      SolUISidePanelToken token);
+
+/* Notify the reactive workspace that side-panel state changed. */
+void sol_ui_system_notify_side_panel(SolUISystem *ui,
+                                     SolUISidePanelToken token);
+
+/* Wake the Causality event loop after a worker publishes panel state. */
+void sol_ui_system_wake(SolUISystem *ui);
 
 /* Set the active workspace leaf and force a rebuild. Returns true if
  * the focused leaf actually changed. Used by buffer-content click

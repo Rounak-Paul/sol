@@ -495,7 +495,8 @@ void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data)
     float scroll_y = ca_signal_get_float(ui->sig_tree_scroll);
     (void)ca_signal_get_u32(ui->sig_file_tree_rev);
 
-    if (!sol_ui_system_file_tree_visible(ui) ||
+    if (ui->active_side_panel != SOL_UI_SIDE_PANEL_TOKEN_INVALID ||
+        !sol_ui_system_file_tree_visible(ui) ||
         !sol_file_tree_root(ui->file_tree)) return;
 
     ui->sticky_click_ctx_count = 0;

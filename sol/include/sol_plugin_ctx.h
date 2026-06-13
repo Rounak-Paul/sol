@@ -72,6 +72,23 @@ extern "C" {
 typedef struct SolPluginCtx    SolPluginCtx;
 typedef struct SolSystemManager SolSystemManager;
 typedef void (*SolServiceDestroyFn)(void *service, void *user_data);
+typedef uint32_t SolPluginSidePanelToken;
+#define SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID 0u
+
+/* Render callback for a plugin-owned workspace side panel. */
+typedef void (*SolPluginSidePanelRenderFn)(void *user_data);
+
+/* UI-thread tick callback for adopting completed asynchronous work. */
+typedef void (*SolPluginSidePanelTickFn)(void *user_data);
+
+/* Descriptor for a plugin-owned workspace side panel. */
+typedef struct SolPluginSidePanelDesc {
+    const char                   *id;
+    const char                   *title;
+    SolPluginSidePanelRenderFn    render;
+    SolPluginSidePanelTickFn      tick;
+    void                         *user_data;
+} SolPluginSidePanelDesc;
 
 /* ================================================================== */
 /* Core subsystem access                                               */
@@ -285,6 +302,32 @@ SOL_API void sol_plugin_update_status_segment(SolPluginCtx        *ctx,
  */
 SOL_API void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
                                                SolPluginStatusToken token);
+
+/* Register a native workspace side panel; automatically removed on unload. */
+SOL_API SolPluginSidePanelToken sol_plugin_register_side_panel(
+    SolPluginCtx *ctx,
+    const SolPluginSidePanelDesc *desc);
+
+/* Remove a side panel before plugin unload. */
+SOL_API void sol_plugin_unregister_side_panel(SolPluginCtx *ctx,
+                                               SolPluginSidePanelToken token);
+
+/* Show or hide a registered side panel. */
+SOL_API bool sol_plugin_show_side_panel(SolPluginCtx *ctx,
+                                        SolPluginSidePanelToken token);
+SOL_API void sol_plugin_hide_side_panel(SolPluginCtx *ctx,
+                                        SolPluginSidePanelToken token);
+
+/* Return whether a registered side panel is currently visible. */
+SOL_API bool sol_plugin_side_panel_visible(SolPluginCtx *ctx,
+                                           SolPluginSidePanelToken token);
+
+/* Rebuild a side panel after its UI-thread state changes. */
+SOL_API void sol_plugin_notify_side_panel(SolPluginCtx *ctx,
+                                          SolPluginSidePanelToken token);
+
+/* Wake the editor event loop after a worker publishes completion state. */
+SOL_API void sol_plugin_wake_ui(SolPluginCtx *ctx);
 
 /* ================================================================== */
 /* Buffer operations                                                   */

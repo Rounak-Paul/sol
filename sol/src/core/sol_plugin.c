@@ -47,6 +47,7 @@
 #define SOL_PLUGIN_CTX_MAX_COMMANDS       64u
 #define SOL_PLUGIN_CTX_MAX_SERVICES       16u
 #define SOL_PLUGIN_CTX_MAX_STATUS_SEGS     8u
+#define SOL_PLUGIN_CTX_MAX_SIDE_PANELS     4u
 #define SOL_PLUGIN_CTX_MAX_LANGUAGES       8u
 /* Keep in sync with SOL_UI_MAX_ACTION_LEN in sol_ui_internal.h */
 #define SOL_PLUGIN_CMD_ACTION_MAX_LEN     63u
@@ -80,6 +81,10 @@ struct SolPluginCtx {
     /* Tracked status bar tokens — auto-removed on cleanup */
     SolUIStatusToken status_tokens[SOL_PLUGIN_CTX_MAX_STATUS_SEGS];
     size_t           status_token_count;
+
+    /* Tracked side-panel tokens — auto-removed on cleanup */
+    SolUISidePanelToken side_panel_tokens[SOL_PLUGIN_CTX_MAX_SIDE_PANELS];
+    size_t              side_panel_token_count;
 
     /* Tracked language registrations — unregistered and buffer highlighters
      * invalidated before the plugin library is unloaded (dlclose). */
@@ -229,6 +234,8 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
             sol_ui_system_unregister_command_flow(ui, ctx->commands[i]);
         for (size_t i = 0u; i < ctx->status_token_count; ++i)
             sol_ui_system_remove_status_segment(ui, ctx->status_tokens[i]);
+        for (size_t i = 0u; i < ctx->side_panel_token_count; ++i)
+            sol_ui_system_unregister_side_panel(ui, ctx->side_panel_tokens[i]);
     }
 
     /* Unregister services */
@@ -1252,6 +1259,99 @@ void sol_plugin_remove_status_segment(SolPluginCtx        *ctx,
     }
 }
 
+/* Return the tracked side-panel index for token, or SIZE_MAX. */
+static size_t sol_plugin_side_panel_index(const SolPluginCtx *ctx,
+                                          SolPluginSidePanelToken token)
+{
+    if (!ctx || token == SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID) return SIZE_MAX;
+    for (size_t i = 0u; i < ctx->side_panel_token_count; ++i) {
+        if (ctx->side_panel_tokens[i] == token) return i;
+    }
+    return SIZE_MAX;
+}
+
+/* Register a workspace side panel and track it for automatic cleanup. */
+SolPluginSidePanelToken sol_plugin_register_side_panel(
+    SolPluginCtx *ctx,
+    const SolPluginSidePanelDesc *desc)
+{
+    if (!ctx || !desc || ctx->side_panel_token_count >= SOL_PLUGIN_CTX_MAX_SIDE_PANELS) {
+        return SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID;
+    }
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (!ui) return SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID;
+
+    SolUISidePanelToken token = sol_ui_system_register_side_panel(
+        ui,
+        &(SolUISidePanelDesc){
+            .id = desc->id,
+            .title = desc->title,
+            .render = desc->render,
+            .tick = desc->tick,
+            .user_data = desc->user_data,
+        });
+    if (token == SOL_UI_SIDE_PANEL_TOKEN_INVALID) {
+        return SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID;
+    }
+    ctx->side_panel_tokens[ctx->side_panel_token_count++] = token;
+    return token;
+}
+
+/* Remove a tracked workspace side panel before plugin unload. */
+void sol_plugin_unregister_side_panel(SolPluginCtx *ctx,
+                                      SolPluginSidePanelToken token)
+{
+    const size_t index = sol_plugin_side_panel_index(ctx, token);
+    if (index == SIZE_MAX) return;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (ui) sol_ui_system_unregister_side_panel(ui, token);
+    ctx->side_panel_tokens[index] =
+        ctx->side_panel_tokens[--ctx->side_panel_token_count];
+}
+
+/* Show a tracked workspace side panel. */
+bool sol_plugin_show_side_panel(SolPluginCtx *ctx,
+                                SolPluginSidePanelToken token)
+{
+    if (sol_plugin_side_panel_index(ctx, token) == SIZE_MAX) return false;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    return ui && sol_ui_system_show_side_panel(ui, token);
+}
+
+/* Hide a tracked workspace side panel. */
+void sol_plugin_hide_side_panel(SolPluginCtx *ctx,
+                                SolPluginSidePanelToken token)
+{
+    if (sol_plugin_side_panel_index(ctx, token) == SIZE_MAX) return;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (ui) sol_ui_system_hide_side_panel(ui, token);
+}
+
+/* Return whether a tracked workspace side panel is visible. */
+bool sol_plugin_side_panel_visible(SolPluginCtx *ctx,
+                                   SolPluginSidePanelToken token)
+{
+    if (sol_plugin_side_panel_index(ctx, token) == SIZE_MAX) return false;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    return ui && sol_ui_system_side_panel_visible(ui, token);
+}
+
+/* Notify a tracked workspace side panel that its UI state changed. */
+void sol_plugin_notify_side_panel(SolPluginCtx *ctx,
+                                  SolPluginSidePanelToken token)
+{
+    if (sol_plugin_side_panel_index(ctx, token) == SIZE_MAX) return;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (ui) sol_ui_system_notify_side_panel(ui, token);
+}
+
+/* Wake the editor event loop after worker-side state publication. */
+void sol_plugin_wake_ui(SolPluginCtx *ctx)
+{
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (ui) sol_ui_system_wake(ui);
+}
+
 /* ================================================================== */
 /* SolPluginCtx — buffer operations                                    */
 /* ================================================================== */
@@ -1483,4 +1583,3 @@ bool sol_plugin_register_language_with_query(
         ctx->language_ptrs[ctx->language_count++] = language;
     return true;
 }
-

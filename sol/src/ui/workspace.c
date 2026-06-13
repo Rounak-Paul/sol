@@ -48,6 +48,7 @@
 #include "style.h"
 
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -115,11 +116,11 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
 
     if (root_h < 0.0f) root_h = 0.0f;
 
-    const bool has_tree_root =
+    const bool has_left_panel = ui->active_side_panel != SOL_UI_SIDE_PANEL_TOKEN_INVALID ||
         (ui->file_tree &&
          sol_ui_system_file_tree_visible(ui) &&
          sol_file_tree_root(ui->file_tree) != NULL);
-    if (has_tree_root) {
+    if (has_left_panel) {
         float avail_w = root_w - SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX;
         if (avail_w < 0.0f) avail_w = 0.0f;
         const float ratio = ui->tree_panel_ratio < 0.0f ? 0.0f
@@ -194,6 +195,18 @@ bool sol_ui_system_file_tree_visible(const SolUISystem *ui)
 const char *sol_ui_system_file_tree_root(const SolUISystem *ui)
 {
     return (ui && ui->file_tree) ? sol_file_tree_root(ui->file_tree) : NULL;
+}
+
+/* Return the registered side panel matching token, or NULL. */
+static SolUISidePanel *sol_ui_find_side_panel(SolUISystem *ui,
+                                              SolUISidePanelToken token)
+{
+    if (!ui || token == SOL_UI_SIDE_PANEL_TOKEN_INVALID) return NULL;
+    for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
+        SolUISidePanel *panel = &ui->side_panels[i];
+        if (panel->in_use && panel->token == token) return panel;
+    }
+    return NULL;
 }
 
 
@@ -779,6 +792,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
     (void)ca_signal_get_bool(ui->sig_file_tree_visible);
     (void)ca_signal_get_u32(ui->sig_window_rev);
     (void)ca_signal_get_u32(ui->sig_terminal_rev);
+    (void)ca_signal_get_u32(ui->sig_side_panel_rev);
 
     /* Top region: optional left tree panel + buffer area (+ optional terminal).
        When the tree is visible we use ca_split_begin so the divider is
@@ -788,16 +802,19 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         .style     = "workspace-main-content",
     });
 
-    const bool has_tree_root =
+    SolUISidePanel *active_panel =
+        sol_ui_find_side_panel(ui, ui->active_side_panel);
+    const bool has_tree_root = !active_panel &&
         (ui->file_tree &&
          sol_ui_system_file_tree_visible(ui) &&
          sol_file_tree_root(ui->file_tree) != NULL);
+    const bool has_left_panel = active_panel || has_tree_root;
 
     const bool term_visible = ui->terminal_mgr &&
                               sol_terminal_manager_visible(ui->terminal_mgr) &&
                               sol_terminal_manager_count(ui->terminal_mgr) > 0u;
 
-    if (has_tree_root) {
+    if (has_left_panel) {
         ca_split_begin(&(Ca_SplitDesc){
             .direction      = CA_HORIZONTAL,
             .ratio          = ui->tree_panel_ratio,
@@ -810,15 +827,21 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             .user_data      = ui,
         });
 
-        /* Left pane — file tree */
+        /* Left pane — active plugin panel or file tree. */
         ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
-            .style     = "tree-panel",
+            .style     = active_panel ? "plugin-side-panel" : "tree-panel",
         });
-        sol_ui_render_file_tree_panel_body(ui);
-        ca_div_end();   /* tree-panel (left pane) */
-        sol_ui_attach_explorer_empty_context_menu(
-            ui, sol_file_tree_root(ui->file_tree));
+        if (active_panel) {
+            active_panel->render(active_panel->user_data);
+        } else {
+            sol_ui_render_file_tree_panel_body(ui);
+        }
+        ca_div_end();
+        if (!active_panel) {
+            sol_ui_attach_explorer_empty_context_menu(
+                ui, sol_file_tree_root(ui->file_tree));
+        }
 
         /* Right pane — buffer area (+ optional terminal split) */
         ui->buffer_area_host = ca_div_begin(&(Ca_DivDesc){
@@ -927,6 +950,11 @@ static void sol_ui_on_frame(void *user_data)
     sol_file_picker_tick();
     sol_ui_settings_window_tick();
     sol_ui_search_window_tick();
+
+    for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
+        SolUISidePanel *panel = &ui->side_panels[i];
+        if (panel->in_use && panel->tick) panel->tick(panel->user_data);
+    }
 
     /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
      * so the workspace-content builder re-runs every tick and evaluates
@@ -1195,11 +1223,13 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->sig_window_rev        = ca_signal_u32  (instance, 0u);
     ui->sig_tree_scroll       = ca_signal_float(instance, 0.0f);
     ui->sig_terminal_rev      = ca_signal_u32  (instance, 0u);
+    ui->sig_side_panel_rev    = ca_signal_u32  (instance, 0u);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_file_tree_visible ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
-        !ui->sig_tree_scroll || !ui->sig_terminal_rev) {
+        !ui->sig_tree_scroll || !ui->sig_terminal_rev ||
+        !ui->sig_side_panel_rev) {
         free(ui);
         return NULL;
     }
@@ -1763,7 +1793,6 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
  */
 void sol_ui_system_tick(SolUISystem *ui)
 {
-    (void)ui;
     /* Currently equivalent to the on_frame reaping path, but exposed
        publicly so hosts that drive the loop themselves can keep async
        UI work moving forward without depending on the primary window's
@@ -1772,6 +1801,12 @@ void sol_ui_system_tick(SolUISystem *ui)
     sol_ui_plugin_window_tick();
     sol_ui_settings_window_tick();
     sol_ui_search_window_tick();
+    if (ui) {
+        for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
+            SolUISidePanel *panel = &ui->side_panels[i];
+            if (panel->in_use && panel->tick) panel->tick(panel->user_data);
+        }
+    }
 }
 
 /*
@@ -1877,6 +1912,105 @@ void sol_ui_system_invalidate_buffer_area(SolUISystem *ui)
        migrated still produce a redraw — we route through the same
        buffer-rev signal the data layer uses. */
     if (ui) sol_ui_bump_u32(ui->sig_buffer_rev);
+}
+
+/* Register a plugin-contributed workspace side panel. */
+SolUISidePanelToken sol_ui_system_register_side_panel(
+    SolUISystem *ui,
+    const SolUISidePanelDesc *desc)
+{
+    if (!ui || !desc || !desc->id || !desc->id[0] || !desc->render) {
+        return SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+    }
+
+    for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
+        if (ui->side_panels[i].in_use &&
+            strcmp(ui->side_panels[i].id, desc->id) == 0) {
+            return SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+        }
+    }
+
+    SolUISidePanel *slot = NULL;
+    for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
+        if (!ui->side_panels[i].in_use) {
+            slot = &ui->side_panels[i];
+            break;
+        }
+    }
+    if (!slot) return SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+
+    uint32_t token = ++ui->side_panel_next_token;
+    if (token == SOL_UI_SIDE_PANEL_TOKEN_INVALID) {
+        token = ++ui->side_panel_next_token;
+    }
+
+    memset(slot, 0, sizeof(*slot));
+    slot->token = token;
+    snprintf(slot->id, sizeof(slot->id), "%s", desc->id);
+    snprintf(slot->title, sizeof(slot->title), "%s",
+             desc->title ? desc->title : desc->id);
+    slot->render = desc->render;
+    slot->tick = desc->tick;
+    slot->user_data = desc->user_data;
+    slot->in_use = true;
+    sol_ui_bump_u32(ui->sig_side_panel_rev);
+    return token;
+}
+
+/* Remove a plugin-contributed side panel. */
+void sol_ui_system_unregister_side_panel(SolUISystem *ui,
+                                         SolUISidePanelToken token)
+{
+    SolUISidePanel *panel = sol_ui_find_side_panel(ui, token);
+    if (!panel) return;
+    if (ui->active_side_panel == token) {
+        ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+    }
+    memset(panel, 0, sizeof(*panel));
+    sol_ui_bump_u32(ui->sig_side_panel_rev);
+}
+
+/* Make a registered side panel visible in the workspace. */
+bool sol_ui_system_show_side_panel(SolUISystem *ui,
+                                   SolUISidePanelToken token)
+{
+    if (!sol_ui_find_side_panel(ui, token)) return false;
+    if (ui->active_side_panel == token) return true;
+    ui->active_side_panel = token;
+    sol_ui_bump_u32(ui->sig_side_panel_rev);
+    return true;
+}
+
+/* Hide the active side panel when it matches token. */
+void sol_ui_system_hide_side_panel(SolUISystem *ui,
+                                   SolUISidePanelToken token)
+{
+    if (!ui || ui->active_side_panel != token) return;
+    ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+    sol_ui_bump_u32(ui->sig_side_panel_rev);
+}
+
+/* Return whether token currently owns the visible side panel. */
+bool sol_ui_system_side_panel_visible(const SolUISystem *ui,
+                                      SolUISidePanelToken token)
+{
+    return ui && token != SOL_UI_SIDE_PANEL_TOKEN_INVALID &&
+           ui->active_side_panel == token;
+}
+
+/* Notify the workspace that a registered side panel changed. */
+void sol_ui_system_notify_side_panel(SolUISystem *ui,
+                                     SolUISidePanelToken token)
+{
+    if (sol_ui_find_side_panel(ui, token)) {
+        sol_ui_bump_u32(ui->sig_side_panel_rev);
+    }
+}
+
+/* Wake the Causality event loop after worker-side state publication. */
+void sol_ui_system_wake(SolUISystem *ui)
+{
+    if (ui && ui->instance) ca_instance_wake();
 }
 
 /*

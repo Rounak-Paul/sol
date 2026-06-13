@@ -930,12 +930,81 @@ static void test_command_auto_unreg(SolTestCtx *T)
 }
 
 /* ================================================================== */
+/* Suite 9: Side panel contributions                                   */
+/* ================================================================== */
+
+static SolPluginCtx *g_panel_ctx = NULL;
+static bool panel_plugin_load(SolPluginCtx *ctx) { g_panel_ctx = ctx; return true; }
+static void dummy_panel_render(void *user_data) { (void)user_data; }
+
+static void test_side_panel_lifecycle(SolTestCtx *T)
+{
+    g_panel_ctx = NULL;
+    TestEnv e = make_env();
+    SolPluginAPI api = {
+        .api_version = SOL_PLUGIN_API_VERSION,
+        .id = "test.panel",
+        .on_load = panel_plugin_load,
+    };
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &api));
+    SolPluginSidePanelToken token = sol_plugin_register_side_panel(
+        g_panel_ctx,
+        &(SolPluginSidePanelDesc){
+            .id = "test.panel.sidebar",
+            .title = "Test Panel",
+            .render = dummy_panel_render,
+        });
+    SOL_CHECK(T, token != SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID);
+    SOL_CHECK(T, sol_plugin_show_side_panel(g_panel_ctx, token));
+    SOL_CHECK(T, sol_plugin_side_panel_visible(g_panel_ctx, token));
+    sol_plugin_hide_side_panel(g_panel_ctx, token);
+    SOL_CHECK(T, !sol_plugin_side_panel_visible(g_panel_ctx, token));
+    sol_plugin_unregister_side_panel(g_panel_ctx, token);
+
+    bool any_panel = false;
+    for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i)
+        if (e.ui->side_panels[i].in_use) any_panel = true;
+    SOL_CHECK_MSG(T, !any_panel, "side panel still registered after explicit removal");
+    free_env(&e);
+    g_panel_ctx = NULL;
+}
+
+static void test_side_panel_auto_remove(SolTestCtx *T)
+{
+    g_panel_ctx = NULL;
+    TestEnv e = make_env();
+    SolPluginAPI api = {
+        .api_version = SOL_PLUGIN_API_VERSION,
+        .id = "test.panel.auto",
+        .on_load = panel_plugin_load,
+    };
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &api));
+    SolPluginSidePanelToken token = sol_plugin_register_side_panel(
+        g_panel_ctx,
+        &(SolPluginSidePanelDesc){
+            .id = "test.panel.auto.sidebar",
+            .render = dummy_panel_render,
+        });
+    SOL_CHECK(T, token != SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID);
+    SOL_CHECK(T, sol_plugin_show_side_panel(g_panel_ctx, token));
+    SOL_CHECK(T, sol_plugin_manager_unload(e.pm, "test.panel.auto"));
+
+    bool any_panel = false;
+    for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i)
+        if (e.ui->side_panels[i].in_use) any_panel = true;
+    SOL_CHECK_MSG(T, !any_panel, "side panel still registered after plugin unload");
+    SOL_CHECK(T, e.ui->active_side_panel == SOL_UI_SIDE_PANEL_TOKEN_INVALID);
+    free_env(&e);
+    g_panel_ctx = NULL;
+}
+
+/* ================================================================== */
 /* main                                                                */
 /* ================================================================== */
 
 int main(void)
 {
-    SolTestSuite *suites = (SolTestSuite *)calloc(8u, sizeof(SolTestSuite));
+    SolTestSuite *suites = (SolTestSuite *)calloc(9u, sizeof(SolTestSuite));
     if (!suites) return 1;
     int si = 0;
 
@@ -1007,6 +1076,12 @@ int main(void)
     SOL_RUN(suites[si], test_command_register);
     SOL_RUN(suites[si], test_command_unregister);
     SOL_RUN(suites[si], test_command_auto_unreg);
+    sol_suite_report(&suites[si++]);
+
+    /* Suite 9 — side panels */
+    sol_suite_init(&suites[si], "sol_plugin_side_panels");
+    SOL_RUN(suites[si], test_side_panel_lifecycle);
+    SOL_RUN(suites[si], test_side_panel_auto_remove);
     sol_suite_report(&suites[si++]);
 
     const int result = sol_report_all(suites, si);

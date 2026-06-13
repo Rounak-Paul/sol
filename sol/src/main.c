@@ -1524,6 +1524,15 @@ int main(int argc, char **argv)
     sol_system_unregister_service(app.systems, "ca.instance");
 
     sol_input_router_destroy(app.router);
+    /* Plugins must quiesce and unregister while the UI, syntax registry, and
+       Causality instance they reference are still alive. */
+    SolPluginManager *plugins = sol_system_plugins(app.systems);
+    if (plugins) {
+        (void)sol_plugin_manager_unload_all(plugins);
+        sol_plugin_manager_attach_ui(plugins, NULL);
+    }
+    sol_ui_system_set_plugin_manager(app.ui, NULL);
+    sol_system_unregister_service(app.systems, "sol.ui");
     /* Destroy the terminal manager before the UI system so PTY reader threads
        stop before causality signals are freed. */
     sol_ui_system_set_terminal_manager(app.ui, NULL);

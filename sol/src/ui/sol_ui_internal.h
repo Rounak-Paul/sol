@@ -37,6 +37,7 @@
 #define SOL_UI_MAX_SUGGESTIONS        32u
 #define SOL_UI_STATUS_TEXT_MAX_LEN    127u
 #define SOL_UI_MAX_STATUS_SEGMENTS    16u
+#define SOL_UI_MAX_SIDE_PANELS         8u
 #define SOL_UI_MAX_CONTEXT_ACTIONS    16u
 #define SOL_UI_CONTEXT_PATH_MAX       4096u
 
@@ -80,6 +81,17 @@ typedef struct SolUIStatusSegment {
     char     style_class[48];       /* CSS class (empty = default)      */
     bool     in_use;
 } SolUIStatusSegment;
+
+/* A registered plugin side-panel contribution. */
+typedef struct SolUISidePanel {
+    SolUISidePanelToken     token;
+    char                    id[64];
+    char                    title[64];
+    SolUISidePanelRenderFn  render;
+    SolUISidePanelTickFn    tick;
+    void                   *user_data;
+    bool                    in_use;
+} SolUISidePanel;
 
 typedef struct SolCommandFlowBinding {
     char                    action[SOL_UI_MAX_ACTION_LEN + 1u];
@@ -318,10 +330,16 @@ struct SolUISystem {
        or when terminal focus state changes.  The workspace content builder
        subscribes to force a repaint. */
     Ca_Signal          *sig_terminal_rev;
+    Ca_Signal          *sig_side_panel_rev;
 
     /* Plugin-contributed status bar segments (right side). */
     SolUIStatusSegment plugin_status_segs[SOL_UI_MAX_STATUS_SEGMENTS];
     uint32_t           plugin_status_next_token;   /* monotonic counter, starts at 1 */
+
+    /* Plugin-contributed left sidebar panels. */
+    SolUISidePanel      side_panels[SOL_UI_MAX_SIDE_PANELS];
+    SolUISidePanelToken active_side_panel;
+    uint32_t            side_panel_next_token;
 
     /* Back-pointer to the plugin manager, set via
        sol_ui_system_set_plugin_manager().  NULL until attached. */
