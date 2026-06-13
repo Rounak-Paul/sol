@@ -1175,6 +1175,7 @@ static const char *git_relative_active_path(const GitPlugin *plugin)
 {
     if (!plugin || !plugin->snapshot.repository || !plugin->active_file[0]) return NULL;
     const size_t root_length = strlen(plugin->snapshot.root);
+    if (root_length == 0u) return NULL;
     if (strncmp(plugin->active_file, plugin->snapshot.root, root_length) != 0) return NULL;
     const char *relative = plugin->active_file + root_length;
     if (*relative == '/' || *relative == '\\') ++relative;
@@ -1251,10 +1252,14 @@ static bool git_on_command(const char *action,
     GitPlugin *plugin = (GitPlugin *)user_data;
     if (!plugin || !action) return false;
     if (strcmp(action, "git.status") == 0) {
-        (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
-        plugin->tab = GIT_PANEL_CHANGES;
-        if (!plugin->task_running && plugin->snapshot.repository) {
-            (void)git_start_task(plugin, GIT_TASK_REFRESH, NULL, false);
+        if (sol_plugin_side_panel_visible(plugin->ctx, plugin->panel_token)) {
+            sol_plugin_hide_side_panel(plugin->ctx, plugin->panel_token);
+        } else {
+            (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
+            plugin->tab = GIT_PANEL_CHANGES;
+            if (!plugin->task_running && plugin->snapshot.repository) {
+                (void)git_start_task(plugin, GIT_TASK_REFRESH, NULL, false);
+            }
         }
         return true;
     }
@@ -1290,6 +1295,7 @@ static bool git_on_command(const char *action,
         if (!relative) {
             git_copy_string(plugin->error, sizeof(plugin->error),
                             "The active file is outside this repository");
+            (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
             sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
             return true;
         }
@@ -1301,6 +1307,7 @@ static bool git_on_command(const char *action,
         if (!relative) {
             git_copy_string(plugin->error, sizeof(plugin->error),
                             "The active file is outside this repository");
+            (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
             sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
             return true;
         }
@@ -1393,7 +1400,7 @@ static bool git_on_load(SolPluginCtx *ctx)
         ctx, "git: no repository", "status-plugin");
     if (plugin->status_token == SOL_PLUGIN_STATUS_TOKEN_INVALID) return false;
 
-    if (!git_register_command(plugin, "git.status", 'G', 'S') ||
+    if (!git_register_command(plugin, "git.status", 'G', 'G') ||
         !git_register_command(plugin, "git.refresh", 'G', 'R') ||
         !git_register_command(plugin, "git.diff", 'G', 'D') ||
         !git_register_command(plugin, "git.history", 'G', 'L') ||

@@ -78,10 +78,16 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
   index with `HEAD`, unstaged rows compare the worktree with the index, and
   untracked files render as additions against an empty file instead of showing
   "No diff is available".
+- Fixed aliasing bug in `git_model_refresh`: when called with `task->snapshot.root`
+  as both `root` and the snapshot pointer, `memset` zeroed the root string before
+  copy, leaving `snapshot->root` empty and all diffs running from the wrong cwd.
+- `git.status` (`L g g`) now toggles the panel; `git.diff`/`git.blame` show the
+  panel on error so the message is visible; `git_relative_active_path` guards
+  against an empty repo root.
 
 ## Usage
 
-- `Ctrl`, then `g s`: open Source Control.
+- `Ctrl`, then `g g`: toggle Source Control panel.
 - `Ctrl`, then `g r`: refresh.
 - `Ctrl`, then `g d`: diff active file.
 - `Ctrl`, then `g l`: history.
