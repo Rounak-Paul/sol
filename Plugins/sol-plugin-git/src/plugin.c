@@ -363,17 +363,8 @@ static bool git_task_diff(GitTask *task)
         git_task_append(task, part, result.output_len);
     }
     if (task->output_len == 0u) {
-        char diagnostic[GIT_PATH_CAP * 2u + 256u];
-        int n = snprintf(diagnostic, sizeof(diagnostic),
-                         "No diff is available for this path.\n\n"
-                         "root: %s\npath: %s\nmode: %s\nexit: %d\n",
-                         task->repo_root,
-                         task->argument,
-                         task->diff_mode == GIT_DIFF_STAGED ? "staged"
-                             : task->diff_mode == GIT_DIFF_UNTRACKED ? "untracked"
-                             : "unstaged",
-                         result.exit_code);
-        if (n > 0) git_task_append(task, diagnostic, (size_t)n);
+        static const char empty[] = "No diff is available for this path.\n";
+        git_task_append(task, empty, sizeof(empty) - 1u);
     }
     free(part);
     return !task->truncated;

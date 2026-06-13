@@ -259,8 +259,10 @@ bool git_model_refresh(const char *root,
         free(output);
         return false;
     }
+    char root_buf[GIT_PATH_CAP];
+    git_copy_span(root_buf, sizeof(root_buf), root, strlen(root));
     memset(snapshot, 0, sizeof(*snapshot));
-    git_copy_span(snapshot->root, sizeof(snapshot->root), root, strlen(root));
+    git_copy_span(snapshot->root, sizeof(snapshot->root), root_buf, strlen(root_buf));
     const bool parsed = git_model_parse_status(output, result.output_len,
                                                snapshot, error, error_capacity);
     free(output);
