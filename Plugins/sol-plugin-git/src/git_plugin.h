@@ -102,6 +102,12 @@ typedef enum GitTaskKind {
     GIT_TASK_BLAME,
 } GitTaskKind;
 
+typedef enum GitDiffMode {
+    GIT_DIFF_UNSTAGED = 0,
+    GIT_DIFF_STAGED,
+    GIT_DIFF_UNTRACKED,
+} GitDiffMode;
+
 typedef struct GitTask {
     GitTaskKind kind;
     SolPluginCtx *ctx;
@@ -111,6 +117,7 @@ typedef struct GitTask {
     char argument[GIT_PATH_CAP];
     char secondary[GIT_PATH_CAP];
     bool flag;
+    GitDiffMode diff_mode;
     GitSnapshot snapshot;
     GitHistory history;
     GitBranches branches;

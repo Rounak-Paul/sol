@@ -71,6 +71,13 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
 - Regression verification: strict subprocess compilation passes, the Git plugin
   tests execute real version and repository-status commands successfully, and all
   10 CTest targets pass with normal temporary-file access.
+- Git leader-command labels now use their public dotted action identifiers
+  (`git.status`, `git.refresh`, and related commands), matching the command popup
+  convention used by configurable and third-party command registrations.
+- File-row diff actions now preserve their source section: staged rows compare the
+  index with `HEAD`, unstaged rows compare the worktree with the index, and
+  untracked files render as additions against an empty file instead of showing
+  "No diff is available".
 
 ## Usage
 

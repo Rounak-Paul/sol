@@ -112,6 +112,22 @@ static bool git_file_is_unstaged(const GitFileStatus *file)
                     (file->worktree_status != '.' && file->worktree_status != ' '));
 }
 
+/* Select the patch source represented by one source-control row. */
+static GitDiffMode git_diff_mode(const GitPlugin *plugin,
+                                 const char *path,
+                                 bool staged)
+{
+    if (!plugin || !path) return staged ? GIT_DIFF_STAGED : GIT_DIFF_UNSTAGED;
+    for (size_t i = 0u; i < plugin->snapshot.file_count; ++i) {
+        const GitFileStatus *file = &plugin->snapshot.files[i];
+        if (strcmp(file->path, path) != 0) continue;
+        if (file->kind == GIT_FILE_UNTRACKED) return GIT_DIFF_UNTRACKED;
+        if (staged || !git_file_is_unstaged(file)) return GIT_DIFF_STAGED;
+        return GIT_DIFF_UNSTAGED;
+    }
+    return staged ? GIT_DIFF_STAGED : GIT_DIFF_UNSTAGED;
+}
+
 /* Return a compact human-readable status label. */
 static const char *git_file_status_label(const GitFileStatus *file,
                                          bool staged)
@@ -282,7 +298,7 @@ static bool git_task_unstage(GitTask *task, const char *path)
                             path ? remove_one : remove_all, 30000u);
 }
 
-/* Execute a combined staged and unstaged diff for one path. */
+/* Execute the patch represented by one source-control row. */
 static bool git_task_diff(GitTask *task)
 {
     task->output = (char *)calloc(GIT_PROCESS_OUTPUT_CAP, 1u);
@@ -293,38 +309,71 @@ static bool git_task_diff(GitTask *task)
         return false;
     }
 
-    const char *unstaged[] = { "git", "diff", "--", task->argument, NULL };
-    GitProcessResult first = git_process_run(task->repo_root, unstaged, part,
-                                             GIT_PROCESS_OUTPUT_CAP, 30000u);
-    if (first.exit_code != 0 || first.truncated) {
-        snprintf(task->error, sizeof(task->error), "Unable to load unstaged diff");
-        free(part);
-        return false;
-    }
-    if (first.output_len > 0u) {
-        static const char heading[] = "UNSTAGED CHANGES\n\n";
-        git_task_append(task, heading, sizeof(heading) - 1u);
-        git_task_append(task, part, first.output_len);
+    const char *const unstaged[] = {
+        "git", "diff", "--no-ext-diff", "--", task->argument, NULL
+    };
+    const char *const staged[] = {
+        "git", "diff", "--cached", "--no-ext-diff", "--",
+        task->argument, NULL
+    };
+#if defined(_WIN32)
+    const char *null_path = "NUL";
+#else
+    const char *null_path = "/dev/null";
+#endif
+    const char *untracked[] = {
+        "git", "diff", "--no-index", "--no-ext-diff", "--",
+        null_path, task->argument, NULL
+    };
+    const char *const *argv = unstaged;
+    const char *heading = "UNSTAGED CHANGES\n\n";
+    bool accepts_difference_exit = false;
+    if (task->diff_mode == GIT_DIFF_STAGED) {
+        argv = staged;
+        heading = "STAGED CHANGES\n\n";
+    } else if (task->diff_mode == GIT_DIFF_UNTRACKED) {
+        argv = untracked;
+        heading = "UNTRACKED FILE\n\n";
+        accepts_difference_exit = true;
     }
 
-    memset(part, 0, GIT_PROCESS_OUTPUT_CAP);
-    const char *staged[] = { "git", "diff", "--cached", "--", task->argument, NULL };
-    GitProcessResult second = git_process_run(task->repo_root, staged, part,
+    GitProcessResult result = git_process_run(task->repo_root, argv, part,
                                               GIT_PROCESS_OUTPUT_CAP, 30000u);
-    if (second.exit_code != 0 || second.truncated) {
-        snprintf(task->error, sizeof(task->error), "Unable to load staged diff");
+    const bool command_ok = result.exit_code == 0 ||
+        (accepts_difference_exit && result.exit_code == 1);
+    if (!command_ok || result.truncated) {
+        if (result.timed_out) {
+            snprintf(task->error, sizeof(task->error), "Git diff timed out");
+        } else if (result.truncated) {
+            snprintf(task->error, sizeof(task->error), "Git diff output is too large");
+        } else if (part[0]) {
+            size_t line = strcspn(part, "\r\n");
+            snprintf(task->error, sizeof(task->error), "%.*s", (int)line, part);
+        } else {
+            snprintf(task->error, sizeof(task->error),
+                     "Git diff failed with exit code %d", result.exit_code);
+        }
+        task->exit_code = result.exit_code;
+        task->timed_out = result.timed_out;
         free(part);
         return false;
     }
-    if (second.output_len > 0u) {
-        if (task->output_len > 0u) git_task_append(task, "\n", 1u);
-        static const char heading[] = "STAGED CHANGES\n\n";
-        git_task_append(task, heading, sizeof(heading) - 1u);
-        git_task_append(task, part, second.output_len);
+    if (result.output_len > 0u) {
+        git_task_append(task, heading, strlen(heading));
+        git_task_append(task, part, result.output_len);
     }
     if (task->output_len == 0u) {
-        static const char empty[] = "No diff is available for this path.\n";
-        git_task_append(task, empty, sizeof(empty) - 1u);
+        char diagnostic[GIT_PATH_CAP * 2u + 256u];
+        int n = snprintf(diagnostic, sizeof(diagnostic),
+                         "No diff is available for this path.\n\n"
+                         "root: %s\npath: %s\nmode: %s\nexit: %d\n",
+                         task->repo_root,
+                         task->argument,
+                         task->diff_mode == GIT_DIFF_STAGED ? "staged"
+                             : task->diff_mode == GIT_DIFF_UNTRACKED ? "untracked"
+                             : "unstaged",
+                         result.exit_code);
+        if (n > 0) git_task_append(task, diagnostic, (size_t)n);
     }
     free(part);
     return !task->truncated;
@@ -515,6 +564,9 @@ static bool git_start_task(GitPlugin *plugin,
     task->ctx = plugin->ctx;
     task->owner = plugin;
     task->flag = flag;
+    if (kind == GIT_TASK_DIFF) {
+        task->diff_mode = git_diff_mode(plugin, argument, flag);
+    }
     git_copy_string(task->workspace_root, sizeof(task->workspace_root),
                     plugin->workspace_root);
     git_copy_string(task->repo_root, sizeof(task->repo_root),
@@ -785,7 +837,8 @@ static void git_on_action(Ca_Button *button, void *user_data)
             break;
         }
         case GIT_UI_DIFF:
-            (void)git_start_task(plugin, GIT_TASK_DIFF, context->value, false);
+            (void)git_start_task(plugin, GIT_TASK_DIFF,
+                                 context->value, context->flag);
             break;
         case GIT_UI_STAGE_ALL:
             (void)git_start_task(plugin, GIT_TASK_STAGE_ALL, NULL, false);
@@ -852,7 +905,7 @@ static void git_render_file_row(GitPlugin *plugin,
     });
     git_render_button(plugin, file->path, GIT_UI_OPEN, file->path, false,
                       false, "scm-file-open");
-    git_render_button(plugin, "Diff", GIT_UI_DIFF, file->path, false,
+    git_render_button(plugin, "Diff", GIT_UI_DIFF, file->path, staged,
                       plugin->task_running, "scm-row-action");
     if (staged) {
         git_render_button(plugin, "-", GIT_UI_UNSTAGE, file->path, false,
@@ -1281,7 +1334,6 @@ static bool git_on_command(const char *action,
 /* Register one leader-chord command. */
 static bool git_register_command(GitPlugin *plugin,
                                  const char *action,
-                                 const char *label,
                                  SolKeyCode first,
                                  SolKeyCode second)
 {
@@ -1290,7 +1342,7 @@ static bool git_register_command(GitPlugin *plugin,
         plugin->ctx,
         &(SolPluginCommandDesc){
             .action = action,
-            .label = label,
+            .label = action,
             .chord = chord,
             .chord_length = 2u,
             .callback = git_on_command,
@@ -1350,16 +1402,16 @@ static bool git_on_load(SolPluginCtx *ctx)
         ctx, "git: no repository", "status-plugin");
     if (plugin->status_token == SOL_PLUGIN_STATUS_TOKEN_INVALID) return false;
 
-    if (!git_register_command(plugin, "git.status", "Git: Open Source Control", 'G', 'S') ||
-        !git_register_command(plugin, "git.refresh", "Git: Refresh", 'G', 'R') ||
-        !git_register_command(plugin, "git.diff", "Git: Diff Active File", 'G', 'D') ||
-        !git_register_command(plugin, "git.history", "Git: Show History", 'G', 'L') ||
-        !git_register_command(plugin, "git.branches", "Git: Switch Branch", 'G', 'H') ||
-        !git_register_command(plugin, "git.blame", "Git: Blame Active File", 'G', 'B') ||
-        !git_register_command(plugin, "git.commit", "Git: Commit", 'G', 'C') ||
-        !git_register_command(plugin, "git.fetch", "Git: Fetch", 'G', 'F') ||
-        !git_register_command(plugin, "git.pull", "Git: Pull", 'G', 'U') ||
-        !git_register_command(plugin, "git.push", "Git: Push", 'G', 'P')) {
+    if (!git_register_command(plugin, "git.status", 'G', 'S') ||
+        !git_register_command(plugin, "git.refresh", 'G', 'R') ||
+        !git_register_command(plugin, "git.diff", 'G', 'D') ||
+        !git_register_command(plugin, "git.history", 'G', 'L') ||
+        !git_register_command(plugin, "git.branches", 'G', 'H') ||
+        !git_register_command(plugin, "git.blame", 'G', 'B') ||
+        !git_register_command(plugin, "git.commit", 'G', 'C') ||
+        !git_register_command(plugin, "git.fetch", 'G', 'F') ||
+        !git_register_command(plugin, "git.pull", 'G', 'U') ||
+        !git_register_command(plugin, "git.push", 'G', 'P')) {
         return false;
     }
 

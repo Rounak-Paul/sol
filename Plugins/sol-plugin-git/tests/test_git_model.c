@@ -138,6 +138,94 @@ static void test_process_invalid_directory(void)
     CHECK(output[0] != '\0');
 }
 
+/* Verify git diff works on a tracked modified file using an absolute cwd. */
+static void test_process_tracked_diff(void)
+{
+    char repo_root[4096];
+    const char *root_argv[] = { "git", "rev-parse", "--show-toplevel", NULL };
+    GitProcessResult root_result = git_process_run(".", root_argv,
+                                                   repo_root, sizeof(repo_root),
+                                                   10000u);
+    CHECK(root_result.exit_code == 0);
+    if (root_result.exit_code != 0) return;
+    repo_root[strcspn(repo_root, "\r\n")] = '\0';
+
+    char status_output[65536];
+    const char *status_argv[] = {
+        "git", "status", "--porcelain=v2", "-z", "--untracked-files=all", NULL
+    };
+    GitProcessResult status_result = git_process_run(repo_root, status_argv,
+                                                     status_output,
+                                                     sizeof(status_output),
+                                                     10000u);
+    CHECK(status_result.exit_code == 0);
+    if (status_result.exit_code != 0) return;
+
+    const char *modified_path = NULL;
+    const char *cursor = status_output;
+    const char *end = status_output + status_result.output_len;
+    while (cursor < end) {
+        size_t record_len = strlen(cursor);
+        if (record_len >= 2u && cursor[0] == '1' && cursor[1] == ' ') {
+            const char *p = cursor;
+            int field = 0;
+            while (p < cursor + record_len && field < 8) {
+                p = strchr(p, ' ');
+                if (!p) break;
+                ++p;
+                ++field;
+            }
+            if (field == 8 && p && *p) {
+                modified_path = p;
+                break;
+            }
+        }
+        cursor += record_len + 1u;
+    }
+
+    if (!modified_path) {
+        printf("test_process_tracked_diff: no modified files, skipping\n");
+        return;
+    }
+
+    char diff_output[1048576];
+    const char *diff_argv[] = {
+        "git", "diff", "--no-ext-diff", "--", modified_path, NULL
+    };
+    GitProcessResult diff_result = git_process_run(repo_root, diff_argv,
+                                                   diff_output,
+                                                   sizeof(diff_output),
+                                                   30000u);
+    printf("test_process_tracked_diff: repo_root='%s' path='%s' exit=%d len=%zu\n",
+           repo_root, modified_path, diff_result.exit_code,
+           diff_result.output_len);
+    CHECK(diff_result.exit_code == 0);
+    CHECK(diff_result.output_len > 0u);
+}
+
+/* Verify Git can render a complete patch for a file absent from the index. */
+static void test_process_untracked_diff(void)
+{
+    char output[16384];
+#if defined(_WIN32)
+    const char *null_path = "NUL";
+#else
+    const char *null_path = "/dev/null";
+#endif
+    const char *argv[] = {
+        "git", "diff", "--no-index", "--no-ext-diff", "--",
+        null_path, "Plugins/sol-plugin-git/tests/test_git_model.c", NULL,
+    };
+    GitProcessResult result = git_process_run(".", argv, output,
+                                              sizeof(output), 10000u);
+    CHECK(result.exit_code == 1);
+    CHECK(!result.timed_out);
+    CHECK(!result.truncated);
+    CHECK(strncmp(output, "diff --git ", 11u) == 0);
+    CHECK(strstr(output, "--- /dev/null") != NULL ||
+          strstr(output, "--- a/NUL") != NULL);
+}
+
 int main(void)
 {
     test_status_core_records();
@@ -147,6 +235,8 @@ int main(void)
     test_process_git_version();
     test_process_git_status();
     test_process_invalid_directory();
+    test_process_tracked_diff();
+    test_process_untracked_diff();
     if (g_failures == 0) {
         printf("sol_git_plugin_tests: all checks passed\n");
         return 0;
