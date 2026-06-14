@@ -99,6 +99,10 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
 - Built-in menu layout keeps `View` focused on visible workspace surfaces,
   places editing/search actions under `Edit`, and groups plugin operations under
   `Plugins` submenus. Git contributes `View > Source Control` and `Plugins > Git`.
+- Causality menu overlays track hovered item indices explicitly and share
+  viewport-aware dropdown/submenu geometry across paint, hit testing, clicks,
+  and overlay suppression. This keeps highlights live and flips/clamps submenus
+  that would otherwise render outside the window.
 
 ## Usage
 
