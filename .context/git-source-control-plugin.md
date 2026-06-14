@@ -99,6 +99,8 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
 - Built-in menu layout keeps `View` focused on visible workspace surfaces,
   places editing/search actions under `Edit`, and groups plugin operations under
   `Plugins` submenus. Git contributes `View > Source Control` and `Plugins > Git`.
+- The `Sol` menu owns New Buffer, Open File, and Open Folder first, followed by
+  a separator and Settings. There is no separate `File` top-level menu.
 - Causality menu overlays track hovered item indices explicitly and share
   viewport-aware dropdown/submenu geometry across paint, hit testing, clicks,
   and overlay suppression. This keeps highlights live and flips/clamps submenus

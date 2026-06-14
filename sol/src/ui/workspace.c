@@ -1922,34 +1922,35 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
 
     SolUIMenuBuildGroup groups[SOL_UI_TITLE_MENU_LIMIT] = {
         { .id = "sol", .label = "Sol", .order = 100 },
-        { .id = "file", .label = "File", .order = 200 },
         { .id = "edit", .label = "Edit", .order = 300 },
         { .id = "view", .label = "View", .order = 400 },
         { .id = "plugins", .label = "Plugins", .order = 900 },
     };
-    size_t group_count = 5u;
+    size_t group_count = 4u;
 
-    (void)sol_ui_append_menu_build_item(&groups[0], "settings", "Settings...",
-                                        sol_ui_menu_open_settings_action, ui,
-                                        false, 10);
-    (void)sol_ui_append_menu_build_item(&groups[1], "new-buffer", "New Buffer",
+    (void)sol_ui_append_menu_build_item(&groups[0], "new-buffer", "New Buffer",
                                         sol_ui_menu_new_buffer_action, ui,
                                         false, 10);
-    (void)sol_ui_append_menu_build_item(&groups[1], "open-file", "Open File...",
+    (void)sol_ui_append_menu_build_item(&groups[0], "open-file", "Open File...",
                                         sol_ui_menu_open_file_action, ui,
                                         false, 20);
-    (void)sol_ui_append_menu_build_item(&groups[1], "open-folder", "Open Folder...",
+    (void)sol_ui_append_menu_build_item(&groups[0], "open-folder", "Open Folder...",
                                         sol_ui_menu_open_folder_action, ui,
                                         false, 30);
-    (void)sol_ui_append_menu_build_item(&groups[2], "search-separator", "",
+    (void)sol_ui_append_menu_build_item(&groups[0], "settings-separator", "",
+                                        NULL, NULL, true, 40);
+    (void)sol_ui_append_menu_build_item(&groups[0], "settings", "Settings...",
+                                        sol_ui_menu_open_settings_action, ui,
+                                        false, 50);
+    (void)sol_ui_append_menu_build_item(&groups[1], "search-separator", "",
                                         NULL, NULL, true, 30);
-    (void)sol_ui_append_menu_build_item(&groups[3], "plugin-separator", "",
+    (void)sol_ui_append_menu_build_item(&groups[2], "plugin-separator", "",
                                         NULL, NULL, true, 1000);
-    (void)sol_ui_append_menu_build_item(&groups[4], "plugin-manager",
+    (void)sol_ui_append_menu_build_item(&groups[3], "plugin-manager",
                                         "Plugin Manager...",
                                         sol_ui_menu_open_plugin_manager_action,
                                         ui, false, 10);
-    (void)sol_ui_append_menu_build_item(&groups[4], "plugin-separator", "",
+    (void)sol_ui_append_menu_build_item(&groups[3], "plugin-separator", "",
                                         NULL, NULL, true, 1000);
 
     for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
@@ -2024,11 +2025,7 @@ SolUIMenuItemToken sol_ui_system_register_menu_item(
     if (strcmp(desc->menu_id, "sol") == 0) {
         canonical_label = "Sol";
         canonical_order = 100;
-        top_level_item_count = 1u;
-    } else if (strcmp(desc->menu_id, "file") == 0) {
-        canonical_label = "File";
-        canonical_order = 200;
-        top_level_item_count = 3u;
+        top_level_item_count = 5u;
     } else if (strcmp(desc->menu_id, "edit") == 0) {
         canonical_label = "Edit";
         canonical_order = 300;
@@ -2103,12 +2100,11 @@ SolUIMenuItemToken sol_ui_system_register_menu_item(
         return SOL_UI_MENU_ITEM_TOKEN_INVALID;
     }
     if (!menu_exists) {
-        size_t menu_count = 5u;
+        size_t menu_count = 4u;
         for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
             SolUIMenuItem *entry = &ui->menu_items[i];
             if (!entry->in_use) continue;
             bool first = strcmp(entry->menu_id, "sol") != 0 &&
-                         strcmp(entry->menu_id, "file") != 0 &&
                          strcmp(entry->menu_id, "edit") != 0 &&
                          strcmp(entry->menu_id, "view") != 0 &&
                          strcmp(entry->menu_id, "plugins") != 0;
