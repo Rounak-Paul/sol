@@ -39,6 +39,12 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
 - Paths are passed as argv entries with `--`; no shell command construction.
 - Destructive discard/clean operations require explicit confirmation.
 - Plugin unload waits for owned work and removes all UI contributions.
+- The left sidebar is a dynamic content slot. Showing the explorer deactivates
+  the current plugin panel, while showing a plugin panel replaces the explorer
+  without destroying either content provider's state.
+- Mouse and keyboard access share command actions. Title-bar menu contributions
+  reference registered command IDs, and plugin-owned items are removed before
+  plugin commands and code are unloaded.
 - No commits or pushes are made by this task.
 
 ## Progress
@@ -84,6 +90,15 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
 - `git.status` (`L g g`) now toggles the panel; `git.diff`/`git.blame` show the
   panel on error so the message is visible; `git_relative_active_path` guards
   against an empty repo root.
+- Explorer activation now explicitly selects the built-in file tree as the
+  sidebar content, so `L e e` replaces an active Git or other contributed panel
+  instead of treating any visible left panel as the explorer.
+- The host owns a dynamic title-bar menu registry. Plugins can add items to
+  `Plugins`, `View`, or any other existing menu, and can create a new top-level
+  menu by supplying a new stable menu ID and label.
+- Built-in menu layout keeps `View` focused on visible workspace surfaces,
+  places editing/search actions under `Edit`, and groups plugin operations under
+  `Plugins` submenus. Git contributes `View > Source Control` and `Plugins > Git`.
 
 ## Usage
 

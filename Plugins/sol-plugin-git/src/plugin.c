@@ -1348,6 +1348,86 @@ static bool git_register_command(GitPlugin *plugin,
         });
 }
 
+/* Register mouse-accessible menu entries for Git commands. */
+static bool git_register_menu_items(GitPlugin *plugin)
+{
+    if (!plugin || !plugin->ctx) return false;
+    const SolPluginMenuItemDesc items[] = {
+        {
+            .menu_id = "view", .menu_label = "View",
+            .item_id = "git-source-control", .label = "Source Control",
+            .action = "git.status", .menu_order = 400, .item_order = 1100,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-status", .label = "Source Control",
+            .action = "git.status", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1100,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-refresh", .label = "Refresh",
+            .action = "git.refresh", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1110,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-diff", .label = "Diff Active File",
+            .action = "git.diff", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1120,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-history", .label = "History",
+            .action = "git.history", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1130,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-branches", .label = "Branches",
+            .action = "git.branches", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1140,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-blame", .label = "Blame Active File",
+            .action = "git.blame", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1150,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-commit", .label = "Commit",
+            .action = "git.commit", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1160,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-fetch", .label = "Fetch",
+            .action = "git.fetch", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1170,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-pull", .label = "Pull",
+            .action = "git.pull", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1180,
+        },
+        {
+            .menu_id = "plugins", .menu_label = "Plugins",
+            .item_id = "git-push", .label = "Push",
+            .action = "git.push", .submenu_id = "git", .submenu_label = "Git",
+            .menu_order = 900, .item_order = 1190,
+        },
+    };
+    for (size_t i = 0u; i < sizeof(items) / sizeof(items[0]); ++i) {
+        if (sol_plugin_register_menu_item(plugin->ctx, &items[i]) ==
+            SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* Free plugin state after automatic UI and service cleanup. */
 static void git_plugin_destroy(void *service, void *user_data)
 {
@@ -1412,6 +1492,7 @@ static bool git_on_load(SolPluginCtx *ctx)
         !git_register_command(plugin, "git.push", 'G', 'P')) {
         return false;
     }
+    if (!git_register_menu_items(plugin)) return false;
 
     plugin->root_subscription = sol_plugin_subscribe(
         ctx, SOL_EVENT_FILE_TREE_ROOT, git_on_workspace_root, plugin);

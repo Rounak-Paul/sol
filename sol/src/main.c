@@ -250,6 +250,51 @@ static void sol_register_terminal_command_defaults(SolUISystem *ui)
     }
 }
 
+/* Register mouse-accessible title-bar entries for built-in workspace views. */
+static void sol_register_workspace_menu_items(SolUISystem *ui)
+{
+    if (!ui) return;
+    const SolUIMenuItemDesc items[] = {
+        {
+            .menu_id = "view", .menu_label = "View",
+            .item_id = "explorer", .label = "Explorer",
+            .action = "explorer.focus.toggle", .menu_order = 400, .item_order = 10,
+        },
+        {
+            .menu_id = "view", .menu_label = "View",
+            .item_id = "terminal", .label = "Terminal",
+            .action = "terminal.toggle", .menu_order = 400, .item_order = 20,
+        },
+        {
+            .menu_id = "edit", .menu_label = "Edit",
+            .item_id = "undo", .label = "Undo",
+            .action = "edit.undo", .menu_order = 300, .item_order = 10,
+        },
+        {
+            .menu_id = "edit", .menu_label = "Edit",
+            .item_id = "redo", .label = "Redo",
+            .action = "edit.redo", .menu_order = 300, .item_order = 20,
+        },
+        {
+            .menu_id = "edit", .menu_label = "Edit",
+            .item_id = "find-files", .label = "Search Files...",
+            .action = "find.files", .menu_order = 300, .item_order = 40,
+        },
+        {
+            .menu_id = "edit", .menu_label = "Edit",
+            .item_id = "find-content", .label = "Search in Files...",
+            .action = "find.grep", .menu_order = 300, .item_order = 50,
+        },
+    };
+    for (size_t i = 0u; i < sizeof(items) / sizeof(items[0]); ++i) {
+        if (sol_ui_system_register_menu_item(ui, &items[i]) ==
+            SOL_UI_MENU_ITEM_TOKEN_INVALID) {
+            fprintf(stderr, "sol: failed to register menu item '%s'\n",
+                    items[i].item_id);
+        }
+    }
+}
+
 /* Open `path` into the active leaf, deduping against an existing
    buffer with the same source path. */
 static bool sol_open_path_in_active_leaf(SolAppContext *app, const char *path)
@@ -876,7 +921,7 @@ static bool sol_toggle_explorer_focus(SolAppContext *app)
 {
     if (!app || !app->ui || !app->buffers) return false;
 
-    if (app->explorer_focused) {
+    if (app->explorer_focused && sol_ui_system_file_tree_active(app->ui)) {
         app->explorer_focused = false;
         sol_ui_system_set_file_tree_visible(app->ui, false);
         SolBufferNodeId restore = app->focus_before_explorer;
@@ -892,21 +937,17 @@ static bool sol_toggle_explorer_focus(SolAppContext *app)
         return true;
     }
 
-    if (sol_ui_system_tree_panel_width(app->ui) == 0) {
-        const char *root = sol_ui_system_file_tree_root(app->ui);
-        char cwd_buf[4096];
-        if (!root || root[0] == '\0') {
-            if (!sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) {
-                return false;
-            }
-            root = cwd_buf;
-            if (!sol_set_explorer_root(app, root)) {
-                return false;
-            }
-        } else {
-            sol_ui_system_set_file_tree_visible(app->ui, true);
+    const char *root = sol_ui_system_file_tree_root(app->ui);
+    char cwd_buf[4096];
+    if (!root || root[0] == '\0') {
+        if (!sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) {
+            return false;
+        }
+        if (!sol_set_explorer_root(app, cwd_buf)) {
+            return false;
         }
     }
+    sol_ui_system_show_file_tree(app->ui);
 
     /* Capture exactly once per explorer-focus session: the last thing
        focused before entering explorer. */
@@ -1428,6 +1469,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "sol: failed to load key bindings from ~/.sol/bindings.conf\n");
         app.command_flows_loaded = 0;
     }
+    sol_register_workspace_menu_items(app.ui);
 
     app.router = sol_input_router_create(instance, app.ui, app.input, app.buffers);
     if (!app.router) {

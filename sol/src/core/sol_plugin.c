@@ -45,6 +45,7 @@
 #define SOL_PLUGIN_CTX_MAX_SUBSCRIPTIONS  64u
 #define SOL_PLUGIN_CTX_MAX_BINDINGS       64u
 #define SOL_PLUGIN_CTX_MAX_COMMANDS       64u
+#define SOL_PLUGIN_CTX_MAX_MENU_ITEMS     16u
 #define SOL_PLUGIN_CTX_MAX_SERVICES       16u
 #define SOL_PLUGIN_CTX_MAX_STATUS_SEGS     8u
 #define SOL_PLUGIN_CTX_MAX_SIDE_PANELS     4u
@@ -73,6 +74,10 @@ struct SolPluginCtx {
     /* Tracked command flow actions — auto-unregistered on cleanup */
     char commands[SOL_PLUGIN_CTX_MAX_COMMANDS][SOL_PLUGIN_CMD_ACTION_MAX_LEN + 1u];
     size_t command_count;
+
+    /* Tracked title-bar menu items — auto-unregistered on cleanup. */
+    SolUIMenuItemToken menu_item_tokens[SOL_PLUGIN_CTX_MAX_MENU_ITEMS];
+    size_t             menu_item_token_count;
 
     /* Tracked service names — auto-unregistered on cleanup */
     char services[SOL_PLUGIN_CTX_MAX_SERVICES][128u];
@@ -227,9 +232,11 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
             sol_input_unbind_action(inp, ctx->bindings[i]);
     }
 
-    /* Unregister commands and status segments */
+    /* Unregister UI contributions before command callbacks can disappear. */
     SolUISystem *ui = mgr->ui;
     if (ui) {
+        for (size_t i = 0u; i < ctx->menu_item_token_count; ++i)
+            sol_ui_system_unregister_menu_item(ui, ctx->menu_item_tokens[i]);
         for (size_t i = 0u; i < ctx->command_count; ++i)
             sol_ui_system_unregister_command_flow(ui, ctx->commands[i]);
         for (size_t i = 0u; i < ctx->status_token_count; ++i)
@@ -1161,6 +1168,74 @@ void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action)
             break;
         }
     }
+}
+
+/* Return the tracked menu-item index for token, or SIZE_MAX. */
+static size_t sol_plugin_menu_item_index(const SolPluginCtx *ctx,
+                                         SolPluginMenuItemToken token)
+{
+    if (!ctx || token == SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID) return SIZE_MAX;
+    for (size_t i = 0u; i < ctx->menu_item_token_count; ++i) {
+        if (ctx->menu_item_tokens[i] == token) return i;
+    }
+    return SIZE_MAX;
+}
+
+/* Register a command-backed title-bar item and track it for cleanup. */
+SolPluginMenuItemToken sol_plugin_register_menu_item(
+    SolPluginCtx *ctx,
+    const SolPluginMenuItemDesc *desc)
+{
+    if (!ctx || !desc || !desc->menu_id ||
+        ctx->menu_item_token_count >= SOL_PLUGIN_CTX_MAX_MENU_ITEMS) {
+        return SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID;
+    }
+    bool owns_action = false;
+    for (size_t i = 0u; i < ctx->command_count; ++i) {
+        if (desc->action && strcmp(ctx->commands[i], desc->action) == 0) {
+            owns_action = true;
+            break;
+        }
+    }
+    if (!owns_action) return SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID;
+
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (!ui) return SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID;
+    int item_order = desc->item_order;
+    if ((strcmp(desc->menu_id, "view") == 0 ||
+         strcmp(desc->menu_id, "plugins") == 0) && item_order < 1100) {
+        item_order = 1100 + (int)ctx->menu_item_token_count;
+    }
+    SolUIMenuItemToken token = sol_ui_system_register_menu_item(
+        ui,
+        &(SolUIMenuItemDesc){
+            .menu_id = desc->menu_id,
+            .menu_label = desc->menu_label,
+            .item_id = desc->item_id,
+            .label = desc->label,
+            .action = desc->action,
+            .submenu_id = desc->submenu_id,
+            .submenu_label = desc->submenu_label,
+            .menu_order = desc->menu_order,
+            .item_order = item_order,
+        });
+    if (token == SOL_UI_MENU_ITEM_TOKEN_INVALID) {
+        return SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID;
+    }
+    ctx->menu_item_tokens[ctx->menu_item_token_count++] = token;
+    return token;
+}
+
+/* Remove a tracked title-bar menu item before plugin unload. */
+void sol_plugin_unregister_menu_item(SolPluginCtx *ctx,
+                                     SolPluginMenuItemToken token)
+{
+    const size_t index = sol_plugin_menu_item_index(ctx, token);
+    if (index == SIZE_MAX) return;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (ui) sol_ui_system_unregister_menu_item(ui, token);
+    ctx->menu_item_tokens[index] =
+        ctx->menu_item_tokens[--ctx->menu_item_token_count];
 }
 
 /* ================================================================== */

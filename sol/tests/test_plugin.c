@@ -929,6 +929,73 @@ static void test_command_auto_unreg(SolTestCtx *T)
     free_env(&e);
 }
 
+static void test_menu_item_lifecycle(SolTestCtx *T)
+{
+    g_cmd_ctx = NULL;
+    TestEnv e = make_env();
+    SolPluginAPI api = {
+        .api_version = SOL_PLUGIN_API_VERSION,
+        .id = "test.menu",
+        .on_load = cmd_plugin_load,
+    };
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &api));
+    SOL_CHECK(T, sol_plugin_register_command(g_cmd_ctx, &(SolPluginCommandDesc){
+        .action = "test.menu.open",
+        .chord = chord_z,
+        .chord_length = 1u,
+        .callback = dummy_cmd_cb,
+    }));
+    SolPluginMenuItemToken token = sol_plugin_register_menu_item(
+        g_cmd_ctx,
+        &(SolPluginMenuItemDesc){
+            .menu_id = "plugins",
+            .menu_label = "Plugins",
+            .item_id = "test-menu-open",
+            .label = "Open Test Menu",
+            .action = "test.menu.open",
+        });
+    SOL_CHECK(T, token != SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID);
+    sol_plugin_unregister_menu_item(g_cmd_ctx, token);
+    SOL_CHECK(T, !e.ui->menu_items[0].in_use);
+    free_env(&e);
+    g_cmd_ctx = NULL;
+}
+
+static void test_menu_item_auto_remove(SolTestCtx *T)
+{
+    g_cmd_ctx = NULL;
+    TestEnv e = make_env();
+    SolPluginAPI api = {
+        .api_version = SOL_PLUGIN_API_VERSION,
+        .id = "test.menu.auto",
+        .on_load = cmd_plugin_load,
+    };
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &api));
+    SOL_CHECK(T, sol_plugin_register_command(g_cmd_ctx, &(SolPluginCommandDesc){
+        .action = "test.menu.auto.open",
+        .chord = chord_y,
+        .chord_length = 1u,
+        .callback = dummy_cmd_cb,
+    }));
+    SOL_CHECK(T, sol_plugin_register_menu_item(
+        g_cmd_ctx,
+        &(SolPluginMenuItemDesc){
+            .menu_id = "custom",
+            .menu_label = "Custom",
+            .item_id = "open",
+            .label = "Open",
+            .action = "test.menu.auto.open",
+            .submenu_id = "tools",
+            .submenu_label = "Tools",
+        }) != SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID);
+    SOL_CHECK(T, strcmp(e.ui->menu_items[0].submenu_id, "tools") == 0);
+    SOL_CHECK(T, strcmp(e.ui->menu_items[0].submenu_label, "Tools") == 0);
+    SOL_CHECK(T, sol_plugin_manager_unload(e.pm, "test.menu.auto"));
+    SOL_CHECK(T, !e.ui->menu_items[0].in_use);
+    free_env(&e);
+    g_cmd_ctx = NULL;
+}
+
 /* ================================================================== */
 /* Suite 9: Side panel contributions                                   */
 /* ================================================================== */
@@ -1076,6 +1143,8 @@ int main(void)
     SOL_RUN(suites[si], test_command_register);
     SOL_RUN(suites[si], test_command_unregister);
     SOL_RUN(suites[si], test_command_auto_unreg);
+    SOL_RUN(suites[si], test_menu_item_lifecycle);
+    SOL_RUN(suites[si], test_menu_item_auto_remove);
     sol_suite_report(&suites[si++]);
 
     /* Suite 9 — side panels */

@@ -29,6 +29,47 @@ void sol_ui_system_open_plugin_window(SolUISystem *ui)
     (void)ui;
 }
 
+SolUIMenuItemToken sol_ui_system_register_menu_item(
+    SolUISystem *ui,
+    const SolUIMenuItemDesc *desc)
+{
+    if (!ui || !desc || !desc->menu_id || !desc->menu_label ||
+        !desc->item_id || !desc->label || !desc->action) return 0u;
+    for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
+        if (!ui->menu_items[i].in_use) {
+            SolUIMenuItem *item = &ui->menu_items[i];
+            memset(item, 0, sizeof(*item));
+            item->ui = ui;
+            item->token = ++ui->menu_item_next_token;
+            if (item->token == 0u) item->token = ++ui->menu_item_next_token;
+            snprintf(item->menu_id, sizeof(item->menu_id), "%s", desc->menu_id);
+            snprintf(item->menu_label, sizeof(item->menu_label), "%s", desc->menu_label);
+            snprintf(item->item_id, sizeof(item->item_id), "%s", desc->item_id);
+            snprintf(item->label, sizeof(item->label), "%s", desc->label);
+            snprintf(item->action, sizeof(item->action), "%s", desc->action);
+            snprintf(item->submenu_id, sizeof(item->submenu_id), "%s",
+                     desc->submenu_id ? desc->submenu_id : "");
+            snprintf(item->submenu_label, sizeof(item->submenu_label), "%s",
+                     desc->submenu_label ? desc->submenu_label : "");
+            item->in_use = true;
+            return item->token;
+        }
+    }
+    return 0u;
+}
+
+void sol_ui_system_unregister_menu_item(SolUISystem *ui,
+                                        SolUIMenuItemToken token)
+{
+    if (!ui || token == 0u) return;
+    for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
+        if (ui->menu_items[i].in_use && ui->menu_items[i].token == token) {
+            memset(&ui->menu_items[i], 0, sizeof(ui->menu_items[i]));
+            return;
+        }
+    }
+}
+
 SolUISidePanelToken sol_ui_system_register_side_panel(
     SolUISystem *ui,
     const SolUISidePanelDesc *desc)

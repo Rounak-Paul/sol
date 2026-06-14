@@ -29,6 +29,7 @@
 /* ------------------------------------------------------------------ */
 
 #define SOL_UI_MAX_COMMAND_FLOWS      64u
+#define SOL_UI_MAX_MENU_ITEMS         64u
 #define SOL_UI_MAX_SPLIT_CALLBACKS    64u
 #define SOL_UI_MAX_ACTION_LEN         63u
 #define SOL_UI_MAX_LABEL_LEN          95u
@@ -104,6 +105,21 @@ typedef struct SolCommandFlowBinding {
     SolInputActionCallback  callback;
     void                   *user_data;
 } SolCommandFlowBinding;
+
+typedef struct SolUIMenuItem {
+    struct SolUISystem *ui;
+    SolUIMenuItemToken token;
+    char               menu_id[32];
+    char               menu_label[64];
+    char               item_id[64];
+    char               label[64];
+    char               action[SOL_UI_MAX_ACTION_LEN + 1u];
+    char               submenu_id[32];
+    char               submenu_label[64];
+    int                menu_order;
+    int                item_order;
+    bool               in_use;
+} SolUIMenuItem;
 
 typedef struct SolFlowSuggestion {
     SolKeyCode      key;
@@ -318,6 +334,8 @@ struct SolUISystem {
     SolUIMenuActionFn menu_on_open_file;
     SolUIMenuActionFn menu_on_open_folder;
     void             *menu_user_data;
+    SolUIMenuItem     menu_items[SOL_UI_MAX_MENU_ITEMS];
+    uint32_t          menu_item_next_token;
 
     /* Ratio of the file-tree panel vs. the buffer area (0.0–1.0).
        Persisted here so ca_split_begin re-reads it each build and the

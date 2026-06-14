@@ -13,6 +13,8 @@ typedef struct SolUISystem SolUISystem;
 
 typedef uint32_t SolUISidePanelToken;
 #define SOL_UI_SIDE_PANEL_TOKEN_INVALID 0u
+typedef uint32_t SolUIMenuItemToken;
+#define SOL_UI_MENU_ITEM_TOKEN_INVALID 0u
 
 /* Render callback for a plugin-contributed workspace side panel. */
 typedef void (*SolUISidePanelRenderFn)(void *user_data);
@@ -28,6 +30,19 @@ typedef struct SolUISidePanelDesc {
     SolUISidePanelTickFn     tick;
     void                    *user_data;
 } SolUISidePanelDesc;
+
+/* Descriptor for a command-backed title-bar menu item. */
+typedef struct SolUIMenuItemDesc {
+    const char *menu_id;       /* stable menu identifier                   */
+    const char *menu_label;    /* visible top-level menu label             */
+    const char *item_id;       /* stable identifier unique within menu     */
+    const char *label;         /* visible menu-item label                  */
+    const char *action;        /* command action invoked on click          */
+    const char *submenu_id;    /* optional stable submenu identifier        */
+    const char *submenu_label; /* optional visible submenu label            */
+    int         menu_order;    /* top-level ordering for newly-created menu */
+    int         item_order;    /* ordering within the target menu          */
+} SolUIMenuItemDesc;
 
 /* Maximum number of chord steps in a single command flow (including
  * the leader). Surfaced publicly so callers (e.g. the bindings config
@@ -128,6 +143,8 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDe
 /* Unregister a previously-registered command flow by action string.
  * Returns true if found and removed, false if not found.              */
 bool sol_ui_system_unregister_command_flow(SolUISystem *ui, const char *action);
+/* Invoke an action through the registered callback and command event bus. */
+bool sol_ui_system_invoke_command(SolUISystem *ui, const char *action);
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event);
 
 void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window);
@@ -138,6 +155,10 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height);
 bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path);
 void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible);
 bool sol_ui_system_file_tree_visible(const SolUISystem *ui);
+/* Select the built-in file tree as the current left-sidebar content. */
+void sol_ui_system_show_file_tree(SolUISystem *ui);
+/* Return whether the file tree currently owns the visible left sidebar. */
+bool sol_ui_system_file_tree_active(const SolUISystem *ui);
 const char *sol_ui_system_file_tree_root(const SolUISystem *ui);
 void sol_ui_system_set_file_open_callback(SolUISystem *ui,
                                           SolUIFileOpenFn callback,
@@ -244,16 +265,21 @@ void sol_ui_system_attach_buffer_text_context_menu(SolUISystem *ui,
                                                    SolBufferNodeId leaf_id,
                                                    SolBufferId buffer_id);
 
-/* Title-bar menu integration. The callbacks fire when the user
- * picks items from the "File" menu or clicks welcome-screen buttons.
- * Pass NULL for any to leave that item disabled. The menu is
- * (re)installed on the primary window's title bar each call. */
+/* Title-bar menu integration. The callbacks back host-owned File menu and
+ * welcome-screen actions. Dynamic command items are registered separately. */
 typedef void (*SolUIMenuActionFn)(void *user_data);
 void sol_ui_system_install_menu(SolUISystem      *ui,
                                 SolUIMenuActionFn on_new_buffer,
                                 SolUIMenuActionFn on_open_file,
                                 SolUIMenuActionFn on_open_folder,
                                 void             *user_data);
+/* Register a command-backed item in an existing or new top-level menu. */
+SolUIMenuItemToken sol_ui_system_register_menu_item(
+    SolUISystem *ui,
+    const SolUIMenuItemDesc *desc);
+/* Remove a previously registered title-bar menu item. */
+void sol_ui_system_unregister_menu_item(SolUISystem *ui,
+                                        SolUIMenuItemToken token);
 
 /* Per-frame tick — drives async UI work owned by the UI system
  * (currently: reaping closed file-picker windows). Safe to call

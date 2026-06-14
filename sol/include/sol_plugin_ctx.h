@@ -10,6 +10,7 @@
  *   - Subsystem access (buffers, jobs, events, input, UI)
  *   - Event subscriptions     — auto-cleaned on unload
  *   - Command registration    — auto-cleaned on unload
+ *   - Title-bar menu items    — auto-cleaned on unload
  *   - Key binding registration — auto-cleaned on unload
  *   - Status bar segments     — auto-cleaned on unload
  *   - Buffer operations (open, focus, read, write, cursor)
@@ -74,6 +75,8 @@ typedef struct SolSystemManager SolSystemManager;
 typedef void (*SolServiceDestroyFn)(void *service, void *user_data);
 typedef uint32_t SolPluginSidePanelToken;
 #define SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID 0u
+typedef uint32_t SolPluginMenuItemToken;
+#define SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID 0u
 
 /* Render callback for a plugin-owned workspace side panel. */
 typedef void (*SolPluginSidePanelRenderFn)(void *user_data);
@@ -89,6 +92,19 @@ typedef struct SolPluginSidePanelDesc {
     SolPluginSidePanelTickFn      tick;
     void                         *user_data;
 } SolPluginSidePanelDesc;
+
+/* Descriptor for a command-backed title-bar menu contribution. */
+typedef struct SolPluginMenuItemDesc {
+    const char *menu_id;       /* stable menu identifier                   */
+    const char *menu_label;    /* visible top-level menu label             */
+    const char *item_id;       /* stable identifier unique within menu     */
+    const char *label;         /* visible menu-item label                  */
+    const char *action;        /* command owned by this plugin             */
+    const char *submenu_id;    /* optional stable submenu identifier        */
+    const char *submenu_label; /* optional visible submenu label            */
+    int         menu_order;    /* top-level ordering for newly-created menu */
+    int         item_order;    /* ordering within the target menu          */
+} SolPluginMenuItemDesc;
 
 /* ================================================================== */
 /* Core subsystem access                                               */
@@ -232,6 +248,15 @@ SOL_API bool sol_plugin_register_command(SolPluginCtx *ctx, const SolPluginComma
  * action  The action id string used when the command was registered.
  */
 SOL_API void sol_plugin_unregister_command(SolPluginCtx *ctx, const char *action);
+
+/* Register a title-bar item that invokes one of the plugin's commands. */
+SOL_API SolPluginMenuItemToken sol_plugin_register_menu_item(
+    SolPluginCtx *ctx,
+    const SolPluginMenuItemDesc *desc);
+
+/* Remove a title-bar menu contribution before plugin unload. */
+SOL_API void sol_plugin_unregister_menu_item(SolPluginCtx *ctx,
+                                              SolPluginMenuItemToken token);
 
 /* ================================================================== */
 /* Key binding registration                                            */

@@ -58,6 +58,10 @@ static void sol_ui_menu_open_file_action(void *user_data);
 static void sol_ui_menu_open_folder_action(void *user_data);
 static void sol_ui_menu_open_plugin_manager_action(void *user_data);
 static void sol_ui_menu_open_settings_action(void *user_data);
+static bool sol_ui_dispatch_command(SolUISystem *ui,
+                                    SolCommandFlowBinding *flow,
+                                    const char *action,
+                                    const SolInputEvent *event);
 /* Forward declarations for welcome-screen button clicks (Ca_ClickFn) */
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data);
 static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data);
@@ -184,6 +188,37 @@ void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible)
 bool sol_ui_system_file_tree_visible(const SolUISystem *ui)
 {
     return ui ? ui->file_tree_visible : false;
+}
+
+/*
+ * Select the built-in file tree as the current left-sidebar content.
+ *
+ * ui  The UI system whose sidebar content should change.
+ */
+void sol_ui_system_show_file_tree(SolUISystem *ui)
+{
+    if (!ui) return;
+
+    if (ui->active_side_panel != SOL_UI_SIDE_PANEL_TOKEN_INVALID) {
+        ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+        sol_ui_bump_u32(ui->sig_side_panel_rev);
+    }
+    sol_ui_system_set_file_tree_visible(ui, true);
+}
+
+/*
+ * Check whether the built-in file tree currently owns the visible sidebar.
+ *
+ * ui  The UI system to query.
+ * Returns true when no contributed panel is active and the file tree is shown.
+ */
+bool sol_ui_system_file_tree_active(const SolUISystem *ui)
+{
+    return ui &&
+           ui->active_side_panel == SOL_UI_SIDE_PANEL_TOKEN_INVALID &&
+           ui->file_tree_visible &&
+           ui->file_tree &&
+           sol_file_tree_root(ui->file_tree) != NULL;
 }
 
 /*
@@ -1505,20 +1540,8 @@ bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *even
     }
 
     if (exact_match) {
-        if (exact_match->callback) {
-            exact_match->callback(exact_match->action, event, exact_match->user_data);
-        }
-        /* Publish on the same bus as buffer/text events so plugins
-           can react to commands without patching workspace.c. This
-           is the primary dispatch path for config-loaded bindings
-           (whose callback is NULL by design). */
-        if (ui->buffers) {
-            SolCommandInvokedPayload payload;
-            payload.action = exact_match->action;
-            sol_event_publish(sol_buffer_event_bus(ui->buffers),
-                               SOL_EVENT_COMMAND_INVOKED,
-                               &payload, sizeof(payload), ui);
-        }
+        (void)sol_ui_dispatch_command(ui, exact_match,
+                                      exact_match->action, event);
         sol_ui_close_leader_popup(ui);
         return true;
     }
@@ -1660,6 +1683,57 @@ static void sol_ui_menu_open_settings_action(void *user_data)
     sol_ui_system_open_settings_window((SolUISystem *)user_data);
 }
 
+/* Dispatch a command callback and publish its action on the command event bus. */
+static bool sol_ui_dispatch_command(SolUISystem *ui,
+                                    SolCommandFlowBinding *flow,
+                                    const char *action,
+                                    const SolInputEvent *event)
+{
+    if (!ui || !action || !action[0]) return false;
+    if (flow && flow->callback) {
+        flow->callback(flow->action, event, flow->user_data);
+    }
+    if (!ui->buffers) return flow != NULL;
+
+    SolCommandInvokedPayload payload = {
+        .action = flow ? flow->action : action,
+    };
+    sol_event_publish(sol_buffer_event_bus(ui->buffers),
+                      SOL_EVENT_COMMAND_INVOKED,
+                      &payload, sizeof(payload), ui);
+    return true;
+}
+
+/*
+ * Invoke a command through the same callback and event paths as a key chord.
+ *
+ * ui      The UI system containing the command registry.
+ * action  The command action identifier.
+ * Returns true when a callback or event bus accepted the invocation.
+ */
+bool sol_ui_system_invoke_command(SolUISystem *ui, const char *action)
+{
+    if (!ui || !action || !action[0]) return false;
+
+    SolCommandFlowBinding *flow = NULL;
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        if (strcmp(ui->command_flows[i].action, action) == 0) {
+            flow = &ui->command_flows[i];
+            break;
+        }
+    }
+    return sol_ui_dispatch_command(ui, flow, action, NULL);
+}
+
+/* Dispatch a title-bar menu item through the shared command registry. */
+static void sol_ui_menu_command_action(void *user_data)
+{
+    SolUIMenuItem *item = (SolUIMenuItem *)user_data;
+    if (item && item->in_use) {
+        (void)sol_ui_system_invoke_command(item->ui, item->action);
+    }
+}
+
 /*
  * Welcome-screen button click handler for "New Buffer".
  *
@@ -1702,11 +1776,397 @@ static void sol_ui_welcome_click_open_folder(Ca_Button *btn, void *user_data)
     sol_ui_menu_open_folder_action(user_data);
 }
 
+#define SOL_UI_TITLE_MENU_LIMIT 16u
+#define SOL_UI_TITLE_MENU_ITEM_LIMIT 16u
+
+typedef struct SolUIMenuBuildItem {
+    char            id[64];
+    char            label[64];
+    Ca_MenuActionFn action;
+    void           *action_data;
+    bool            separator;
+    int             order;
+    Ca_MenuItemDesc sub_items[16];
+    int             sub_item_orders[16];
+    size_t          sub_item_count;
+} SolUIMenuBuildItem;
+
+typedef struct SolUIMenuBuildGroup {
+    char id[32];
+    char label[64];
+    int  order;
+    SolUIMenuBuildItem items[SOL_UI_TITLE_MENU_ITEM_LIMIT];
+    Ca_MenuItemDesc descriptors[SOL_UI_TITLE_MENU_ITEM_LIMIT];
+    size_t item_count;
+} SolUIMenuBuildGroup;
+
+/* Return the menu build group matching id, or NULL. */
+static SolUIMenuBuildGroup *sol_ui_find_menu_group(
+    SolUIMenuBuildGroup *groups,
+    size_t group_count,
+    const char *id)
+{
+    if (!groups || !id) return NULL;
+    for (size_t i = 0u; i < group_count; ++i) {
+        if (strcmp(groups[i].id, id) == 0) return &groups[i];
+    }
+    return NULL;
+}
+
+/* Append one item to a menu build group when capacity permits. */
+static bool sol_ui_append_menu_build_item(SolUIMenuBuildGroup *group,
+                                          const char *id,
+                                          const char *label,
+                                          Ca_MenuActionFn action,
+                                          void *action_data,
+                                          bool separator,
+                                          int order)
+{
+    if (!group || !id || !label ||
+        group->item_count >= SOL_UI_TITLE_MENU_ITEM_LIMIT) {
+        return false;
+    }
+    size_t index = group->item_count;
+    snprintf(group->items[index].id, sizeof(group->items[index].id), "%s", id);
+    snprintf(group->items[index].label, sizeof(group->items[index].label), "%s", label);
+    group->items[index].action = action;
+    group->items[index].action_data = action_data;
+    group->items[index].separator = separator;
+    group->items[index].order = order;
+    group->item_count++;
+    return true;
+}
+
+/* Append a command item beneath a one-level submenu, creating it as needed. */
+static bool sol_ui_append_submenu_build_item(SolUIMenuBuildGroup *group,
+                                             const char *submenu_id,
+                                             const char *submenu_label,
+                                             const Ca_MenuItemDesc *item,
+                                             int order)
+{
+    if (!group || !submenu_id || !submenu_id[0] ||
+        !submenu_label || !submenu_label[0] || !item) return false;
+
+    size_t parent = group->item_count;
+    for (size_t i = 0u; i < group->item_count; ++i) {
+        if (strcmp(group->items[i].id, submenu_id) == 0) {
+            parent = i;
+            break;
+        }
+    }
+    if (parent == group->item_count) {
+        if (!sol_ui_append_menu_build_item(group, submenu_id, submenu_label,
+                                           NULL, NULL, false, order)) {
+            return false;
+        }
+    } else if (strcmp(group->items[parent].label, submenu_label) != 0) {
+        return false;
+    }
+
+    if (group->items[parent].sub_item_count >= 16u) return false;
+    size_t sub = group->items[parent].sub_item_count++;
+    group->items[parent].sub_items[sub] = *item;
+    group->items[parent].sub_item_orders[sub] = order;
+    return true;
+}
+
+/* Sort menu groups and their items by stable numeric order. */
+static void sol_ui_sort_menu_build_groups(SolUIMenuBuildGroup *groups,
+                                          size_t group_count)
+{
+    for (size_t i = 1u; i < group_count; ++i) {
+        SolUIMenuBuildGroup current = groups[i];
+        size_t j = i;
+        while (j > 0u && groups[j - 1u].order > current.order) {
+            groups[j] = groups[j - 1u];
+            --j;
+        }
+        groups[j] = current;
+    }
+    for (size_t g = 0u; g < group_count; ++g) {
+        SolUIMenuBuildGroup *group = &groups[g];
+        for (size_t i = 1u; i < group->item_count; ++i) {
+            SolUIMenuBuildItem item = group->items[i];
+            int order = item.order;
+            size_t j = i;
+            while (j > 0u && group->items[j - 1u].order > order) {
+                group->items[j] = group->items[j - 1u];
+                --j;
+            }
+            group->items[j] = item;
+        }
+        for (size_t i = 0u; i < group->item_count; ++i) {
+            for (size_t s = 1u; s < group->items[i].sub_item_count; ++s) {
+                Ca_MenuItemDesc sub_item = group->items[i].sub_items[s];
+                int order = group->items[i].sub_item_orders[s];
+                size_t j = s;
+                while (j > 0u &&
+                       group->items[i].sub_item_orders[j - 1u] > order) {
+                    group->items[i].sub_items[j] =
+                        group->items[i].sub_items[j - 1u];
+                    group->items[i].sub_item_orders[j] =
+                        group->items[i].sub_item_orders[j - 1u];
+                    --j;
+                }
+                group->items[i].sub_items[j] = sub_item;
+                group->items[i].sub_item_orders[j] = order;
+            }
+        }
+    }
+}
+
+/* Rebuild the complete title-bar menu from host and plugin contributions. */
+static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
+{
+    if (!ui || !ui->primary_window) return;
+
+    SolUIMenuBuildGroup groups[SOL_UI_TITLE_MENU_LIMIT] = {
+        { .id = "sol", .label = "Sol", .order = 100 },
+        { .id = "file", .label = "File", .order = 200 },
+        { .id = "edit", .label = "Edit", .order = 300 },
+        { .id = "view", .label = "View", .order = 400 },
+        { .id = "plugins", .label = "Plugins", .order = 900 },
+    };
+    size_t group_count = 5u;
+
+    (void)sol_ui_append_menu_build_item(&groups[0], "settings", "Settings...",
+                                        sol_ui_menu_open_settings_action, ui,
+                                        false, 10);
+    (void)sol_ui_append_menu_build_item(&groups[1], "new-buffer", "New Buffer",
+                                        sol_ui_menu_new_buffer_action, ui,
+                                        false, 10);
+    (void)sol_ui_append_menu_build_item(&groups[1], "open-file", "Open File...",
+                                        sol_ui_menu_open_file_action, ui,
+                                        false, 20);
+    (void)sol_ui_append_menu_build_item(&groups[1], "open-folder", "Open Folder...",
+                                        sol_ui_menu_open_folder_action, ui,
+                                        false, 30);
+    (void)sol_ui_append_menu_build_item(&groups[2], "search-separator", "",
+                                        NULL, NULL, true, 30);
+    (void)sol_ui_append_menu_build_item(&groups[3], "plugin-separator", "",
+                                        NULL, NULL, true, 1000);
+    (void)sol_ui_append_menu_build_item(&groups[4], "plugin-manager",
+                                        "Plugin Manager...",
+                                        sol_ui_menu_open_plugin_manager_action,
+                                        ui, false, 10);
+    (void)sol_ui_append_menu_build_item(&groups[4], "plugin-separator", "",
+                                        NULL, NULL, true, 1000);
+
+    for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
+        SolUIMenuItem *entry = &ui->menu_items[i];
+        if (!entry->in_use) continue;
+
+        SolUIMenuBuildGroup *group =
+            sol_ui_find_menu_group(groups, group_count, entry->menu_id);
+        if (!group) {
+            if (group_count >= SOL_UI_TITLE_MENU_LIMIT) continue;
+            group = &groups[group_count++];
+            snprintf(group->id, sizeof(group->id), "%s", entry->menu_id);
+            snprintf(group->label, sizeof(group->label), "%s", entry->menu_label);
+            group->order = entry->menu_order;
+        }
+        Ca_MenuItemDesc item = {
+            .label = entry->label,
+            .action = sol_ui_menu_command_action,
+            .action_data = entry,
+        };
+        if (entry->submenu_id[0]) {
+            (void)sol_ui_append_submenu_build_item(
+                group, entry->submenu_id, entry->submenu_label,
+                &item, entry->item_order);
+        } else {
+            (void)sol_ui_append_menu_build_item(
+                group, entry->item_id, entry->label,
+                sol_ui_menu_command_action, entry, false,
+                entry->item_order);
+        }
+    }
+
+    sol_ui_sort_menu_build_groups(groups, group_count);
+    Ca_MenuDesc menus[SOL_UI_TITLE_MENU_LIMIT];
+    for (size_t i = 0u; i < group_count; ++i) {
+        for (size_t item = 0u; item < groups[i].item_count; ++item) {
+            SolUIMenuBuildItem *source = &groups[i].items[item];
+            groups[i].descriptors[item] = (Ca_MenuItemDesc){
+                .label = source->label,
+                .action = source->action,
+                .action_data = source->action_data,
+                .separator = source->separator,
+                .sub_items = source->sub_item_count ? source->sub_items : NULL,
+                .sub_item_count = (int)source->sub_item_count,
+            };
+        }
+        menus[i] = (Ca_MenuDesc){
+            .label = groups[i].label,
+            .items = groups[i].descriptors,
+            .item_count = (int)groups[i].item_count,
+        };
+    }
+    ca_window_set_title_bar_menus(ui->primary_window, menus, (int)group_count);
+}
+
+/* Register a command-backed title-bar menu contribution. */
+SolUIMenuItemToken sol_ui_system_register_menu_item(
+    SolUISystem *ui,
+    const SolUIMenuItemDesc *desc)
+{
+    if (!ui || !desc || !desc->menu_id || !desc->menu_id[0] ||
+        !desc->menu_label || !desc->menu_label[0] ||
+        !desc->item_id || !desc->item_id[0] ||
+        !desc->label || !desc->label[0] ||
+        !desc->action || !desc->action[0]) {
+        return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+    }
+
+    const char *canonical_label = NULL;
+    int canonical_order = 0;
+    size_t top_level_item_count = 0u;
+    if (strcmp(desc->menu_id, "sol") == 0) {
+        canonical_label = "Sol";
+        canonical_order = 100;
+        top_level_item_count = 1u;
+    } else if (strcmp(desc->menu_id, "file") == 0) {
+        canonical_label = "File";
+        canonical_order = 200;
+        top_level_item_count = 3u;
+    } else if (strcmp(desc->menu_id, "edit") == 0) {
+        canonical_label = "Edit";
+        canonical_order = 300;
+        top_level_item_count = 1u;
+    } else if (strcmp(desc->menu_id, "view") == 0) {
+        canonical_label = "View";
+        canonical_order = 400;
+        top_level_item_count = 1u;
+    } else if (strcmp(desc->menu_id, "plugins") == 0) {
+        canonical_label = "Plugins";
+        canonical_order = 900;
+        top_level_item_count = 2u;
+    }
+    if (canonical_label && strcmp(desc->menu_label, canonical_label) != 0) {
+        return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+    }
+    const bool has_submenu_id = desc->submenu_id && desc->submenu_id[0];
+    const bool has_submenu_label = desc->submenu_label && desc->submenu_label[0];
+    if (has_submenu_id != has_submenu_label) {
+        return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+    }
+
+    SolUIMenuItem *slot = NULL;
+    bool menu_exists = canonical_label != NULL;
+    bool submenu_exists = false;
+    size_t submenu_item_count = 0u;
+    int resolved_menu_order = canonical_label ? canonical_order : desc->menu_order;
+    for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
+        SolUIMenuItem *entry = &ui->menu_items[i];
+        if (!entry->in_use) {
+            if (!slot) slot = entry;
+            continue;
+        }
+        if (strcmp(entry->menu_id, desc->menu_id) == 0) {
+            menu_exists = true;
+            resolved_menu_order = entry->menu_order;
+            if (strcmp(entry->menu_label, desc->menu_label) != 0 ||
+                strcmp(entry->item_id, desc->item_id) == 0) {
+                return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+            }
+            if (has_submenu_id &&
+                strcmp(entry->submenu_id, desc->submenu_id) == 0 &&
+                strcmp(entry->submenu_label, desc->submenu_label) != 0) {
+                return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+            }
+            if (entry->submenu_id[0]) {
+                bool first_submenu_item = true;
+                for (size_t j = 0u; j < i; ++j) {
+                    if (ui->menu_items[j].in_use &&
+                        strcmp(ui->menu_items[j].menu_id, entry->menu_id) == 0 &&
+                        strcmp(ui->menu_items[j].submenu_id,
+                               entry->submenu_id) == 0) {
+                        first_submenu_item = false;
+                        break;
+                    }
+                }
+                if (first_submenu_item) top_level_item_count++;
+                if (has_submenu_id &&
+                    strcmp(entry->submenu_id, desc->submenu_id) == 0) {
+                    submenu_exists = true;
+                    submenu_item_count++;
+                }
+            } else {
+                top_level_item_count++;
+            }
+        }
+    }
+    const size_t added_top_level_items = has_submenu_id && submenu_exists ? 0u : 1u;
+    if (!slot ||
+        top_level_item_count + added_top_level_items > SOL_UI_TITLE_MENU_ITEM_LIMIT ||
+        (has_submenu_id && submenu_item_count >= 16u)) {
+        return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+    }
+    if (!menu_exists) {
+        size_t menu_count = 5u;
+        for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
+            SolUIMenuItem *entry = &ui->menu_items[i];
+            if (!entry->in_use) continue;
+            bool first = strcmp(entry->menu_id, "sol") != 0 &&
+                         strcmp(entry->menu_id, "file") != 0 &&
+                         strcmp(entry->menu_id, "edit") != 0 &&
+                         strcmp(entry->menu_id, "view") != 0 &&
+                         strcmp(entry->menu_id, "plugins") != 0;
+            for (size_t j = 0u; first && j < i; ++j) {
+                if (ui->menu_items[j].in_use &&
+                    strcmp(ui->menu_items[j].menu_id, entry->menu_id) == 0) {
+                    first = false;
+                }
+            }
+            if (first) menu_count++;
+        }
+        if (menu_count >= SOL_UI_TITLE_MENU_LIMIT) {
+            return SOL_UI_MENU_ITEM_TOKEN_INVALID;
+        }
+    }
+
+    uint32_t token = ++ui->menu_item_next_token;
+    if (token == SOL_UI_MENU_ITEM_TOKEN_INVALID) {
+        token = ++ui->menu_item_next_token;
+    }
+    memset(slot, 0, sizeof(*slot));
+    slot->ui = ui;
+    slot->token = token;
+    snprintf(slot->menu_id, sizeof(slot->menu_id), "%s", desc->menu_id);
+    snprintf(slot->menu_label, sizeof(slot->menu_label), "%s", desc->menu_label);
+    snprintf(slot->item_id, sizeof(slot->item_id), "%s", desc->item_id);
+    snprintf(slot->label, sizeof(slot->label), "%s", desc->label);
+    snprintf(slot->action, sizeof(slot->action), "%s", desc->action);
+    snprintf(slot->submenu_id, sizeof(slot->submenu_id), "%s",
+             has_submenu_id ? desc->submenu_id : "");
+    snprintf(slot->submenu_label, sizeof(slot->submenu_label), "%s",
+             has_submenu_label ? desc->submenu_label : "");
+    slot->menu_order = resolved_menu_order;
+    slot->item_order = desc->item_order;
+    slot->in_use = true;
+    sol_ui_rebuild_title_bar_menus(ui);
+    return token;
+}
+
+/* Remove a title-bar menu contribution by token. */
+void sol_ui_system_unregister_menu_item(SolUISystem *ui,
+                                        SolUIMenuItemToken token)
+{
+    if (!ui || token == SOL_UI_MENU_ITEM_TOKEN_INVALID) return;
+    for (size_t i = 0u; i < SOL_UI_MAX_MENU_ITEMS; ++i) {
+        if (ui->menu_items[i].in_use && ui->menu_items[i].token == token) {
+            memset(&ui->menu_items[i], 0, sizeof(ui->menu_items[i]));
+            sol_ui_rebuild_title_bar_menus(ui);
+            return;
+        }
+    }
+}
+
 /*
  * Install menu callbacks and build the title-bar menu structure.
  *
- * Creates and registers the File, Sol, and Plugins menus with the primary
- * window's title bar. Menu actions delegate to the installed callbacks.
+ * Installs host callbacks and rebuilds all host and contributed title-bar
+ * menus on the primary window.
  *
  * ui              The UI system to install the menu in.
  * on_new_buffer   Callback for "New Buffer" action, or NULL.
@@ -1729,57 +2189,7 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
     ui->menu_on_open_folder = on_open_folder;
     ui->menu_user_data      = user_data;
 
-    /* Build the File menu. ca_window_set_title_bar_menus deep-copies
-       these structs, so stack storage is fine. */
-    Ca_MenuItemDesc sol_items[] = {
-        {
-            .label       = "Settings\xe2\x80\xa6",
-            .action      = sol_ui_menu_open_settings_action,
-            .action_data = ui,
-        },
-    };
-
-    Ca_MenuItemDesc file_items[] = {
-        {
-            .label       = "Open File...",
-            .action      = sol_ui_menu_open_file_action,
-            .action_data = ui,
-        },
-        {
-            .label       = "Open Folder...",
-            .action      = sol_ui_menu_open_folder_action,
-            .action_data = ui,
-        },
-    };
-
-    Ca_MenuItemDesc plugin_items[] = {
-        {
-            .label       = "Plugin Manager\xe2\x80\xa6",
-            .action      = sol_ui_menu_open_plugin_manager_action,
-            .action_data = ui,
-        },
-    };
-
-    Ca_MenuDesc menus[] = {
-        {
-            .label      = "Sol",
-            .items      = sol_items,
-            .item_count = (int)(sizeof(sol_items) / sizeof(sol_items[0])),
-        },
-        {
-            .label      = "File",
-            .items      = file_items,
-            .item_count = (int)(sizeof(file_items) / sizeof(file_items[0])),
-        },
-        {
-            .label      = "Plugins",
-            .items      = plugin_items,
-            .item_count = (int)(sizeof(plugin_items) / sizeof(plugin_items[0])),
-        },
-    };
-
-    ca_window_set_title_bar_menus(ui->primary_window, menus,
-                                  (int)(sizeof(menus) / sizeof(menus[0])));
+    sol_ui_rebuild_title_bar_menus(ui);
 }
 
 /*
