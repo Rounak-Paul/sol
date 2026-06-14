@@ -23,9 +23,6 @@ target_include_directories(sol_plugin_git PRIVATE
 if(APPLE)
     target_link_options(sol_plugin_git PRIVATE -undefined dynamic_lookup)
 endif()
-if(WIN32)
-    target_link_libraries(sol_plugin_git PRIVATE causality)
-endif()
 
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     add_executable(sol_git_plugin_tests

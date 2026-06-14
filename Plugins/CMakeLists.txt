@@ -61,6 +61,8 @@ add_subdirectory(sol-plugin-css)
 add_subdirectory(sol-plugin-cmake)
 add_subdirectory(sol-plugin-git)
 
+# On Linux/Windows causality is static, so plugins can't rely on dynamic
+# symbol lookup — they must link against the sol executable directly.
 if(WIN32)
     foreach(_sol_plugin_target IN ITEMS
         sol_plugin_c
@@ -75,5 +77,26 @@ if(WIN32)
         sol_plugin_cmake
         sol_plugin_git)
         target_link_libraries(${_sol_plugin_target} PRIVATE sol)
+    endforeach()
+elseif(UNIX AND NOT APPLE)
+    # On Linux, plugins are dlopen'd into the sol process which has all
+    # causality symbols in its dynamic symbol table (ENABLE_EXPORTS ON).
+    # Allow undefined symbols at link time — they resolve from the host
+    # process at dlopen time, the same as -undefined dynamic_lookup on macOS.
+    foreach(_sol_plugin_target IN ITEMS
+        sol_plugin_c
+        sol_plugin_cpp
+        sol_plugin_python
+        sol_plugin_javascript
+        sol_plugin_typescript
+        sol_plugin_json
+        sol_plugin_html
+        sol_plugin_markdown
+        sol_plugin_css
+        sol_plugin_cmake
+        sol_plugin_git)
+        target_link_options(${_sol_plugin_target} PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,--unresolved-symbols=ignore-all)
     endforeach()
 endif()

@@ -17,6 +17,7 @@ target_include_directories(sol PRIVATE
 
 target_link_libraries(sol PRIVATE
     causality Threads::Threads ${CMAKE_DL_LIBS} tree_sitter_runtime
+    ${CAUSALITY_LINUX_DEPS}
 )
 
 # ---- Tests --------------------------------------------------------------
@@ -149,7 +150,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${Vulkan_INCLUDE_DIRS}
     )
     target_compile_definitions(sol_command_flow_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_command_flow_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_command_flow_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
     add_test(NAME sol_command_flow_tests COMMAND sol_command_flow_tests)
 
     # ---- Integration tests (event+buffer+text-buffer end-to-end) -------
@@ -196,6 +197,6 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         ${CAUSALITY_TEST_INCLUDES}
     )
     target_compile_definitions(sol_plugin_tests PRIVATE ${SOL_TEST_DEFS})
-    target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS})
+    target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
     add_test(NAME sol_plugin_tests COMMAND sol_plugin_tests)
 endif()

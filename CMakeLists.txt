@@ -51,6 +51,21 @@ set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(vendors/causality)
 
+# causality is a static library — its PRIVATE dependencies don't propagate
+# through CMake's dependency graph, so the final executable must link
+# shaderc and its deps directly on Linux.
+if(UNIX AND NOT APPLE)
+    find_library(SHADERC_LIB     NAMES shaderc_combined        PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib REQUIRED)
+    find_library(GLSLANG_LIB     NAMES glslang                 PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib REQUIRED)
+    find_library(SPIRV_LIB       NAMES SPIRV                   PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib REQUIRED)
+    find_library(SPIRV_TOOLS_LIB NAMES SPIRV-Tools             PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib REQUIRED)
+    find_library(SPIRV_TOOLS_OPT NAMES SPIRV-Tools-opt         PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib REQUIRED)
+    find_library(GLSLANG_RES_LIB NAMES glslang-default-resource-limits PATHS /usr/lib/x86_64-linux-gnu /usr/local/lib REQUIRED)
+    set(CAUSALITY_LINUX_DEPS
+        ${SHADERC_LIB} ${GLSLANG_LIB} ${SPIRV_LIB}
+        ${SPIRV_TOOLS_OPT} ${SPIRV_TOOLS_LIB} ${GLSLANG_RES_LIB})
+endif()
+
 # ---- tree-sitter runtime -------------------------------------------
 # A single static library built from tree-sitter's unity-build entry
 # point.  Linked into sol so it can invoke the parser at runtime.
