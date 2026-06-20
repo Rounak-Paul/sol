@@ -206,6 +206,23 @@ static void test_process_tracked_diff(void)
 /* Verify Git can render a complete patch for a file absent from the index. */
 static void test_process_untracked_diff(void)
 {
+    char repo_root[4096];
+    const char *root_argv[] = { "git", "rev-parse", "--show-toplevel", NULL };
+    GitProcessResult root_result = git_process_run(".", root_argv,
+                                                   repo_root, sizeof(repo_root),
+                                                   10000u);
+    CHECK(root_result.exit_code == 0);
+    if (root_result.exit_code != 0) return;
+    repo_root[strcspn(repo_root, "\r\n")] = '\0';
+
+    char target_path[8192];
+    int target_written = snprintf(target_path, sizeof(target_path),
+                                  "%s/%s", repo_root,
+                                  "plugins/sol-plugin-git/tests/test_git_model.c");
+    CHECK(target_written > 0);
+    CHECK((size_t)target_written < sizeof(target_path));
+    if (target_written <= 0 || (size_t)target_written >= sizeof(target_path)) return;
+
     char output[16384];
 #if defined(_WIN32)
     const char *null_path = "NUL";
@@ -214,7 +231,7 @@ static void test_process_untracked_diff(void)
 #endif
     const char *argv[] = {
         "git", "diff", "--no-index", "--no-ext-diff", "--",
-        null_path, "Plugins/sol-plugin-git/tests/test_git_model.c", NULL,
+        null_path, target_path, NULL,
     };
     GitProcessResult result = git_process_run(".", argv, output,
                                               sizeof(output), 10000u);

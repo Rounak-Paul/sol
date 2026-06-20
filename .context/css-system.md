@@ -120,11 +120,34 @@ Standard CSS cascade: specificity → source-order. In submodule: two-pass
 - CSS `outline` → 4-rect rendering outside the border box
 - `letter_spacing` → added to glyph advance in `paint_text`
 
-## Known Renderer Limitations
+## Renderer — Fully Implemented GPU Features
+
+### Ca_RectPushConst (128 bytes, std430)
+All rects now carry: per-corner radii (tl/tr/br/bl), draw_mode, blur_radius,
+color2 (gradient end stop), gradient_angle, gradient_cx/cy.
+
+### Fragment Shader Features
+- **Per-corner border-radius**: 4-quadrant SDF dispatch — each corner picks its own
+  radius based on which quadrant the pixel is in. `roundedBoxSDF(p, half, vec4 r)`.
+- **Box-shadow blur**: `CA_DRAW_MODE_SHADOW` — SDF Gaussian approximation using
+  `exp(-d² / 2σ²)` where σ = blur/2. Rect is expanded by blur radius to cover falloff.
+- **Linear gradient**: `CA_DRAW_MODE_LINEAR_GRAD` — projects centred fragment position
+  onto gradient direction axis; t = dot(p/half, dir)*0.5+0.5.
+- **Radial gradient**: `CA_DRAW_MODE_RADIAL_GRAD` — distance from gradient center
+  divided by half-diagonal length.
+- **sRGB gamma correction** on all paths.
+
+### CSS Parsing (new)
+- `linear-gradient(to bottom, #fff, #000)` — angle keywords (to top/bottom/left/right/
+  corners), degree/rad/turn/grad units.
+- `radial-gradient(circle at 50% 50%, #fff, #000)` — circle keyword + at position.
+- Both emit 5 declarations: BACKGROUND (start+mode), GRADIENT_COLOR2, GRADIENT_ANGLE,
+  GRADIENT_CX, GRADIENT_CY.
+- `background: <color>` falls through to background-color as before.
+
+### Known Renderer Limitation
 - GPU rect shader only supports uniform border width (`Ca_RectPushConst`).
   Per-side borders are drawn as separate edge rects (CPU-side, correct).
-- Per-corner border-radius: stored in `Ca_NodeDesc`, GPU uses `corner_radius`
-  (max of four corners).
 
 ## Key Files
 ```
