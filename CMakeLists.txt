@@ -83,4 +83,4 @@ set_target_properties(tree_sitter_runtime PROPERTIES
 add_subdirectory(sol)
 
 # Plugins (tree-sitter language plugins, built as .dylib/.so MODULEs)
-add_subdirectory(Plugins)
+add_subdirectory(plugins)
