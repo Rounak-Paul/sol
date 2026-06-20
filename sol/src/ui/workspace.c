@@ -346,16 +346,29 @@ static SolPaneClickCtx *sol_ui_acquire_pane_click_ctx(SolUISystem *ui)
 {
     if (!ui) return NULL;
     if (ui->pane_click_ctx_count == ui->pane_click_ctx_capacity) {
-        size_t new_cap = ui->pane_click_ctx_capacity
-                            ? ui->pane_click_ctx_capacity * 2u
-                            : 32u;
-        SolPaneClickCtx *grown = (SolPaneClickCtx *)realloc(
-            ui->pane_click_ctxs, new_cap * sizeof(SolPaneClickCtx));
+        const size_t old_cap = ui->pane_click_ctx_capacity;
+        if (old_cap > SIZE_MAX / 2u) return NULL;
+        const size_t new_cap = old_cap ? old_cap * 2u : 32u;
+        if (new_cap > SIZE_MAX / sizeof(SolPaneClickCtx *)) return NULL;
+        SolPaneClickCtx **grown = (SolPaneClickCtx **)realloc(
+            ui->pane_click_ctxs, new_cap * sizeof(SolPaneClickCtx *));
         if (!grown) return NULL;
-        ui->pane_click_ctxs        = grown;
+        for (size_t i = old_cap; i < new_cap; ++i) {
+            grown[i] = NULL;
+        }
+        ui->pane_click_ctxs = grown;
         ui->pane_click_ctx_capacity = new_cap;
     }
-    return &ui->pane_click_ctxs[ui->pane_click_ctx_count++];
+    SolPaneClickCtx **slot = &ui->pane_click_ctxs[ui->pane_click_ctx_count++];
+    if (!*slot) {
+        *slot = (SolPaneClickCtx *)calloc(1u, sizeof(SolPaneClickCtx));
+        if (!*slot) {
+            --ui->pane_click_ctx_count;
+            return NULL;
+        }
+    }
+    memset(*slot, 0, sizeof(**slot));
+    return *slot;
 }
 
 /*
@@ -412,7 +425,7 @@ static void sol_ui_on_tab_close(Ca_Button *button, void *user_data)
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
     if (cb->tab_buffer_id != 0u) {
-        sol_buffer_close(cb->ui->buffers, cb->tab_buffer_id);
+        (void)sol_buffer_close(cb->ui->buffers, cb->tab_buffer_id);
     }
 }
 
@@ -1347,6 +1360,11 @@ void sol_ui_system_destroy(SolUISystem *ui)
     }
     free(ui->file_tree_click_ctxs);
     ui->file_tree_click_ctxs = NULL;
+    if (ui->pane_click_ctxs) {
+        for (size_t i = 0u; i < ui->pane_click_ctx_capacity; ++i) {
+            free(ui->pane_click_ctxs[i]);
+        }
+    }
     free(ui->pane_click_ctxs);
     ui->pane_click_ctxs = NULL;
     if (ui->context_menu_ctxs) {

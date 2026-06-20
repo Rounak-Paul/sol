@@ -309,8 +309,9 @@ struct SolUISystem {
 
     /* Click-context pool for buffer-pane elements (per-pane focus
        click + per-tab buttons). Reset at the start of every buffer
-       area rebuild; grown on demand. */
-    SolPaneClickCtx            *pane_click_ctxs;
+       area rebuild; grown on demand. Stored as stable heap pointers so
+       reallocating the slot array cannot invalidate button callbacks. */
+    SolPaneClickCtx           **pane_click_ctxs;
     size_t                      pane_click_ctx_count;
     size_t                      pane_click_ctx_capacity;
 
