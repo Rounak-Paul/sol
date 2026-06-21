@@ -432,8 +432,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         /* Panel shadow + corner-radius + opacity. */
         ".cf-panel {"
         "  corner-radius: %.1fpx;"
-        "  shadow-offset-y: %.1fpx; shadow-blur: %.1fpx;"
-        "  shadow-color: rgba(0,0,0,0.38);"
+        "  box-shadow: 0px %.1fpx %.1fpx rgba(0,0,0,0.38);"
         "  opacity: %.3f;"
         "}"
         /* Titlebar opacity */
