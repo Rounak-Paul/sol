@@ -41,6 +41,7 @@
 #include "sol_input_router.h"
 #include "sol_job.h"
 #include "sol_platform.h"
+#include "sol_bg_effect.h"
 #include "sol_settings.h"
 #include "sol_system_manager.h"
 #include "sol_syntax.h"
@@ -145,6 +146,7 @@ typedef struct SolAppContext {
     SolUISystem          *ui;
     SolSyntaxRegistry    *syntax_registry;
     SolTerminalManager   *terminal_mgr;
+    SolBgEffectRegistry  *bg_effects;
     Ca_Instance          *instance;
     SolInputRouter       *router;
     bool                  explorer_focused;
@@ -1497,6 +1499,14 @@ int main(int argc, char **argv)
         sol_ui_system_set_terminal_manager(app.ui, app.terminal_mgr);
     }
 
+    app.bg_effects = sol_bg_effect_registry_create(instance);
+    if (!app.bg_effects) {
+        fprintf(stderr, "[sol] warning: background effect registry creation failed\n");
+    } else {
+        sol_bg_effect_set_opacity(app.bg_effects, app.settings.bg_opacity);
+        sol_ui_system_set_bg_effects(app.ui, app.bg_effects);
+    }
+
     Ca_Window *window = sol_ui_system_primary_window(app.ui);
     if (!window) {
         fprintf(stderr, "Failed to access primary window\n");
@@ -1516,6 +1526,11 @@ int main(int argc, char **argv)
     if (!sol_system_register_service(app.systems, "sol.ui", app.ui, NULL, NULL)) {
         fprintf(stderr, "[sol] warning: failed to register sol.ui service\n");
     }
+    if (app.bg_effects &&
+        !sol_system_register_service(app.systems, "sol.bg_effect_registry",
+                                     app.bg_effects, NULL, NULL)) {
+        fprintf(stderr, "[sol] warning: failed to register sol.bg_effect_registry service\n");
+    }
     sol_plugin_manager_attach_ui(sol_system_plugins(app.systems), app.ui);
     sol_ui_system_set_plugin_manager(app.ui, sol_system_plugins(app.systems));
     sol_ui_system_set_settings(app.ui, &app.settings);
@@ -1534,6 +1549,10 @@ int main(int argc, char **argv)
         argc > 0 ? argv[0] : NULL, plugin_dir, sizeof(plugin_dir));
     const uint32_t loaded_plugins =
         (uint32_t)sol_system_load_plugins_from_directory(app.systems, plugin_dir);
+
+    /* Restore the saved background effect now that plugins have registered theirs. */
+    if (app.bg_effects && app.settings.bg_effect_id[0] != '\0')
+        sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id);
 
     const SolAppStartupPayload startup = {
         .worker_count = sol_job_system_worker_count(app.jobs),
@@ -1585,10 +1604,15 @@ int main(int argc, char **argv)
     }
     sol_ui_system_set_plugin_manager(app.ui, NULL);
     sol_system_unregister_service(app.systems, "sol.ui");
+    sol_system_unregister_service(app.systems, "sol.bg_effect_registry");
     /* Destroy the terminal manager before the UI system so PTY reader threads
        stop before causality signals are freed. */
     sol_ui_system_set_terminal_manager(app.ui, NULL);
     sol_terminal_manager_destroy(app.terminal_mgr);
+    /* Detach and destroy bg effects before UI destroy so Vulkan pipelines are
+       freed before the Causality instance tears down its device. */
+    sol_ui_system_set_bg_effects(app.ui, NULL);
+    sol_bg_effect_registry_destroy(app.bg_effects);
     sol_ui_system_destroy(app.ui);
     sol_syntax_registry_destroy(app.syntax_registry);
     ca_instance_destroy(instance);

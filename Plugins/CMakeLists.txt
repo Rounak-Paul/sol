@@ -60,6 +60,7 @@ add_subdirectory(sol-plugin-markdown)
 add_subdirectory(sol-plugin-css)
 add_subdirectory(sol-plugin-cmake)
 add_subdirectory(sol-plugin-git)
+add_subdirectory(sol-plugin-bfx)
 
 # On Linux/Windows causality is static, so plugins can't rely on dynamic
 # symbol lookup — they must link against the sol executable directly.
@@ -75,7 +76,8 @@ if(WIN32)
         sol_plugin_markdown
         sol_plugin_css
         sol_plugin_cmake
-        sol_plugin_git)
+        sol_plugin_git
+        sol_plugin_bfx)
         target_link_libraries(${_sol_plugin_target} PRIVATE sol)
     endforeach()
 elseif(UNIX AND NOT APPLE)
@@ -94,7 +96,8 @@ elseif(UNIX AND NOT APPLE)
         sol_plugin_markdown
         sol_plugin_css
         sol_plugin_cmake
-        sol_plugin_git)
+        sol_plugin_git
+        sol_plugin_bfx)
         target_link_options(${_sol_plugin_target} PRIVATE
             -Wl,--allow-shlib-undefined
             -Wl,--unresolved-symbols=ignore-all)

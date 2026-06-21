@@ -19,6 +19,7 @@
 
 #include <causality.h>
 
+#include "sol_bg_effect.h"
 #include "sol_file_tree.h"
 #include "sol_settings.h"
 #include "sol_terminal.h"
@@ -343,6 +344,13 @@ struct SolUISystem {
        panel keeps its width across reactive rebuilds. Default 0.20. */
     float tree_panel_ratio;
 
+    /* Background effect registry — NULL until sol_ui_system_set_bg_effects is called.
+       The registry owns the active effect lifecycle and the Vulkan pipeline. */
+    struct SolBgEffectRegistry *bg_effects;
+    /* Bumped by the bg effect change callback so dependent UI (e.g. settings panel)
+       re-evaluates state when the active effect or opacity changes. */
+    Ca_Signal          *sig_bg_effect_rev;
+
     /* Terminal manager — NULL until sol_ui_system_set_terminal_manager is called. */
     SolTerminalManager *terminal_mgr;
     /* Bumped by sol_ui_on_frame whenever the terminal manager drains new data,
@@ -653,10 +661,13 @@ void sol_ui_plugin_window_tick(void);
 /*
  * Open the settings window.
  *
- * instance  Causality instance for the window.
- * settings  Settings object to edit.
+ * instance    Causality instance for the window.
+ * settings    Settings object to edit.
+ * bg_effects  Background effect registry for the effect picker (may be NULL).
  */
-void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings);
+void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
+                                  SolBgEffectRegistry *bg_effects,
+                                  Ca_Signal *bg_effect_revision);
 
 /*
  * Update the settings window each frame.

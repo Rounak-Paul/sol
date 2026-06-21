@@ -315,6 +315,29 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
 /* Open the settings window. No-op if one is already open. */
 void sol_ui_system_open_settings_window(SolUISystem *ui);
 
+/* ================================================================== */
+/* Background effect registry integration                             */
+/* ================================================================== */
+
+typedef struct SolBgEffectRegistry SolBgEffectRegistry;
+
+/*
+ * Attach a background effect registry to the UI system.
+ * The registry's viewport is connected to the background builder so shader
+ * effects render behind all UI content.  Pass NULL to detach.
+ *
+ * ui   The UI system.
+ * reg  Effect registry (may be NULL).
+ */
+void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg);
+
+/*
+ * Return the attached background effect registry, or NULL if none.
+ *
+ * ui  The UI system.
+ */
+SolBgEffectRegistry *sol_ui_system_bg_effects(const SolUISystem *ui);
+
 /* Workspace search windows. File search fuzzy-matches relative paths;
  * content search finds matching lines across the mounted tree root. */
 void sol_ui_system_open_file_search(SolUISystem *ui);

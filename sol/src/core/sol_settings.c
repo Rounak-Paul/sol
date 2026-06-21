@@ -31,9 +31,12 @@
  */
 SolSettings sol_settings_defaults(void)
 {
-    return (SolSettings){
-        .ui_scale = SOL_SETTINGS_UI_SCALE_DEFAULT,
+    SolSettings s = {
+        .ui_scale  = SOL_SETTINGS_UI_SCALE_DEFAULT,
+        .bg_opacity = SOL_SETTINGS_BG_OPACITY_DEFAULT,
     };
+    s.bg_effect_id[0] = '\0';
+    return s;
 }
 
 /* ------------------------------------------------------------------ */
@@ -188,6 +191,14 @@ static void jp_parse_theme(JP *j, SolSettings *s)
                 v >= SOL_SETTINGS_UI_SCALE_MIN &&
                 v <= SOL_SETTINGS_UI_SCALE_MAX)
                 s->ui_scale = v;
+        } else if (strcmp(key, "effect") == 0) {
+            jp_string(j, s->bg_effect_id, sizeof(s->bg_effect_id));
+        } else if (strcmp(key, "opacity") == 0) {
+            float v = jp_float(j);
+            if (!isnan(v) &&
+                v >= SOL_SETTINGS_BG_OPACITY_MIN &&
+                v <= SOL_SETTINGS_BG_OPACITY_MAX)
+                s->bg_opacity = v;
         } else {
             jp_skip_value(j);
         }
@@ -282,13 +293,30 @@ bool sol_settings_save(const SolSettings *settings)
     free(path);
     if (!fp) return false;
 
+    /* Escape quotes in the effect id for JSON safety (effect ids are
+       expected to be simple dotted identifiers, but guard anyway). */
+    char esc_id[sizeof(settings->bg_effect_id) * 2 + 1];
+    {
+        const char *src = settings->bg_effect_id;
+        char       *dst = esc_id;
+        while (*src) {
+            if (*src == '"' || *src == '\\') *dst++ = '\\';
+            *dst++ = *src++;
+        }
+        *dst = '\0';
+    }
+
     int n = fprintf(fp,
         "{\n"
         "  \"theme\": {\n"
-        "    \"scale\": %.2f\n"
+        "    \"scale\": %.2f,\n"
+        "    \"effect\": \"%s\",\n"
+        "    \"opacity\": %.2f\n"
         "  }\n"
         "}\n",
-        (double)settings->ui_scale);
+        (double)settings->ui_scale,
+        esc_id,
+        (double)settings->bg_opacity);
 
     fclose(fp);
     return n > 0;

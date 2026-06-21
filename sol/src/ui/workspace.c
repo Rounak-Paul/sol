@@ -1137,6 +1137,21 @@ void sol_ui_system_pre_tick(SolUISystem *ui)
 }
 
 /*
+ * Change callback wired to the bg effect registry: bumps sig_bg_effect_rev so
+ * dependent UI (e.g. the settings panel) re-evaluates state.
+ *
+ * user_data  Pointer to SolUISystem.
+ */
+static void sol_ui_on_bg_effect_change(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui) return;
+    sol_ui_bump_u32(ui->sig_bg_effect_rev);
+    bool active = ui->bg_effects && sol_bg_effect_active_id(ui->bg_effects);
+    ca_instance_set_continuous(ui->instance, active);
+}
+
+/*
  * Build and install the main UI layout tree (workspace host and nested builders).
  *
  * Constructs the app-root container, workspace host, content host with reactive
@@ -1159,6 +1174,7 @@ static bool sol_ui_build_layout(SolUISystem *ui)
 
     ui->workspace_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
+        .z_index   = 0,
         .style     = "workspace-host",
     });
 
@@ -1272,12 +1288,13 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->sig_tree_scroll       = ca_signal_float(instance, 0.0f);
     ui->sig_terminal_rev      = ca_signal_u32  (instance, 0u);
     ui->sig_side_panel_rev    = ca_signal_u32  (instance, 0u);
+    ui->sig_bg_effect_rev     = ca_signal_u32  (instance, 0u);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_file_tree_visible ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
         !ui->sig_tree_scroll || !ui->sig_terminal_rev ||
-        !ui->sig_side_panel_rev) {
+        !ui->sig_side_panel_rev || !ui->sig_bg_effect_rev) {
         free(ui);
         return NULL;
     }
@@ -2296,7 +2313,39 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
 void sol_ui_system_open_settings_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance || !ui->settings) return;
-    sol_ui_settings_window_open(ui->instance, ui->settings);
+    sol_ui_settings_window_open(ui->instance, ui->settings, ui->bg_effects,
+                                ui->sig_bg_effect_rev);
+}
+
+/*
+ * Attach a background effect registry to the UI system.
+ *
+ * ui   The UI system.
+ * reg  Effect registry, or NULL to detach.
+ */
+void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg)
+{
+    if (!ui) return;
+    ui->bg_effects = reg;
+    if (reg) {
+        sol_bg_effect_set_change_callback(reg, sol_ui_on_bg_effect_change, ui);
+        ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
+        bool active = sol_bg_effect_active_id(reg) != NULL;
+        ca_instance_set_continuous(ui->instance, active);
+    } else {
+        ca_window_set_bg_render(ui->primary_window, NULL, NULL);
+        ca_instance_set_continuous(ui->instance, false);
+    }
+}
+
+/*
+ * Return the attached background effect registry.
+ *
+ * ui  The UI system.
+ */
+SolBgEffectRegistry *sol_ui_system_bg_effects(const SolUISystem *ui)
+{
+    return ui ? ui->bg_effects : NULL;
 }
 
 /*

@@ -9,7 +9,9 @@
  *
  *   {
  *     "theme": {
- *       "scale": 1.0
+ *       "scale": 1.0,
+ *       "effect": "com.sol.shaders.aurora",
+ *       "opacity": 1.0
  *     }
  *   }
  *
@@ -26,9 +28,14 @@
 /* Tunables                                                            */
 /* ------------------------------------------------------------------ */
 
-#define SOL_SETTINGS_UI_SCALE_MIN     0.5f
-#define SOL_SETTINGS_UI_SCALE_MAX     3.0f
-#define SOL_SETTINGS_UI_SCALE_DEFAULT 1.0f
+#define SOL_SETTINGS_UI_SCALE_MIN       0.5f
+#define SOL_SETTINGS_UI_SCALE_MAX       3.0f
+#define SOL_SETTINGS_UI_SCALE_DEFAULT   1.0f
+
+#define SOL_SETTINGS_BG_OPACITY_MIN     0.0f
+#define SOL_SETTINGS_BG_OPACITY_MAX     1.0f
+#define SOL_SETTINGS_BG_OPACITY_DEFAULT 1.0f
+#define SOL_SETTINGS_BG_EFFECT_ID_MAX   63
 
 /* ------------------------------------------------------------------ */
 /* Settings aggregate                                                  */
@@ -45,6 +52,14 @@ typedef struct SolSettings {
      * Range: [SOL_SETTINGS_UI_SCALE_MIN, SOL_SETTINGS_UI_SCALE_MAX].
      * Stored with two decimal places. */
     float ui_scale;
+
+    /* Active background shader effect id (dotted, e.g. "com.sol.shaders.aurora").
+     * Empty string means no effect is active. */
+    char bg_effect_id[SOL_SETTINGS_BG_EFFECT_ID_MAX + 1];
+
+    /* Global background effect opacity [SOL_SETTINGS_BG_OPACITY_MIN, SOL_SETTINGS_BG_OPACITY_MAX].
+     * Applied as the alpha/intensity of the rendered effect. */
+    float bg_opacity;
 } SolSettings;
 
 /* ------------------------------------------------------------------ */
