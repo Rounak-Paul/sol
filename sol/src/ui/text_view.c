@@ -835,9 +835,6 @@ void sol_text_view_render(const SolBuffer *buffer,
     const float sel_adv = adv_css;
     /* Rope reference for per-line byte offset queries. */
     const SolRope *rope_ref = sol_text_buffer_rope((SolBuffer *)buffer);
-    /* Selection highlight colour — dark steel blue. */
-    const uint32_t SEL_COLOR = ca_color(0.14f, 0.21f, 0.37f, 1.0f);
-
     for (int i = 0; i < rendered; ++i) {
         const int line_idx = scroll_top + i;
         if (line_idx >= total) {
@@ -897,7 +894,7 @@ void sol_text_view_render(const SolBuffer *buffer,
                     .pos_y      = 0.0f,
                     .width      = x2 - x1,
                     .height     = (float)SOL_TEXT_LINE_HEIGHT_PX,
-                    .background = SEL_COLOR,
+                    .style      = "buffer-selection",
                 });
                 ca_div_end();
             }
@@ -958,7 +955,7 @@ void sol_text_view_render(const SolBuffer *buffer,
                 .pos_y    = c_y,
                 .width    = 2.0f,
                 .height   = c_em_h,
-                .background = ca_color(1.0f, 1.0f, 1.0f, visible ? 1.0f : 0.0f),
+                .style = visible ? "buffer-caret" : "buffer-caret buffer-caret-hidden",
             });
             ca_div_end();
         }

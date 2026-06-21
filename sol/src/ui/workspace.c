@@ -381,8 +381,6 @@ static void sol_ui_visit_begin_split(SolBufferSplitDirection direction,
         .direction       = sol_ui_split_direction_to_ca(direction),
         .ratio           = ratio,
         .bar_size        = SOL_UI_SPLIT_BAR_SIZE,
-        .bar_color       = SOL_UI_SPLIT_BAR_COLOR,
-        .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
         .on_resize       = cb_ctx ? sol_ui_split_on_resize : NULL,
         .user_data       = cb_ctx,
     });
@@ -860,8 +858,6 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
         .min_ratio       = 0.20f,
         .max_ratio       = 0.80f,
         .bar_size        = 1.0f,
-        .bar_color       = SOL_UI_SPLIT_BAR_COLOR,
-        .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
         .on_resize       = sol_ui_on_terminal_resize,
         .user_data       = ui,
     });
@@ -944,8 +940,6 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             .min_ratio      = 0.10f,
             .max_ratio      = 0.50f,
             .bar_size       = 1.0f,
-            .bar_color       = SOL_UI_SPLIT_BAR_COLOR,
-            .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
             .on_resize      = sol_ui_on_panel_resize,
             .user_data      = ui,
         });
@@ -1226,6 +1220,38 @@ static void sol_ui_on_bg_effect_change(void *user_data)
     ca_instance_set_continuous(ui->instance, active);
 }
 
+/* Apply the active registry theme to every live Causality window. */
+static void sol_ui_on_theme_change(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->instance || !ui->themes) return;
+    const char *active_id = sol_theme_active_id(ui->themes);
+    const char *css = sol_theme_active_css(ui->themes);
+    if (!active_id || !css) return;
+    if (strcmp(ui->applied_theme_id, active_id) == 0) {
+        sol_ui_bump_u32(ui->sig_theme_rev);
+        return;
+    }
+
+    Ca_Stylesheet *stylesheet = ca_css_parse(css);
+    if (!stylesheet) {
+        sol_ui_bump_u32(ui->sig_theme_rev);
+        return;
+    }
+    Ca_Stylesheet *previous = ui->stylesheet;
+    ui->stylesheet = stylesheet;
+    ca_instance_set_stylesheet(ui->instance, stylesheet);
+    ca_instance_refresh_styles(ui->instance);
+    if (previous) ca_css_destroy(previous);
+    snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s", active_id);
+    if (ui->settings && strcmp(ui->settings->theme_id, active_id) != 0) {
+        snprintf(ui->settings->theme_id, sizeof(ui->settings->theme_id), "%s",
+                 active_id);
+        sol_settings_save(ui->settings);
+    }
+    sol_ui_bump_u32(ui->sig_theme_rev);
+}
+
 /*
  * Build and install the main UI layout tree (workspace host and nested builders).
  *
@@ -1364,12 +1390,14 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->sig_terminal_rev      = ca_signal_u32  (instance, 0u);
     ui->sig_side_panel_rev    = ca_signal_u32  (instance, 0u);
     ui->sig_bg_effect_rev     = ca_signal_u32  (instance, 0u);
+    ui->sig_theme_rev         = ca_signal_u32  (instance, 0u);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_file_tree_visible ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
         !ui->sig_tree_scroll || !ui->sig_terminal_rev ||
-        !ui->sig_side_panel_rev || !ui->sig_bg_effect_rev) {
+        !ui->sig_side_panel_rev || !ui->sig_bg_effect_rev ||
+        !ui->sig_theme_rev) {
         free(ui);
         return NULL;
     }
@@ -1393,10 +1421,29 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->window_w = SOL_UI_WINDOW_WIDTH;
     ui->window_h = SOL_UI_WINDOW_HEIGHT;
 
-    ui->stylesheet = ca_css_parse(SOL_UI_MAIN_WINDOW_CSS);
-    if (ui->stylesheet) {
-        ca_instance_set_stylesheet(instance, ui->stylesheet);
+    ui->themes = sol_theme_registry_create();
+    if (!ui->themes ||
+        !sol_theme_register(ui->themes, &(SolThemeDesc){
+            .id = SOL_UI_DEFAULT_THEME_ID,
+            .name = SOL_UI_DEFAULT_THEME_NAME,
+            .css = SOL_UI_DEFAULT_THEME_CSS,
+        })) {
+        sol_theme_registry_destroy(ui->themes);
+        sol_file_tree_destroy(ui->file_tree);
+        free(ui);
+        return NULL;
     }
+
+    ui->stylesheet = ca_css_parse(sol_theme_active_css(ui->themes));
+    if (!ui->stylesheet) {
+        sol_theme_registry_destroy(ui->themes);
+        sol_file_tree_destroy(ui->file_tree);
+        free(ui);
+        return NULL;
+    }
+    ca_instance_set_stylesheet(instance, ui->stylesheet);
+    snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s",
+             sol_theme_active_id(ui->themes));
 
     ui->primary_window = ca_window_create(instance, &(Ca_WindowDesc){
         .title  = SOL_UI_WINDOW_TITLE,
@@ -1408,6 +1455,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
         if (ui->stylesheet) {
             ca_css_destroy(ui->stylesheet);
         }
+        sol_theme_registry_destroy(ui->themes);
         free(ui);
         return NULL;
     }
@@ -1417,6 +1465,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
         if (ui->stylesheet) {
             ca_css_destroy(ui->stylesheet);
         }
+        sol_theme_registry_destroy(ui->themes);
         free(ui);
         return NULL;
     }
@@ -1429,6 +1478,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
                              sol_ui_status_bar_builder,
                              ui,
                              SOL_UI_STATUS_BAR_HEIGHT);
+    sol_theme_set_change_callback(ui->themes, sol_ui_on_theme_change, ui);
     return ui;
 }
 
@@ -1478,6 +1528,8 @@ void sol_ui_system_destroy(SolUISystem *ui)
         ca_css_destroy(ui->stylesheet);
         ui->stylesheet = NULL;
     }
+    sol_theme_registry_destroy(ui->themes);
+    ui->themes = NULL;
 
     free(ui);
 }
@@ -2390,7 +2442,50 @@ void sol_ui_system_open_settings_window(SolUISystem *ui)
 {
     if (!ui || !ui->instance || !ui->settings) return;
     sol_ui_settings_window_open(ui->instance, ui->settings, ui->bg_effects,
-                                ui->sig_bg_effect_rev);
+                                ui->sig_bg_effect_rev, ui, ui->sig_theme_rev);
+}
+
+bool sol_ui_system_register_theme(SolUISystem *ui, const SolThemeDesc *desc)
+{
+    if (!ui || !ui->themes || !desc || !desc->css) return false;
+    if (!sol_theme_register(ui->themes, desc)) return false;
+    /* Validate the composed CSS (base + override) as stored by the registry. */
+    const char *composed = sol_theme_css(ui->themes, desc->id);
+    Ca_Stylesheet *validation = composed ? ca_css_parse(composed) : NULL;
+    if (!validation) {
+        sol_theme_unregister(ui->themes, desc->id);
+        return false;
+    }
+    ca_css_destroy(validation);
+    return true;
+}
+
+bool sol_ui_system_unregister_theme(SolUISystem *ui, const char *id)
+{
+    if (!ui || !ui->themes || !id || strcmp(id, SOL_UI_DEFAULT_THEME_ID) == 0)
+        return false;
+    return sol_theme_unregister(ui->themes, id);
+}
+
+bool sol_ui_system_set_active_theme(SolUISystem *ui, const char *id)
+{
+    return ui && ui->themes && sol_theme_set_active(ui->themes, id);
+}
+
+const char *sol_ui_system_active_theme(const SolUISystem *ui)
+{
+    return ui ? sol_theme_active_id(ui->themes) : NULL;
+}
+
+size_t sol_ui_system_theme_count(const SolUISystem *ui)
+{
+    return ui ? sol_theme_count(ui->themes) : 0u;
+}
+
+bool sol_ui_system_theme_info(const SolUISystem *ui, size_t index,
+                              const char **out_id, const char **out_name)
+{
+    return ui && sol_theme_get_info(ui->themes, index, out_id, out_name);
 }
 
 /*

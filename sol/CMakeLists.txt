@@ -90,6 +90,18 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_compile_definitions(sol_search_tests PRIVATE ${SOL_TEST_DEFS})
     add_test(NAME sol_search_tests COMMAND sol_search_tests)
 
+    # ---- Runtime CSS theme registry -----------------------------------
+    add_executable(sol_theme_tests
+        tests/test_theme.c
+        src/core/sol_theme.c
+    )
+    target_include_directories(sol_theme_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(sol_theme_tests PRIVATE ${SOL_TEST_DEFS})
+    add_test(NAME sol_theme_tests COMMAND sol_theme_tests)
+
     # ---- Event-bus unit tests -------------------------------------------
     add_executable(sol_event_tests
         tests/test_event.c
@@ -141,6 +153,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         tests/test_command_flow.c
         tests/stubs/sol_ui_bump_stub.c
         src/ui/command_flow.c
+        src/core/sol_theme.c
         ${SOL_CORE_TEST_SRC}
     )
     target_include_directories(sol_command_flow_tests PRIVATE
@@ -187,6 +200,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         src/core/sol_text_buffer.c
         src/core/sol_job.c
         src/core/sol_input.c
+        src/core/sol_theme.c
         src/ui/command_flow.c
         src/ui/status_bar.c
     )

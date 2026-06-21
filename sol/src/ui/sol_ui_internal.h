@@ -23,6 +23,7 @@
 #include "sol_file_tree.h"
 #include "sol_settings.h"
 #include "sol_terminal.h"
+#include "sol_theme.h"
 #include "sol_ui_system.h"
 
 /* ------------------------------------------------------------------ */
@@ -180,6 +181,8 @@ struct SolUISystem {
     SolBufferSystem  *buffers;
 
     Ca_Stylesheet    *stylesheet;
+    SolThemeRegistry *themes;
+    char              applied_theme_id[SOL_THEME_ID_MAX + 1u];
 
     Ca_Div           *workspace_host;
     Ca_Div           *workspace_content_host;
@@ -350,6 +353,7 @@ struct SolUISystem {
     /* Bumped by the bg effect change callback so dependent UI (e.g. settings panel)
        re-evaluates state when the active effect or opacity changes. */
     Ca_Signal          *sig_bg_effect_rev;
+    Ca_Signal          *sig_theme_rev;
 
     /* Terminal manager — NULL until sol_ui_system_set_terminal_manager is called. */
     SolTerminalManager *terminal_mgr;
@@ -667,7 +671,9 @@ void sol_ui_plugin_window_tick(void);
  */
 void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
                                   SolBgEffectRegistry *bg_effects,
-                                  Ca_Signal *bg_effect_revision);
+                                  Ca_Signal *bg_effect_revision,
+                                  SolUISystem *ui,
+                                  Ca_Signal *theme_revision);
 
 /*
  * Update the settings window each frame.

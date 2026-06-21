@@ -141,3 +141,13 @@ void sol_ui_system_wake(SolUISystem *ui)
 {
     (void)ui;
 }
+
+bool sol_ui_system_register_theme(SolUISystem *ui, const SolThemeDesc *desc)
+{
+    return ui && sol_theme_register(ui->themes, desc);
+}
+
+bool sol_ui_system_unregister_theme(SolUISystem *ui, const char *id)
+{
+    return ui && sol_theme_unregister(ui->themes, id);
+}

@@ -35,6 +35,7 @@ SolSettings sol_settings_defaults(void)
         .ui_scale  = SOL_SETTINGS_UI_SCALE_DEFAULT,
         .bg_opacity = SOL_SETTINGS_BG_OPACITY_DEFAULT,
     };
+    snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
     s.bg_effect_id[0] = '\0';
     return s;
 }
@@ -191,6 +192,8 @@ static void jp_parse_theme(JP *j, SolSettings *s)
                 v >= SOL_SETTINGS_UI_SCALE_MIN &&
                 v <= SOL_SETTINGS_UI_SCALE_MAX)
                 s->ui_scale = v;
+        } else if (strcmp(key, "style") == 0) {
+            jp_string(j, s->theme_id, sizeof(s->theme_id));
         } else if (strcmp(key, "effect") == 0) {
             jp_string(j, s->bg_effect_id, sizeof(s->bg_effect_id));
         } else if (strcmp(key, "opacity") == 0) {
@@ -296,9 +299,19 @@ bool sol_settings_save(const SolSettings *settings)
     /* Escape quotes in the effect id for JSON safety (effect ids are
        expected to be simple dotted identifiers, but guard anyway). */
     char esc_id[sizeof(settings->bg_effect_id) * 2 + 1];
+    char esc_theme[sizeof(settings->theme_id) * 2 + 1];
     {
         const char *src = settings->bg_effect_id;
         char       *dst = esc_id;
+        while (*src) {
+            if (*src == '"' || *src == '\\') *dst++ = '\\';
+            *dst++ = *src++;
+        }
+        *dst = '\0';
+    }
+    {
+        const char *src = settings->theme_id;
+        char *dst = esc_theme;
         while (*src) {
             if (*src == '"' || *src == '\\') *dst++ = '\\';
             *dst++ = *src++;
@@ -310,11 +323,13 @@ bool sol_settings_save(const SolSettings *settings)
         "{\n"
         "  \"theme\": {\n"
         "    \"scale\": %.2f,\n"
+        "    \"style\": \"%s\",\n"
         "    \"effect\": \"%s\",\n"
         "    \"opacity\": %.2f\n"
         "  }\n"
         "}\n",
         (double)settings->ui_scale,
+        esc_theme,
         esc_id,
         (double)settings->bg_opacity);
 

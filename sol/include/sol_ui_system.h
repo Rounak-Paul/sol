@@ -8,6 +8,7 @@
 
 #include "sol_buffer.h"
 #include "sol_input.h"
+#include "sol_theme.h"
 
 typedef struct SolUISystem SolUISystem;
 
@@ -314,6 +315,23 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
 
 /* Open the settings window. No-op if one is already open. */
 void sol_ui_system_open_settings_window(SolUISystem *ui);
+
+/* Register a complete CSS theme after validating that it parses. */
+bool sol_ui_system_register_theme(SolUISystem *ui, const SolThemeDesc *desc);
+
+/* Remove a registered non-default theme. */
+bool sol_ui_system_unregister_theme(SolUISystem *ui, const char *id);
+
+/* Select a registered theme and apply it to every live window. */
+bool sol_ui_system_set_active_theme(SolUISystem *ui, const char *id);
+
+/* Return the active theme id, or NULL when unavailable. */
+const char *sol_ui_system_active_theme(const SolUISystem *ui);
+
+/* Enumerate registered themes. Returned strings remain registry-owned. */
+size_t sol_ui_system_theme_count(const SolUISystem *ui);
+bool sol_ui_system_theme_info(const SolUISystem *ui, size_t index,
+                              const char **out_id, const char **out_name);
 
 /* ================================================================== */
 /* Background effect registry integration                             */

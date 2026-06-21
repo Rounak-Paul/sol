@@ -1550,6 +1550,14 @@ int main(int argc, char **argv)
     const uint32_t loaded_plugins =
         (uint32_t)sol_system_load_plugins_from_directory(app.systems, plugin_dir);
 
+    /* Restore the saved CSS theme after plugins have registered theirs. */
+    if (app.settings.theme_id[0] != '\0' &&
+        !sol_ui_system_set_active_theme(app.ui, app.settings.theme_id)) {
+        snprintf(app.settings.theme_id, sizeof(app.settings.theme_id), "%s",
+                 SOL_SETTINGS_THEME_ID_DEFAULT);
+        (void)sol_ui_system_set_active_theme(app.ui, app.settings.theme_id);
+    }
+
     /* Restore the saved background effect now that plugins have registered theirs. */
     if (app.bg_effects && app.settings.bg_effect_id[0] != '\0')
         sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id);

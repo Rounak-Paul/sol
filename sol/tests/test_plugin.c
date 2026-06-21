@@ -52,6 +52,7 @@ static TestEnv make_env(void)
     e.sys = sol_system_manager_create(NULL);
     e.pm  = sol_system_plugins(e.sys);
     e.ui  = (SolUISystem *)calloc(1, sizeof(SolUISystem));
+    e.ui->themes = sol_theme_registry_create();
     sol_plugin_manager_attach_ui(e.pm, e.ui);
     return e;
 }
@@ -63,6 +64,7 @@ static void free_env(TestEnv *e)
     sol_system_manager_destroy(e->sys);
     e->sys = NULL;
     e->pm  = NULL;
+    sol_theme_registry_destroy(e->ui->themes);
     free(e->ui);
     e->ui  = NULL;
 }
@@ -1065,13 +1067,55 @@ static void test_side_panel_auto_remove(SolTestCtx *T)
     g_panel_ctx = NULL;
 }
 
+static SolPluginCtx *g_theme_ctx = NULL;
+
+static bool theme_plugin_load(SolPluginCtx *ctx)
+{
+    g_theme_ctx = ctx;
+    return sol_plugin_register_theme(ctx, &(SolThemeDesc){
+        .id = "test.plugin.theme",
+        .name = "Plugin Theme",
+        .css = ".app-root { background: #010203; }",
+    });
+}
+
+static const SolPluginAPI PLUGIN_THEME = {
+    .api_version = SOL_PLUGIN_API_VERSION,
+    .id = "test.theme.plugin",
+    .display_name = "Theme Plugin",
+    .version = "1.0.0",
+    .on_load = theme_plugin_load,
+};
+
+static void test_theme_auto_remove(SolTestCtx *T)
+{
+    TestEnv e = make_env();
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &PLUGIN_THEME));
+    SOL_CHECK_EQ_SZ(T, sol_theme_count(e.ui->themes), 1u);
+    SOL_CHECK(T, sol_plugin_manager_unload(e.pm, "test.theme.plugin"));
+    SOL_CHECK_EQ_SZ(T, sol_theme_count(e.ui->themes), 0u);
+    free_env(&e);
+    g_theme_ctx = NULL;
+}
+
+static void test_theme_manual_remove(SolTestCtx *T)
+{
+    TestEnv e = make_env();
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &PLUGIN_THEME));
+    sol_plugin_unregister_theme(g_theme_ctx, "test.plugin.theme");
+    SOL_CHECK_EQ_SZ(T, sol_theme_count(e.ui->themes), 0u);
+    SOL_CHECK(T, sol_plugin_manager_unload(e.pm, "test.theme.plugin"));
+    free_env(&e);
+    g_theme_ctx = NULL;
+}
+
 /* ================================================================== */
 /* main                                                                */
 /* ================================================================== */
 
 int main(void)
 {
-    SolTestSuite *suites = (SolTestSuite *)calloc(9u, sizeof(SolTestSuite));
+    SolTestSuite *suites = (SolTestSuite *)calloc(10u, sizeof(SolTestSuite));
     if (!suites) return 1;
     int si = 0;
 
@@ -1151,6 +1195,12 @@ int main(void)
     sol_suite_init(&suites[si], "sol_plugin_side_panels");
     SOL_RUN(suites[si], test_side_panel_lifecycle);
     SOL_RUN(suites[si], test_side_panel_auto_remove);
+    sol_suite_report(&suites[si++]);
+
+    /* Suite 10 — CSS themes */
+    sol_suite_init(&suites[si], "sol_plugin_themes");
+    SOL_RUN(suites[si], test_theme_auto_remove);
+    SOL_RUN(suites[si], test_theme_manual_remove);
     sol_suite_report(&suites[si++]);
 
     const int result = sol_report_all(suites, si);

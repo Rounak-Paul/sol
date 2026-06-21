@@ -135,6 +135,8 @@ All shaders: dark-themed, subtle, suitable as editor backgrounds.
 
 ## Minimal Glass Theme
 
+- The glass stylesheet is registered as `com.sol.theme.glass` in the runtime theme registry; alternate built-ins and plugin themes extend or replace it through CSS rather than changing Causality presentation defaults
+
 - Navigation uses the registry's strongest localized blur with a thicker cool-black material; editor and welcome content use dark neutral scrims, and the wider Gaussian sampling spread increases frost diffusion without adding another full blur iteration
 - Explorer section and project-root rows remain borderless and transparent so hierarchy comes from spacing and typography instead of stacked boxes
 - The welcome composition is centered inside a bounded 1120px content column, preserving deliberate negative space on wide windows and preventing separators from spanning the entire editor surface

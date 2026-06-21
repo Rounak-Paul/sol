@@ -50,6 +50,7 @@
 #define SOL_PLUGIN_CTX_MAX_STATUS_SEGS     8u
 #define SOL_PLUGIN_CTX_MAX_SIDE_PANELS     4u
 #define SOL_PLUGIN_CTX_MAX_LANGUAGES       8u
+#define SOL_PLUGIN_CTX_MAX_THEMES          8u
 /* Keep in sync with SOL_UI_MAX_ACTION_LEN in sol_ui_internal.h */
 #define SOL_PLUGIN_CMD_ACTION_MAX_LEN     63u
 
@@ -95,6 +96,10 @@ struct SolPluginCtx {
      * invalidated before the plugin library is unloaded (dlclose). */
     const void *language_ptrs[SOL_PLUGIN_CTX_MAX_LANGUAGES];
     size_t      language_count;
+
+    /* Tracked CSS theme ids — auto-unregistered before library unload. */
+    char theme_ids[SOL_PLUGIN_CTX_MAX_THEMES][SOL_THEME_ID_MAX + 1u];
+    size_t theme_count;
 };
 
 /* ================================================================== */
@@ -243,6 +248,8 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
             sol_ui_system_remove_status_segment(ui, ctx->status_tokens[i]);
         for (size_t i = 0u; i < ctx->side_panel_token_count; ++i)
             sol_ui_system_unregister_side_panel(ui, ctx->side_panel_tokens[i]);
+        for (size_t i = 0u; i < ctx->theme_count; ++i)
+            sol_ui_system_unregister_theme(ui, ctx->theme_ids[i]);
     }
 
     /* Unregister services */
@@ -1282,6 +1289,35 @@ void sol_plugin_unbind_key(SolPluginCtx *ctx, SolInputActionToken token)
 /* ================================================================== */
 /* SolPluginCtx — status bar segments                                  */
 /* ================================================================== */
+
+bool sol_plugin_register_theme(SolPluginCtx *ctx, const SolThemeDesc *desc)
+{
+    if (!ctx || !desc || !desc->id ||
+        ctx->theme_count >= SOL_PLUGIN_CTX_MAX_THEMES) {
+        return false;
+    }
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (!ui || !sol_ui_system_register_theme(ui, desc)) return false;
+    snprintf(ctx->theme_ids[ctx->theme_count++],
+             sizeof(ctx->theme_ids[0]), "%s", desc->id);
+    return true;
+}
+
+void sol_plugin_unregister_theme(SolPluginCtx *ctx, const char *id)
+{
+    if (!ctx || !id) return;
+    for (size_t i = 0u; i < ctx->theme_count; ++i) {
+        if (strcmp(ctx->theme_ids[i], id) != 0) continue;
+        SolUISystem *ui = sol_plugin_ui(ctx);
+        if (ui) sol_ui_system_unregister_theme(ui, id);
+        if (i + 1u < ctx->theme_count) {
+            memcpy(ctx->theme_ids[i], ctx->theme_ids[ctx->theme_count - 1u],
+                   sizeof(ctx->theme_ids[i]));
+        }
+        ctx->theme_count--;
+        return;
+    }
+}
 
 /*
  * Add a status bar segment and track its token for automatic cleanup on unload.

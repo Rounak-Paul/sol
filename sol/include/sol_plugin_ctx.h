@@ -34,6 +34,7 @@
 #include "sol_event.h"
 #include "sol_input.h"
 #include "sol_job.h"
+#include "sol_theme.h"
 
 #ifndef SOL_API
 #if defined(_WIN32) && defined(sol_EXPORTS)
@@ -77,6 +78,13 @@ typedef uint32_t SolPluginSidePanelToken;
 #define SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID 0u
 typedef uint32_t SolPluginMenuItemToken;
 #define SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID 0u
+
+/* Register a complete CSS theme; automatically removed on plugin unload. */
+SOL_API bool sol_plugin_register_theme(SolPluginCtx *ctx,
+                                       const SolThemeDesc *desc);
+
+/* Remove a theme registered by this plugin before unload. */
+SOL_API void sol_plugin_unregister_theme(SolPluginCtx *ctx, const char *id);
 
 /* Render callback for a plugin-owned workspace side panel. */
 typedef void (*SolPluginSidePanelRenderFn)(void *user_data);

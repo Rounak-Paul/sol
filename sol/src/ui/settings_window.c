@@ -60,7 +60,13 @@ typedef struct {
     char               effect_id[64];  /* empty string = "None" */
 } SwEffectCtx;
 
+typedef struct {
+    SolSettingsWindow *win;
+    char theme_id[SOL_SETTINGS_THEME_ID_MAX + 1u];
+} SwThemeCtx;
+
 #define SW_MAX_EFFECT_BTNS 33  /* 1 "None" + up to SOL_BG_EFFECT_MAX */
+#define SW_MAX_THEME_BTNS  SOL_THEME_MAX
 
 struct SolSettingsWindow {
     Ca_Window           *window;
@@ -68,6 +74,8 @@ struct SolSettingsWindow {
     SolSettings         *settings;
     SolBgEffectRegistry *bg_effects;
     Ca_Signal           *bg_effect_revision;
+    SolUISystem         *ui;
+    Ca_Signal           *theme_revision;
 
     Ca_Signal    *sig_rev;
     Ca_Div       *content_host;
@@ -79,6 +87,7 @@ struct SolSettingsWindow {
     char          opacity_input_text[16];
 
     SwEffectCtx   effect_ctxs[SW_MAX_EFFECT_BTNS];
+    SwThemeCtx    theme_ctxs[SW_MAX_THEME_BTNS];
 
     SolSettingsWindow *next;
 };
@@ -124,6 +133,17 @@ static void sw_on_tab_click(Ca_Button *btn, void *user_data)
     SolSettingsWindow *w   = ctx->win;
     if (w->active_tab == ctx->tab_index) return;
     w->active_tab = ctx->tab_index;
+    sol_ui_bump_u32(w->sig_rev);
+}
+
+/* Activate the selected CSS theme; persistence is handled by the theme change callback. */
+static void sw_on_theme_click(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SwThemeCtx *ctx = (SwThemeCtx *)user_data;
+    if (!ctx || !ctx->win || !ctx->win->ui || ctx->theme_id[0] == '\0') return;
+    SolSettingsWindow *w = ctx->win;
+    if (!sol_ui_system_set_active_theme(w->ui, ctx->theme_id)) return;
     sol_ui_bump_u32(w->sig_rev);
 }
 
@@ -213,11 +233,40 @@ static void sw_on_opacity_input_change(Ca_TextInput *inp, void *user_data)
  */
 static void sw_render_theme_tab(SolSettingsWindow *w)
 {
+    if (w->theme_revision)
+        (void)ca_signal_get_u32(w->theme_revision);
     if (w->bg_effect_revision)
         (void)ca_signal_get_u32(w->bg_effect_revision);
 
     ca_text(&(Ca_TextDesc){ .text = "THEME", .style = "sw-section-title" });
     ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
+
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
+    ca_text(&(Ca_TextDesc){ .text = "Interface", .style = "sw-setting-label-block" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-effect-row" });
+    const char *active_theme = sol_ui_system_active_theme(w->ui);
+    const size_t theme_count = sol_ui_system_theme_count(w->ui);
+    for (size_t i = 0u; i < theme_count && i < SW_MAX_THEME_BTNS; ++i) {
+        const char *id = NULL;
+        const char *name = NULL;
+        if (!sol_ui_system_theme_info(w->ui, i, &id, &name) || !id || !name) continue;
+        w->theme_ctxs[i].win = w;
+        snprintf(w->theme_ctxs[i].theme_id, sizeof(w->theme_ctxs[i].theme_id), "%s", id);
+        const bool active = active_theme && strcmp(active_theme, id) == 0;
+        ca_btn_begin(&(Ca_BtnDesc){
+            .direction = CA_HORIZONTAL,
+            .style = active ? "sw-effect-btn sw-effect-btn-active" : "sw-effect-btn",
+            .on_click = sw_on_theme_click,
+            .click_data = &w->theme_ctxs[i],
+        });
+        ca_text(&(Ca_TextDesc){
+            .text = name,
+            .style = active ? "sw-effect-label sw-effect-label-active" : "sw-effect-label",
+        });
+        ca_btn_end();
+    }
+    ca_div_end();
+    ca_div_end();
 
     /* Scale row */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
@@ -385,7 +434,9 @@ static void sw_destroy(SolSettingsWindow *w)
  */
 void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
                                   SolBgEffectRegistry *bg_effects,
-                                  Ca_Signal *bg_effect_revision)
+                                  Ca_Signal *bg_effect_revision,
+                                  SolUISystem *ui,
+                                  Ca_Signal *theme_revision)
 {
     if (!instance || !settings) return;
 
@@ -400,6 +451,8 @@ void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
     w->settings   = settings;
     w->bg_effects = bg_effects;
     w->bg_effect_revision = bg_effect_revision;
+    w->ui = ui;
+    w->theme_revision = theme_revision;
     w->active_tab = SW_TAB_THEME;
 
     sw_update_scale_label(w);

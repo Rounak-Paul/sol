@@ -16,11 +16,11 @@
 #define SOL_UI_WINDOW_TITLE  "Sol"
 #define SOL_UI_WINDOW_WIDTH  1080
 #define SOL_UI_WINDOW_HEIGHT 720
+#define SOL_UI_DEFAULT_THEME_ID   "com.sol.theme.glass"
+#define SOL_UI_DEFAULT_THEME_NAME "Glass"
 
 /* Split bar presentation defaults. */
 #define SOL_UI_SPLIT_BAR_SIZE        3.0f
-#define SOL_UI_SPLIT_BAR_COLOR       0u
-#define SOL_UI_SPLIT_BAR_HOVER_COLOR ca_color(0.35f, 0.48f, 0.64f, 0.62f)
 
 /* ------------------------------------------------------------------
  * Minimal glass theme for Sol.
@@ -29,13 +29,14 @@
  * Navigation and chrome use cool translucent surfaces over localized blur,
  * tonal separation, compact spacing, and restrained blue accents.
  * ------------------------------------------------------------------ */
-static const char *SOL_UI_MAIN_WINDOW_CSS =
+static const char *SOL_UI_DEFAULT_THEME_CSS =
     "* {"
     "  scrollbar-width: 8px; scrollbar-radius: 0px;"
     "  scrollbar-track-color: rgba(4, 7, 11, 0.30);"
     "  scrollbar-thumb-color: rgba(126, 145, 168, 0.38);"
     "  scrollbar-thumb-active-color: rgba(154, 180, 210, 0.62);"
     "}"
+    "splitter { background: transparent; color: rgba(89, 122, 163, 0.62); }"
     /* ===== Causality system chrome ===== */
     ".ca-titlebar {"
     "  background: rgba(4, 7, 11, 0.91); "
@@ -73,6 +74,11 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "   corner-radius: 0px;"
     "}"
     ".ca-popup-btn:hover, .ca-popup-btn-primary:hover { background: rgba(91, 151, 218, 0.25); }"
+    ".ca-select-popup, .ca-tooltip, .ca-context-menu, .ca-menubar-popup {"
+    "  background: rgba(7, 11, 17, 0.97); color: #d7e0ea; corner-radius: 0px;"
+    "}"
+    ".ca-overlay-hover { background: rgba(91, 151, 218, 0.18); corner-radius: 0px; }"
+    ".ca-overlay-selected { background: rgba(75, 137, 205, 0.28); color: #f2f5f8; }"
 
     /* ===== Root + workspace shell ===== */
     ".app-root {"
@@ -472,8 +478,8 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  height: 20px;"
     "  background: #182e50;"
     "}"
-    /* Caret — driven by Ca_DivDesc fields, CSS is a no-op anchor */
-    ".buffer-caret {}"
+    ".buffer-caret { background: #ffffff; }"
+    ".buffer-caret-hidden { opacity: 0; }"
     /* Transparent button wrapping each visible line */
     ".buffer-line-btn {"
     "  width: 100%;"
@@ -1629,6 +1635,7 @@ static const char *SOL_UI_MAIN_WINDOW_CSS =
     "  flex-grow: 0;"
     "  flex-shrink: 0;"
     "  background: #30303c;"
+    "  color: #62a6d8;"
     "}"
     ".search-status {"
     "  color: #686878;"

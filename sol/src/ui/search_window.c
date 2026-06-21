@@ -614,8 +614,7 @@ static void search_content_builder(Ca_Div *div, void *user_data)
         .min_ratio = 0.24f,
         .max_ratio = 0.62f,
         .bar_size = 1.0f,
-        .bar_color = 0x343442ff,
-        .bar_hover_color = 0x4c82b0ff,
+        .style = "search-split",
     });
     {
         ca_div_begin(&(Ca_DivDesc){
@@ -664,7 +663,6 @@ static void search_content_builder(Ca_Div *div, void *user_data)
         .value = progress_value,
         .width = 180.0f,
         .height = 6.0f,
-        .bar_color = 0x62a6d8ff,
         .style = "search-progress",
         .hidden = !show_progress,
     });

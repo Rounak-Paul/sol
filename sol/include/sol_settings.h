@@ -10,6 +10,7 @@
  *   {
  *     "theme": {
  *       "scale": 1.0,
+ *       "style": "com.sol.theme.glass",
  *       "effect": "com.sol.shaders.aurora",
  *       "opacity": 1.0
  *     }
@@ -36,6 +37,8 @@
 #define SOL_SETTINGS_BG_OPACITY_MAX     1.0f
 #define SOL_SETTINGS_BG_OPACITY_DEFAULT 1.0f
 #define SOL_SETTINGS_BG_EFFECT_ID_MAX   63
+#define SOL_SETTINGS_THEME_ID_MAX       63
+#define SOL_SETTINGS_THEME_ID_DEFAULT   "com.sol.theme.glass"
 
 /* ------------------------------------------------------------------ */
 /* Settings aggregate                                                  */
@@ -52,6 +55,9 @@ typedef struct SolSettings {
      * Range: [SOL_SETTINGS_UI_SCALE_MIN, SOL_SETTINGS_UI_SCALE_MAX].
      * Stored with two decimal places. */
     float ui_scale;
+
+    /* Active complete CSS theme id. */
+    char theme_id[SOL_SETTINGS_THEME_ID_MAX + 1];
 
     /* Active background shader effect id (dotted, e.g. "com.sol.shaders.aurora").
      * Empty string means no effect is active. */
