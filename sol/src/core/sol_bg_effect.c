@@ -19,6 +19,7 @@
 #define SOL_BG_EFFECT_MAX     32
 #define SOL_BG_EFFECT_ID_MAX  63
 #define SOL_BG_EFFECT_NAME_MAX 127
+#define SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD 1.45f
 
 /* ------------------------------------------------------------------ */
 /* Vertex shader — generates a full-screen triangle from gl_VertexIndex */
@@ -79,6 +80,11 @@ typedef struct {
     VkFormat    format;
     bool        initialized;
 } BlurGPU;
+
+typedef struct {
+    Ca_Window *window;
+    BlurGPU    frames[CA_FRAMES_IN_FLIGHT];
+} AuxWindowBlurGPU;
 
 static void blur_destroy(BlurGPU *blur, VkDevice device);
 
@@ -144,6 +150,9 @@ struct SolBgEffectRegistry {
     float         opacity;      /* [0.0, 1.0] */
     int           blur_passes;  /* how many separable blur iterations (0 = off) */
     BlurGPU       blur[CA_FRAMES_IN_FLIGHT];
+    AuxWindowBlurGPU aux_blur[CA_MAX_WINDOWS_TOTAL];
+    SolBgEffectBlurRegion blur_regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
+    size_t        blur_region_count;
     void        (*on_change)(void *user_data);
     void         *on_change_data;
 };
@@ -158,6 +167,23 @@ static double get_monotonic_sec(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
+/* Return the frame-local blur resources reserved for an auxiliary window. */
+static BlurGPU *aux_blur_for_window(SolBgEffectRegistry *reg,
+                                    Ca_Window *window,
+                                    uint32_t frame_slot)
+{
+    if (!reg || !window || frame_slot >= CA_FRAMES_IN_FLIGHT) return NULL;
+    AuxWindowBlurGPU *available = NULL;
+    for (size_t i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
+        AuxWindowBlurGPU *entry = &reg->aux_blur[i];
+        if (entry->window == window) return &entry->frames[frame_slot];
+        if (!entry->window && !available) available = entry;
+    }
+    if (!available) return NULL;
+    available->window = window;
+    return &available->frames[frame_slot];
 }
 
 /* Notify the registry observer after externally visible state changes. */
@@ -551,6 +577,8 @@ static void blur_destroy(BlurGPU *blur, VkDevice device)
  */
 static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
                          VkImage swapchain_img, VkImageView swapchain_view,
+                         const SolBgEffectBlurRegion *regions,
+                         size_t region_count, uint32_t pass_index,
                          bool first_pass)
 {
     VkImageSubresourceRange subres = {
@@ -558,7 +586,10 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
     };
     VkViewport    vp = { 0.0f, 0.0f, (float)blur->width, (float)blur->height, 0.0f, 1.0f };
     VkRect2D      sc = { {0,0}, {blur->width, blur->height} };
-    BlurPushConst pc = { 1.0f / (float)blur->width, 1.0f / (float)blur->height };
+    BlurPushConst pc = {
+        SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->width,
+        SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->height,
+    };
 
     /* Update descriptors: H reads swapchain, V reads scratch */
     VkDescriptorImageInfo h_img = { .sampler = blur->sampler,
@@ -657,7 +688,7 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
     VkRenderingAttachmentInfo v_att = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = swapchain_view, .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
     };
     VkRenderingInfo v_ri = { .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
                              .renderArea = { {0,0}, {blur->width, blur->height} },
@@ -667,9 +698,24 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             blur->pipeline_layout, 0, 1, &blur->desc_set_v, 0, NULL);
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdPushConstants(cmd, blur->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+    for (size_t i = 0; i < region_count; ++i) {
+        const SolBgEffectBlurRegion *region = &regions[i];
+        if (region->passes <= pass_index) continue;
+        uint32_t x = (uint32_t)(region->x * (float)blur->width);
+        uint32_t y = (uint32_t)(region->y * (float)blur->height);
+        uint32_t right = (uint32_t)((region->x + region->width) * (float)blur->width + 0.999f);
+        uint32_t bottom = (uint32_t)((region->y + region->height) * (float)blur->height + 0.999f);
+        if (right > blur->width) right = blur->width;
+        if (bottom > blur->height) bottom = blur->height;
+        if (right <= x || bottom <= y) continue;
+        VkRect2D region_scissor = {
+            .offset = { (int32_t)x, (int32_t)y },
+            .extent = { right - x, bottom - y },
+        };
+        vkCmdSetScissor(cmd, 0, 1, &region_scissor);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
     vkCmdEndRendering(cmd);
     /* Swapchain is COLOR_ATTACHMENT_OPTIMAL — ready for the UI pass. */
 }
@@ -729,7 +775,7 @@ SolBgEffectRegistry *sol_bg_effect_registry_create(Ca_Instance *instance)
     reg->instance   = instance;
     reg->active_idx = -1;
     reg->opacity    = 1.0f;
-    reg->blur_passes = 3;
+    reg->blur_passes = 4;
     reg->start_sec  = get_monotonic_sec();
     return reg;
 }
@@ -749,6 +795,10 @@ void sol_bg_effect_registry_destroy(SolBgEffectRegistry *reg)
             free(reg->entries[i].fragment_glsl);
     for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i)
         blur_destroy(&reg->blur[i], ca_gpu_device(reg->instance));
+    for (size_t w = 0; w < CA_MAX_WINDOWS_TOTAL; ++w)
+        for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i)
+            blur_destroy(&reg->aux_blur[w].frames[i],
+                         ca_gpu_device(reg->instance));
     free(reg);
 }
 
@@ -940,6 +990,49 @@ float sol_bg_effect_opacity(const SolBgEffectRegistry *reg)
     return reg ? reg->opacity : 1.0f;
 }
 
+/* Return the configured maximum number of localized blur iterations. */
+uint32_t sol_bg_effect_blur_passes(const SolBgEffectRegistry *reg)
+{
+    return reg && reg->blur_passes > 0 ? (uint32_t)reg->blur_passes : 0u;
+}
+
+/* Replace the normalized regions receiving backdrop blur. */
+void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
+                                    const SolBgEffectBlurRegion *regions,
+                                    size_t count)
+{
+    if (!reg) return;
+    if (!regions) count = 0;
+    if (count > SOL_BG_EFFECT_MAX_BLUR_REGIONS)
+        count = SOL_BG_EFFECT_MAX_BLUR_REGIONS;
+
+    reg->blur_region_count = 0;
+    for (size_t i = 0; i < count; ++i) {
+        float left = regions[i].x;
+        float top = regions[i].y;
+        float right = regions[i].x + regions[i].width;
+        float bottom = regions[i].y + regions[i].height;
+        if (!isfinite(left) || !isfinite(top) ||
+            !isfinite(right) || !isfinite(bottom))
+            continue;
+        if (left < 0.0f) left = 0.0f;
+        if (top < 0.0f) top = 0.0f;
+        if (right > 1.0f) right = 1.0f;
+        if (bottom > 1.0f) bottom = 1.0f;
+        if (right <= left || bottom <= top) continue;
+        reg->blur_regions[reg->blur_region_count++] = (SolBgEffectBlurRegion){
+            .x = left,
+            .y = top,
+            .width = right - left,
+            .height = bottom - top,
+            .passes = regions[i].passes > (uint32_t)reg->blur_passes
+                          ? (uint32_t)reg->blur_passes
+                          : regions[i].passes,
+        };
+    }
+    fire_change(reg);
+}
+
 /* ------------------------------------------------------------------ */
 /* Public API — change callback                                        */
 /* ------------------------------------------------------------------ */
@@ -968,6 +1061,7 @@ void sol_bg_effect_set_change_callback(SolBgEffectRegistry *reg,
  * Registered via ca_window_set_bg_render; called by Causality each frame.
  *
  * cmd              Command buffer already recording (outside any render pass).
+ * window           Window owning the target swapchain.
  * swapchain_image  VkImage for the swapchain image (needed for blur barriers).
  * swapchain_view   VkImageView for the swapchain image (COLOR_ATTACHMENT_OPTIMAL).
  * format           Swapchain image format.
@@ -976,15 +1070,17 @@ void sol_bg_effect_set_change_callback(SolBgEffectRegistry *reg,
  * height           Swapchain image height in pixels.
  * user_data        Pointer to SolBgEffectRegistry.
  */
-bool sol_bg_effect_on_render(VkCommandBuffer cmd,
-                             VkImage         swapchain_image,
-                             VkImageView     swapchain_view,
-                             VkFormat        format,
+static bool bg_effect_render(VkCommandBuffer cmd,
+                             Ca_Window *window,
+                             VkImage swapchain_image,
+                             VkImageView swapchain_view,
+                             VkFormat format,
                              VkImageUsageFlags image_usage,
-                             uint32_t        frame_slot,
-                             uint32_t        width,
-                             uint32_t        height,
-                             void           *user_data)
+                             uint32_t frame_slot,
+                             uint32_t width,
+                             uint32_t height,
+                             void *user_data,
+                             bool apply_blur)
 {
     SolBgEffectRegistry *reg = (SolBgEffectRegistry *)user_data;
     if (!reg || reg->active_idx < 0 || width == 0 || height == 0) return false;
@@ -1004,10 +1100,28 @@ bool sol_bg_effect_on_render(VkCommandBuffer cmd,
         }
 
         /* Lazy-build or rebuild blur GPU resources when dimensions change. */
-        BlurGPU *blur = frame_slot < CA_FRAMES_IN_FLIGHT
-                            ? &reg->blur[frame_slot]
-                            : NULL;
-        if (blur && reg->blur_passes > 0 &&
+        SolBgEffectBlurRegion aux_region = {0};
+        const SolBgEffectBlurRegion *blur_regions = reg->blur_regions;
+        size_t blur_region_count = reg->blur_region_count;
+        BlurGPU *blur = NULL;
+        if (apply_blur && frame_slot < CA_FRAMES_IN_FLIGHT) {
+            blur = &reg->blur[frame_slot];
+        } else if (!apply_blur && window) {
+            const float pixel_ratio = ca_window_get_pixel_ratio(window);
+            float title_height = ca_window_get_title_bar_height(window) * pixel_ratio;
+            if (title_height > (float)height) title_height = (float)height;
+            aux_region = (SolBgEffectBlurRegion){
+                .x = 0.0f,
+                .y = 0.0f,
+                .width = 1.0f,
+                .height = title_height / (float)height,
+                .passes = (uint32_t)reg->blur_passes,
+            };
+            blur_regions = &aux_region;
+            blur_region_count = 1;
+            blur = aux_blur_for_window(reg, window, frame_slot);
+        }
+        if (blur && reg->blur_passes > 0 && blur_region_count > 0 &&
             (image_usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
             bool needs_blur_init = !blur->initialized;
             bool dims_changed    = blur->initialized &&
@@ -1054,13 +1168,16 @@ bool sol_bg_effect_on_render(VkCommandBuffer cmd,
 
         /* Apply separable Gaussian blur for frosted-glass. */
         if (blur && reg->blur_passes > 0 && blur->initialized &&
+            blur_region_count > 0 &&
             (image_usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
             VkDevice dev = ca_gpu_device(reg->instance);
             for (int i = 0; i < reg->blur_passes; ++i)
-                blur_execute(blur, dev, cmd,
-                             swapchain_image, swapchain_view, i == 0);
+                blur_execute(blur, dev, cmd, swapchain_image, swapchain_view,
+                             blur_regions, blur_region_count,
+                             (uint32_t)i, i == 0);
         }
     } else {
+        if (!apply_blur) return false;
         if (!e->raw_initialized || !e->render) return false;
         SolBgEffectCtx ctx = {
             .instance = reg->instance,
@@ -1081,4 +1198,38 @@ bool sol_bg_effect_on_render(VkCommandBuffer cmd,
         e->render(&ctx, e->user_data);
     }
     return true;
+}
+
+/* Render the active effect with the primary window's localized blur regions. */
+bool sol_bg_effect_on_render(VkCommandBuffer cmd,
+                             Ca_Window *window,
+                             VkImage swapchain_image,
+                             VkImageView swapchain_view,
+                             VkFormat format,
+                             VkImageUsageFlags image_usage,
+                             uint32_t frame_slot,
+                             uint32_t width,
+                             uint32_t height,
+                             void *user_data)
+{
+    return bg_effect_render(cmd, window, swapchain_image, swapchain_view, format,
+                            image_usage, frame_slot, width, height, user_data,
+                            true);
+}
+
+/* Render the same shader state into an auxiliary window without rebuilding blur resources. */
+bool sol_bg_effect_on_render_aux(VkCommandBuffer cmd,
+                                 Ca_Window *window,
+                                 VkImage swapchain_image,
+                                 VkImageView swapchain_view,
+                                 VkFormat format,
+                                 VkImageUsageFlags image_usage,
+                                 uint32_t frame_slot,
+                                 uint32_t width,
+                                 uint32_t height,
+                                 void *user_data)
+{
+    return bg_effect_render(cmd, window, swapchain_image, swapchain_view, format,
+                            image_usage, frame_slot, width, height, user_data,
+                            false);
 }

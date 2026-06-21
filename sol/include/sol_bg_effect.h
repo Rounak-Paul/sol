@@ -46,7 +46,19 @@ extern "C" {
 #endif
 
 typedef struct Ca_Instance  Ca_Instance;
+typedef struct Ca_Window    Ca_Window;
 typedef struct SolBgEffectRegistry SolBgEffectRegistry;
+
+#define SOL_BG_EFFECT_MAX_BLUR_REGIONS 8
+
+/* Normalized swapchain rectangle receiving the frosted backdrop blur. */
+typedef struct SolBgEffectBlurRegion {
+    float x;
+    float y;
+    float width;
+    float height;
+    uint32_t passes;
+} SolBgEffectBlurRegion;
 
 /* ================================================================== */
 /* Raw-mode callback context                                           */
@@ -242,6 +254,23 @@ void sol_bg_effect_set_opacity(SolBgEffectRegistry *reg, float opacity);
  */
 float sol_bg_effect_opacity(const SolBgEffectRegistry *reg);
 
+/* Return the registry's configured maximum localized blur strength. */
+uint32_t sol_bg_effect_blur_passes(const SolBgEffectRegistry *reg);
+
+/*
+ * Replace the normalized regions receiving backdrop blur.
+ * Coordinates are clamped to the swapchain's [0, 1] range. The passes field
+ * controls local blur strength and is clamped to the registry maximum.
+ * Passing no regions preserves the shader unblurred across the complete window.
+ *
+ * reg      The registry.
+ * regions  Region array, or NULL when count is zero.
+ * count    Number of regions, capped at SOL_BG_EFFECT_MAX_BLUR_REGIONS.
+ */
+void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
+                                    const SolBgEffectBlurRegion *regions,
+                                    size_t count);
+
 /* ================================================================== */
 /* Change notification                                                 */
 /* ================================================================== */
@@ -267,6 +296,7 @@ void sol_bg_effect_set_change_callback(SolBgEffectRegistry *reg,
  * Register with ca_window_set_bg_render(window, sol_bg_effect_on_render, registry).
  *
  * cmd              Command buffer recording (outside any render pass).
+ * window           Window owning the target swapchain.
  * swapchain_image  VkImage for the swapchain image (needed for blur barriers).
  * swapchain_view   VkImageView for the swapchain image (COLOR_ATTACHMENT_OPTIMAL).
  * format           Swapchain image format.
@@ -277,6 +307,7 @@ void sol_bg_effect_set_change_callback(SolBgEffectRegistry *reg,
  * user_data        Pointer to SolBgEffectRegistry.
  */
 bool sol_bg_effect_on_render(VkCommandBuffer cmd,
+                             Ca_Window       *window,
                              VkImage         swapchain_image,
                              VkImageView     swapchain_view,
                              VkFormat        format,
@@ -285,6 +316,18 @@ bool sol_bg_effect_on_render(VkCommandBuffer cmd,
                              uint32_t        width,
                              uint32_t        height,
                              void           *user_data);
+
+/* Render the active shader with title-bar-only blur into an auxiliary window. */
+bool sol_bg_effect_on_render_aux(VkCommandBuffer cmd,
+                                 Ca_Window *window,
+                                 VkImage swapchain_image,
+                                 VkImageView swapchain_view,
+                                 VkFormat format,
+                                 VkImageUsageFlags image_usage,
+                                 uint32_t frame_slot,
+                                 uint32_t width,
+                                 uint32_t height,
+                                 void *user_data);
 
 #ifdef __cplusplus
 }

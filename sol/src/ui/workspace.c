@@ -75,12 +75,10 @@ typedef struct SolWorkspaceVisitorContext {
     SolUISystem *ui;
 } SolWorkspaceVisitorContext;
 
-/* Causality title bar: 22px at ui_scale=1.0 (title_bar.c: tb.height = 22.0f * sc). */
-#define SOL_UI_TITLE_BAR_HEIGHT_PX  22
 /* Buffer split-tree root geometry.
    The tree lives below the global tab strip and inside the right pane of
    the workspace split. */
-#define SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX 28.0f
+#define SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX 30.0f
 #define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX    1.0f
 
 #define SOL_UI_LABEL_NEW_BUFFER  CA_ICON_NF_COD_NEW_FILE " New Buffer"
@@ -109,7 +107,7 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
         return false;
     }
 
-    const float title_h  = (float)SOL_UI_TITLE_BAR_HEIGHT_PX;
+    const float title_h  = ca_window_get_title_bar_height(ui->primary_window);
     const float status_h = (float)SOL_UI_STATUS_BAR_HEIGHT;
     const float tabs_h   = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX;
 
@@ -144,6 +142,74 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     return true;
 }
 
+/* Synchronize normalized glass regions with the current workspace geometry. */
+static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
+{
+    if (!ui || !ui->bg_effects || ui->window_w <= 0 || ui->window_h <= 0)
+        return;
+
+    const float window_w = (float)ui->window_w;
+    const float window_h = (float)ui->window_h;
+    const float title_h = ca_window_get_title_bar_height(ui->primary_window) / window_h;
+    const float status_h = SOL_UI_STATUS_BAR_HEIGHT / window_h;
+    const float tabs_h = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX / window_h;
+    const uint32_t strong_blur_passes = sol_bg_effect_blur_passes(ui->bg_effects);
+    SolBgEffectBlurRegion regions[5];
+    size_t count = 0;
+
+    regions[count++] = (SolBgEffectBlurRegion){
+        .x = 0.0f, .y = 0.0f, .width = 1.0f, .height = title_h,
+        .passes = strong_blur_passes,
+    };
+    regions[count++] = (SolBgEffectBlurRegion){
+        .x = 0.0f, .y = 1.0f - status_h, .width = 1.0f, .height = status_h,
+        .passes = strong_blur_passes,
+    };
+
+    float buffer_x = 0.0f;
+    if (sol_ui_buffer_area_rect_internal(ui, &buffer_x, NULL, NULL, NULL) &&
+        buffer_x > 0.0f) {
+        const float left_w = buffer_x / window_w;
+        regions[count++] = (SolBgEffectBlurRegion){
+            .x = 0.0f,
+            .y = title_h,
+            .width = left_w,
+            .height = 1.0f - title_h - status_h,
+            .passes = strong_blur_passes,
+        };
+        regions[count++] = (SolBgEffectBlurRegion){
+            .x = left_w,
+            .y = title_h,
+            .width = 1.0f - left_w,
+            .height = tabs_h,
+            .passes = 3,
+        };
+    } else {
+        regions[count++] = (SolBgEffectBlurRegion){
+            .x = 0.0f,
+            .y = title_h,
+            .width = 1.0f,
+            .height = tabs_h,
+            .passes = 3,
+        };
+    }
+
+    float editor_x = 0.0f, editor_y = 0.0f, editor_w = 0.0f, editor_h = 0.0f;
+    if (sol_ui_buffer_area_rect_internal(ui, &editor_x, &editor_y,
+                                         &editor_w, &editor_h) &&
+        editor_w > 0.0f && editor_h > 0.0f) {
+        regions[count++] = (SolBgEffectBlurRegion){
+            .x = editor_x / window_w,
+            .y = editor_y / window_h,
+            .width = editor_w / window_w,
+            .height = editor_h / window_h,
+            .passes = strong_blur_passes,
+        };
+    }
+
+    sol_bg_effect_set_blur_regions(ui->bg_effects, regions, count);
+}
+
 /* ------------------------------------------------------------------ */
 /* Reactive helpers                                                    */
 /* ------------------------------------------------------------------ */
@@ -174,6 +240,7 @@ void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible)
     if (!ui) return;
     if (ui->file_tree_visible == visible) return;
     ui->file_tree_visible = visible;
+    sol_ui_sync_bg_blur_regions(ui);
     if (ui->sig_file_tree_visible) {
         ca_signal_set_bool(ui->sig_file_tree_visible, visible);
     }
@@ -583,6 +650,10 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
             .direction = CA_VERTICAL,
             .style     = "welcome-pane",
         });
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style     = "welcome-content",
+        });
 
         ca_text(&(Ca_TextDesc){ .text = "Sol Editor", .style = "welcome-title" });
         ca_text(&(Ca_TextDesc){ .text = "A fast, minimal text editor.", .style = "welcome-subtitle" });
@@ -681,6 +752,7 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
 
         ca_div_end(); /* welcome-cols */
 
+        ca_div_end(); /* welcome-content */
         ca_div_end(); /* welcome-pane */
         sol_ui_attach_workspace_context_menu(ui);
         return;
@@ -722,7 +794,10 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
 static void sol_ui_on_panel_resize(float ratio, void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
-    if (ui) ui->tree_panel_ratio = ratio;
+    if (ui) {
+        ui->tree_panel_ratio = ratio;
+        sol_ui_sync_bg_blur_regions(ui);
+    }
 }
 
 static void sol_ui_on_terminal_resize(float ratio, void *user_data)
@@ -785,8 +860,8 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
         .min_ratio       = 0.20f,
         .max_ratio       = 0.80f,
         .bar_size        = 1.0f,
-        .bar_color       = 0x181e2eff,
-        .bar_hover_color = 0x2d3a5aff,
+        .bar_color       = SOL_UI_SPLIT_BAR_COLOR,
+        .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
         .on_resize       = sol_ui_on_terminal_resize,
         .user_data       = ui,
     });
@@ -869,8 +944,8 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             .min_ratio      = 0.10f,
             .max_ratio      = 0.50f,
             .bar_size       = 1.0f,
-            .bar_color       = 0x181e2eff,
-            .bar_hover_color = 0x2d3a5aff,
+            .bar_color       = SOL_UI_SPLIT_BAR_COLOR,
+            .bar_hover_color = SOL_UI_SPLIT_BAR_HOVER_COLOR,
             .on_resize      = sol_ui_on_panel_resize,
             .user_data      = ui,
         });
@@ -1642,6 +1717,7 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
     }
     ui->window_w = width;
     ui->window_h = height;
+    sol_ui_sync_bg_blur_regions(ui);
     sol_ui_bump_u32(ui->sig_window_rev);
 }
 
@@ -2329,11 +2405,14 @@ void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg)
     ui->bg_effects = reg;
     if (reg) {
         sol_bg_effect_set_change_callback(reg, sol_ui_on_bg_effect_change, ui);
+        ca_instance_set_bg_render(ui->instance, sol_bg_effect_on_render_aux, reg);
         ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
         bool active = sol_bg_effect_active_id(reg) != NULL;
         ca_instance_set_continuous(ui->instance, active);
+        sol_ui_sync_bg_blur_regions(ui);
     } else {
         ca_window_set_bg_render(ui->primary_window, NULL, NULL);
+        ca_instance_set_bg_render(ui->instance, NULL, NULL);
         ca_instance_set_continuous(ui->instance, false);
     }
 }
@@ -2438,6 +2517,7 @@ void sol_ui_system_unregister_side_panel(SolUISystem *ui,
     if (!panel) return;
     if (ui->active_side_panel == token) {
         ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+        sol_ui_sync_bg_blur_regions(ui);
     }
     memset(panel, 0, sizeof(*panel));
     sol_ui_bump_u32(ui->sig_side_panel_rev);
@@ -2450,6 +2530,7 @@ bool sol_ui_system_show_side_panel(SolUISystem *ui,
     if (!sol_ui_find_side_panel(ui, token)) return false;
     if (ui->active_side_panel == token) return true;
     ui->active_side_panel = token;
+    sol_ui_sync_bg_blur_regions(ui);
     sol_ui_bump_u32(ui->sig_side_panel_rev);
     return true;
 }
@@ -2460,6 +2541,7 @@ void sol_ui_system_hide_side_panel(SolUISystem *ui,
 {
     if (!ui || ui->active_side_panel != token) return;
     ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+    sol_ui_sync_bg_blur_regions(ui);
     sol_ui_bump_u32(ui->sig_side_panel_rev);
 }
 
@@ -2528,13 +2610,13 @@ bool sol_ui_system_buffer_area_rect(const SolUISystem *ui,
 /*
  * Get the height of the title bar in pixels.
  *
- * ui  The UI system (unused, fixed value).
- * Returns the title bar height in pixels (30px).
+ * ui  The UI system whose resolved title-bar geometry is queried.
+ * Returns the current logical title-bar height in pixels.
  */
 int sol_ui_system_title_bar_height(const SolUISystem *ui)
 {
-    (void)ui;
-    return SOL_UI_TITLE_BAR_HEIGHT_PX;
+    if (!ui || !ui->primary_window) return 0;
+    return (int)(ca_window_get_title_bar_height(ui->primary_window) + 0.5f);
 }
 
 /*

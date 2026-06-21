@@ -90,7 +90,8 @@ void sol_bg_effect_on_render(VkCommandBuffer cmd,
 - Full-screen triangle trick: vertex shader generates positions from `gl_VertexIndex`
 - Push constants: `{float time, width, height, opacity}`
 - No VkFramebuffer — renders directly to the `swapchain_view` argument
-- Three separable Gaussian blur iterations run when the surface supports sampled swapchain images; unsupported surfaces degrade safely to the unblurred shader
+- Normalized glass regions carry independent blur-pass counts; the current Sol theme uses four passes for title/editor/welcome regions and three for navigation, tabs, and status chrome so primary content remains readable without flattening the whole background
+- Sol synchronizes blur regions for the editor, title bar, tab strip, status bar, and active left panel across resize, panel visibility, and splitter changes
 - Blur scratch images and descriptor sets are isolated per in-flight frame slot, preventing cross-frame GPU read/write races
 - Animation timing stores the monotonic epoch as double precision and only converts the elapsed delta to float, preserving smooth sub-second motion during long sessions
 - The render callback reports whether it produced content so Causality clears normally when no effect is active or shader setup fails
@@ -131,6 +132,29 @@ All shaders: dark-themed, subtle, suitable as editor backgrounds.
 - `sig_bg_effect_rev` signal is bumped on change so settings UI updates reactively
 - Registry registration and removal publish change notifications, so runtime-loaded effects appear in an already-open Settings window
 - Plugins unregister their effects on unload, allowing clean reloads without stale registry entries
+
+## Minimal Glass Theme
+
+- Navigation uses the registry's strongest localized blur with a thicker cool-black material; editor and welcome content use dark neutral scrims, and the wider Gaussian sampling spread increases frost diffusion without adding another full blur iteration
+- Explorer section and project-root rows remain borderless and transparent so hierarchy comes from spacing and typography instead of stacked boxes
+- The welcome composition is centered inside a bounded 1120px content column, preserving deliberate negative space on wide windows and preventing separators from spanning the entire editor surface
+- The tab strip uses a dark thick material; the active buffer uses a brighter cool fill, high-contrast label, and one bottom indicator while inactive tabs remain visually subordinate
+- The bottom status bar uses the registry's strongest localized blur beneath a 97% almost-black tint
+- Status layout reserves a shrinkable left message region and an intrinsic non-shrinking right plugin region, preventing right-edge segments from being placed beyond the bar
+- The command suggestion popup uses a compact near-black floating material, edge breathing room, restrained shadow, borderless key chips, and non-interactive row styling
+- Sol's stylesheet contains no visual borders or outlines; hierarchy is expressed through material tint, blur, spacing, typography, hover fills, and active-surface contrast
+- Resize handles remain fully interactive but transparent at rest, revealing a restrained translucent accent only while hovered or dragged
+- Overflow scrollbars are CSS-resolved Causality node properties (width, radius, track, thumb, and active-thumb colors); Sol applies a universal slim sharp scrollbar theme, while Causality retains neutral defaults when CSS omits those properties
+- Scrollbar CSS state tracks declaration presence separately from packed values, so transparent colors, zero radius, and zero width are not confused with an omitted property
+- Retro raised/inset bevels are superseded by sharp edges, borderless controls, tonal surface changes, slimmer scrollbars, and restrained selection fills
+- Causality exposes semantic classes for its system title-bar nodes and retains neutral fallback styling only when no stylesheet is installed
+- Sol's stylesheet owns the title-bar surface, menu items, title, controls, hover states, and colors; no renderer-wide rule forces Sol's presentation onto other Causality applications
+- Causality's renderer-owned select, tooltip, context-menu, and menubar overlays omit fallback borders and separator strokes whenever an author stylesheet is installed; unstyled applications retain the neutral fallback chrome
+- Causality supports an instance-level background fallback inherited by every window unless that window installs an override; background callbacks receive the target window so window-local GPU resources and display scaling remain correct
+- Auxiliary windows reuse the active effect registry, compiled pipeline, animation epoch, and parameters. They issue one size-adapted fullscreen draw and use isolated per-window/per-frame blur resources only for the title-bar strip; raw callback effects remain primary-window-only because their resize state is not window-local
+- Sol does not duplicate Causality's title-bar height: workspace geometry and auxiliary blur query the resolved system-bar height, account for the target window's framebuffer ratio, and inherit the registry's configured blur-pass count
+- File picker, search, plugin manager, settings, and Causality popup roots use dark translucent CSS surfaces so the inherited effect remains visible without reducing text contrast
+- The Sol title bar is 26px at 1x with a translucent surface, compact menu spacing, and sharp borderless window controls
 
 ---
 
