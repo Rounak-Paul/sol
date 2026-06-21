@@ -4,33 +4,33 @@
 [submodule "vendors/tree-sitter"]
 	path = vendors/tree-sitter
 	url = https://github.com/Rounak-Paul/tree-sitter.git
-[submodule "Plugins/sol-plugin-c/vendors/tree-sitter-c"]
-	path = Plugins/sol-plugin-c/vendors/tree-sitter-c
+[submodule "plugins/sol-plugin-c/vendors/tree-sitter-c"]
+	path = plugins/sol-plugin-c/vendors/tree-sitter-c
 	url = https://github.com/Rounak-Paul/tree-sitter-c.git
-[submodule "Plugins/sol-plugin-cpp/vendors/tree-sitter-cpp"]
-	path = Plugins/sol-plugin-cpp/vendors/tree-sitter-cpp
+[submodule "plugins/sol-plugin-cpp/vendors/tree-sitter-cpp"]
+	path = plugins/sol-plugin-cpp/vendors/tree-sitter-cpp
 	url = https://github.com/Rounak-Paul/tree-sitter-cpp.git
-[submodule "Plugins/sol-plugin-python/vendors/tree-sitter-python"]
-	path = Plugins/sol-plugin-python/vendors/tree-sitter-python
+[submodule "plugins/sol-plugin-python/vendors/tree-sitter-python"]
+	path = plugins/sol-plugin-python/vendors/tree-sitter-python
 	url = https://github.com/Rounak-Paul/tree-sitter-python.git
-[submodule "Plugins/sol-plugin-javascript/vendors/tree-sitter-javascript"]
-	path = Plugins/sol-plugin-javascript/vendors/tree-sitter-javascript
+[submodule "plugins/sol-plugin-javascript/vendors/tree-sitter-javascript"]
+	path = plugins/sol-plugin-javascript/vendors/tree-sitter-javascript
 	url = https://github.com/Rounak-Paul/tree-sitter-javascript.git
-[submodule "Plugins/sol-plugin-typescript/vendors/tree-sitter-typescript"]
-	path = Plugins/sol-plugin-typescript/vendors/tree-sitter-typescript
+[submodule "plugins/sol-plugin-typescript/vendors/tree-sitter-typescript"]
+	path = plugins/sol-plugin-typescript/vendors/tree-sitter-typescript
 	url = https://github.com/Rounak-Paul/tree-sitter-typescript.git
-[submodule "Plugins/sol-plugin-json/vendors/tree-sitter-json"]
-	path = Plugins/sol-plugin-json/vendors/tree-sitter-json
+[submodule "plugins/sol-plugin-json/vendors/tree-sitter-json"]
+	path = plugins/sol-plugin-json/vendors/tree-sitter-json
 	url = https://github.com/Rounak-Paul/tree-sitter-json.git
-[submodule "Plugins/sol-plugin-html/vendors/tree-sitter-html"]
-	path = Plugins/sol-plugin-html/vendors/tree-sitter-html
+[submodule "plugins/sol-plugin-html/vendors/tree-sitter-html"]
+	path = plugins/sol-plugin-html/vendors/tree-sitter-html
 	url = https://github.com/Rounak-Paul/tree-sitter-html.git
-[submodule "Plugins/sol-plugin-markdown/vendors/tree-sitter-markdown"]
-	path = Plugins/sol-plugin-markdown/vendors/tree-sitter-markdown
+[submodule "plugins/sol-plugin-markdown/vendors/tree-sitter-markdown"]
+	path = plugins/sol-plugin-markdown/vendors/tree-sitter-markdown
 	url = https://github.com/Rounak-Paul/tree-sitter-markdown.git
-[submodule "Plugins/sol-plugin-css/vendors/tree-sitter-css"]
-	path = Plugins/sol-plugin-css/vendors/tree-sitter-css
+[submodule "plugins/sol-plugin-css/vendors/tree-sitter-css"]
+	path = plugins/sol-plugin-css/vendors/tree-sitter-css
 	url = https://github.com/Rounak-Paul/tree-sitter-css.git
-[submodule "Plugins/sol-plugin-cmake/vendors/tree-sitter-cmake"]
-	path = Plugins/sol-plugin-cmake/vendors/tree-sitter-cmake
+[submodule "plugins/sol-plugin-cmake/vendors/tree-sitter-cmake"]
+	path = plugins/sol-plugin-cmake/vendors/tree-sitter-cmake
 	url = https://github.com/Rounak-Paul/tree-sitter-cmake.git

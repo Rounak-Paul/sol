@@ -6,6 +6,7 @@
 #include "sol_theme.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 typedef struct SolThemeEntry {
