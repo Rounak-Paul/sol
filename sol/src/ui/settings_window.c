@@ -8,17 +8,21 @@
  *   ┌── sw-left (180px) ──┐  ┌── sw-right (flex-grow) ──────────────────┐
  *   │  [▸ Theme]          │  │  THEME                                   │
  *   │                     │  │  ──────────────────────────────────────  │
- *   │                     │  │  Scale   ──[▓▓▓▓▓▓░░░░]──  1.00×       │
+ *   │                     │  │  Theme    [Dropdown ▾]                   │
+ *   │                     │  │  Scale    [  1.00  ]  0.5 – 3.0         │
  *   │                     │  │                                          │
- *   │                     │  │  Background Effect                       │
- *   │                     │  │  [ None ] [ Plasma ] [ Aurora ] …       │
- *   │                     │  │                                          │
- *   │                     │  │  Intensity   ──[▓▓░░░░]──  1.00        │
+ *   │                     │  │  Background Effect  [Dropdown ▾]         │
+ *   │                     │  │  Intensity   [  1.00  ]  0.0 – 1.0      │
  *   └─────────────────────┘  └──────────────────────────────────────────┘
+ *
+ * Theme and background effect use ca_select dropdowns.
+ * Hovering over an item in the open dropdown live-previews the choice.
+ * Clicking outside the dropdown without committing reverts to the
+ * previous selection (stored in preview_theme_id / preview_effect_id).
  *
  * Active tab is stored per-window and drives the reactive builder.
  * Scale and opacity changes are applied immediately and persisted.
- * Effect changes activate the registry effect and persist the id.
+ * Selections are saved to config and restored at startup.
  *
  * Follows the same singleton pattern as plugin_window.c: at most one
  * settings window is open at a time; re-opening is a no-op.
@@ -44,6 +48,9 @@
 
 static const char * const SW_TAB_LABELS[SW_TAB_COUNT] = { "Theme" };
 
+#define SW_MAX_EFFECTS  33   /* 1 "None" + up to SOL_BG_EFFECT_MAX */
+#define SW_MAX_THEMES   SOL_THEME_MAX
+
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
@@ -54,19 +61,6 @@ typedef struct {
     SolSettingsWindow *win;
     int                tab_index;
 } SwTabCtx;
-
-typedef struct {
-    SolSettingsWindow *win;
-    char               effect_id[64];  /* empty string = "None" */
-} SwEffectCtx;
-
-typedef struct {
-    SolSettingsWindow *win;
-    char theme_id[SOL_SETTINGS_THEME_ID_MAX + 1u];
-} SwThemeCtx;
-
-#define SW_MAX_EFFECT_BTNS 33  /* 1 "None" + up to SOL_BG_EFFECT_MAX */
-#define SW_MAX_THEME_BTNS  SOL_THEME_MAX
 
 struct SolSettingsWindow {
     Ca_Window           *window;
@@ -86,8 +80,20 @@ struct SolSettingsWindow {
     char          scale_input_text[16];
     char          opacity_input_text[16];
 
-    SwEffectCtx   effect_ctxs[SW_MAX_EFFECT_BTNS];
-    SwThemeCtx    theme_ctxs[SW_MAX_THEME_BTNS];
+    /* Theme select state */
+    const char   *theme_names[SW_MAX_THEMES];   /* pointers into registry (stable) */
+    char          theme_ids[SW_MAX_THEMES][SOL_THEME_ID_MAX + 1];
+    int           theme_count;
+    int           theme_selected;              /* committed selection index */
+    char          preview_theme_id[SOL_THEME_ID_MAX + 1]; /* snapshot before open */
+
+    /* Effect select state */
+    char          effect_names_buf[SW_MAX_EFFECTS][64];
+    const char   *effect_names[SW_MAX_EFFECTS]; /* pointers into effect_names_buf */
+    char          effect_ids[SW_MAX_EFFECTS][64];
+    int           effect_count;
+    int           effect_selected;             /* committed selection index */
+    char          preview_effect_id[64];       /* snapshot before open */
 
     SolSettingsWindow *next;
 };
@@ -99,17 +105,15 @@ struct SolSettingsWindow {
 static SolSettingsWindow *g_sw_windows = NULL;
 
 /* ------------------------------------------------------------------ */
-/* Helpers                                                             */
+/* Label helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-/* Refresh the scale input text from persisted settings. */
 static void sw_update_scale_label(SolSettingsWindow *w)
 {
     snprintf(w->scale_input_text, sizeof(w->scale_input_text),
              "%.2f", (double)w->settings->ui_scale);
 }
 
-/* Refresh the opacity input text from persisted settings. */
 static void sw_update_opacity_label(SolSettingsWindow *w)
 {
     snprintf(w->opacity_input_text, sizeof(w->opacity_input_text),
@@ -117,7 +121,71 @@ static void sw_update_opacity_label(SolSettingsWindow *w)
 }
 
 /* ------------------------------------------------------------------ */
-/* Button callbacks                                                    */
+/* Theme select table rebuild                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Refresh the theme names/ids arrays from the live registry and recompute
+ * theme_selected to match the active theme.
+ *
+ * w  Settings window to refresh.
+ */
+static void sw_rebuild_theme_table(SolSettingsWindow *w)
+{
+    w->theme_count = 0;
+    const char *active = sol_ui_system_active_theme(w->ui);
+    w->theme_selected = 0;
+    size_t count = sol_ui_system_theme_count(w->ui);
+    for (size_t i = 0; i < count && i < SW_MAX_THEMES; ++i) {
+        const char *id = NULL, *name = NULL;
+        if (!sol_ui_system_theme_info(w->ui, i, &id, &name) || !id || !name) continue;
+        snprintf(w->theme_ids[w->theme_count], sizeof(w->theme_ids[0]), "%s", id);
+        w->theme_names[w->theme_count] = name;
+        if (active && strcmp(active, id) == 0)
+            w->theme_selected = w->theme_count;
+        ++w->theme_count;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Effect select table rebuild                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Refresh the effect names/ids arrays from the live registry and recompute
+ * effect_selected to match the active effect.
+ *
+ * w  Settings window to refresh.
+ */
+static void sw_rebuild_effect_table(SolSettingsWindow *w)
+{
+    w->effect_count = 0;
+    if (!w->bg_effects) return;
+
+    /* Slot 0 = None */
+    snprintf(w->effect_names_buf[0], sizeof(w->effect_names_buf[0]), "None");
+    w->effect_names[0] = w->effect_names_buf[0];
+    w->effect_ids[0][0] = '\0';
+    w->effect_count = 1;
+    w->effect_selected = 0;
+
+    const char *active_id = sol_bg_effect_active_id(w->bg_effects);
+    size_t count = sol_bg_effect_count(w->bg_effects);
+    for (size_t i = 0; i < count && w->effect_count < SW_MAX_EFFECTS; ++i) {
+        const char *id = NULL, *name = NULL;
+        if (!sol_bg_effect_get_info(w->bg_effects, i, &id, &name) || !id || !name) continue;
+        snprintf(w->effect_names_buf[w->effect_count], sizeof(w->effect_names_buf[0]),
+                 "%s", name);
+        w->effect_names[w->effect_count] = w->effect_names_buf[w->effect_count];
+        snprintf(w->effect_ids[w->effect_count], sizeof(w->effect_ids[0]), "%s", id);
+        if (active_id && strcmp(active_id, id) == 0)
+            w->effect_selected = w->effect_count;
+        ++w->effect_count;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Tab callbacks                                                       */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -136,40 +204,103 @@ static void sw_on_tab_click(Ca_Button *btn, void *user_data)
     sol_ui_bump_u32(w->sig_rev);
 }
 
-/* Activate the selected CSS theme; persistence is handled by the theme change callback. */
-static void sw_on_theme_click(Ca_Button *btn, void *user_data)
+/* ------------------------------------------------------------------ */
+/* Theme select callbacks                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Called each time the highlighted item in the theme dropdown changes.
+ * idx ≥ 0: apply hovered theme as live preview.
+ * idx = -1: dropdown closed without commit — revert to snapshot.
+ *
+ * sel        The select widget.
+ * user_data  SolSettingsWindow pointer.
+ */
+static void sw_on_theme_hover(Ca_Select *sel, void *user_data)
 {
-    (void)btn;
-    SwThemeCtx *ctx = (SwThemeCtx *)user_data;
-    if (!ctx || !ctx->win || !ctx->win->ui || ctx->theme_id[0] == '\0') return;
-    SolSettingsWindow *w = ctx->win;
-    if (!sol_ui_system_set_active_theme(w->ui, ctx->theme_id)) return;
-    sol_ui_bump_u32(w->sig_rev);
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    int idx = ca_select_get_hover(sel);
+    if (idx < 0) {
+        /* Dropdown dismissed without a commit — revert to pre-open snapshot. */
+        if (w->preview_theme_id[0] != '\0')
+            sol_ui_system_set_active_theme(w->ui, w->preview_theme_id);
+        return;
+    }
+    if (idx >= w->theme_count) return;
+    sol_ui_system_set_active_theme(w->ui, w->theme_ids[idx]);
 }
 
 /*
- * Handle an effect button click: activate the effect, persist, and rebuild.
+ * Called when the user clicks to commit a theme selection.
+ * Applies, persists, and updates the committed snapshot.
  *
- * btn        Clicked button (unused).
- * user_data  SwEffectCtx pointer.
+ * sel        The select widget.
+ * user_data  SolSettingsWindow pointer.
  */
-static void sw_on_effect_click(Ca_Button *btn, void *user_data)
+static void sw_on_theme_change(Ca_Select *sel, void *user_data)
 {
-    (void)btn;
-    SwEffectCtx       *ctx = (SwEffectCtx *)user_data;
-    SolSettingsWindow *w   = ctx->win;
-    if (!w->bg_effects) return;
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    int idx = ca_select_get(sel);
+    if (idx < 0 || idx >= w->theme_count) return;
+    w->theme_selected = idx;
+    snprintf(w->preview_theme_id, sizeof(w->preview_theme_id), "%s", w->theme_ids[idx]);
+    sol_ui_system_set_active_theme(w->ui, w->theme_ids[idx]);
+    snprintf(w->settings->theme_id, sizeof(w->settings->theme_id), "%s", w->theme_ids[idx]);
+    sol_settings_save(w->settings);
+    sol_ui_bump_u32(w->sig_rev);
+}
 
-    sol_bg_effect_set_active(w->bg_effects, ctx->effect_id);
+
+/* ------------------------------------------------------------------ */
+/* Effect select callbacks                                             */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Called each time the highlighted item in the effect dropdown changes.
+ * idx ≥ 0: activate hovered effect as live preview.
+ * idx = -1: dropdown closed without commit — revert to snapshot.
+ *
+ * sel        The select widget.
+ * user_data  SolSettingsWindow pointer.
+ */
+static void sw_on_effect_hover(Ca_Select *sel, void *user_data)
+{
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    if (!w->bg_effects) return;
+    int idx = ca_select_get_hover(sel);
+    if (idx < 0) {
+        /* Dropdown dismissed without commit — revert to pre-open snapshot. */
+        const char *want = w->preview_effect_id[0] != '\0' ? w->preview_effect_id : NULL;
+        sol_bg_effect_set_active(w->bg_effects, want);
+        return;
+    }
+    if (idx >= w->effect_count) return;
+    const char *id = w->effect_ids[idx][0] != '\0' ? w->effect_ids[idx] : NULL;
+    sol_bg_effect_set_active(w->bg_effects, id);
+}
+
+/*
+ * Called when the user clicks to commit an effect selection.
+ * Activates, persists, and updates the committed snapshot.
+ *
+ * sel        The select widget.
+ * user_data  SolSettingsWindow pointer.
+ */
+static void sw_on_effect_change(Ca_Select *sel, void *user_data)
+{
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    if (!w->bg_effects) return;
+    int idx = ca_select_get(sel);
+    if (idx < 0 || idx >= w->effect_count) return;
+    w->effect_selected = idx;
+    snprintf(w->preview_effect_id, sizeof(w->preview_effect_id), "%s", w->effect_ids[idx]);
+    sol_bg_effect_set_active(w->bg_effects, w->effect_ids[idx]);
 
     const char *active = sol_bg_effect_active_id(w->bg_effects);
     if (active)
-        strncpy(w->settings->bg_effect_id, active,
-                sizeof(w->settings->bg_effect_id) - 1);
+        snprintf(w->settings->bg_effect_id, sizeof(w->settings->bg_effect_id), "%s", active);
     else
         w->settings->bg_effect_id[0] = '\0';
-    w->settings->bg_effect_id[sizeof(w->settings->bg_effect_id) - 1] = '\0';
-
     sol_settings_save(w->settings);
     sol_ui_bump_u32(w->sig_rev);
 }
@@ -227,48 +358,42 @@ static void sw_on_opacity_input_change(Ca_TextInput *inp, void *user_data)
 /* ------------------------------------------------------------------ */
 
 /*
- * Emit the Theme settings tab: scale row, effect picker, and intensity row.
+ * Emit the Theme settings tab: theme dropdown, scale row, effect dropdown,
+ * and intensity row.
  *
  * w  Settings window providing state and callbacks.
  */
 static void sw_render_theme_tab(SolSettingsWindow *w)
 {
-    if (w->theme_revision)
-        (void)ca_signal_get_u32(w->theme_revision);
-    if (w->bg_effect_revision)
-        (void)ca_signal_get_u32(w->bg_effect_revision);
+    if (w->theme_revision)      (void)ca_signal_get_u32(w->theme_revision);
+    if (w->bg_effect_revision)  (void)ca_signal_get_u32(w->bg_effect_revision);
+
+    /* Rebuild tables each render so they reflect any plugin-driven changes. */
+    sw_rebuild_theme_table(w);
 
     ca_text(&(Ca_TextDesc){ .text = "THEME", .style = "sw-section-title" });
     ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
 
+    /* ---- Theme selector ---- */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
-    ca_text(&(Ca_TextDesc){ .text = "Interface", .style = "sw-setting-label-block" });
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-effect-row" });
-    const char *active_theme = sol_ui_system_active_theme(w->ui);
-    const size_t theme_count = sol_ui_system_theme_count(w->ui);
-    for (size_t i = 0u; i < theme_count && i < SW_MAX_THEME_BTNS; ++i) {
-        const char *id = NULL;
-        const char *name = NULL;
-        if (!sol_ui_system_theme_info(w->ui, i, &id, &name) || !id || !name) continue;
-        w->theme_ctxs[i].win = w;
-        snprintf(w->theme_ctxs[i].theme_id, sizeof(w->theme_ctxs[i].theme_id), "%s", id);
-        const bool active = active_theme && strcmp(active_theme, id) == 0;
-        ca_btn_begin(&(Ca_BtnDesc){
-            .direction = CA_HORIZONTAL,
-            .style = active ? "sw-effect-btn sw-effect-btn-active" : "sw-effect-btn",
-            .on_click = sw_on_theme_click,
-            .click_data = &w->theme_ctxs[i],
-        });
-        ca_text(&(Ca_TextDesc){
-            .text = name,
-            .style = active ? "sw-effect-label sw-effect-label-active" : "sw-effect-label",
-        });
-        ca_btn_end();
-    }
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
+    ca_text(&(Ca_TextDesc){ .text = "Theme", .style = "sw-setting-label" });
+
+    ca_select(&(Ca_SelectDesc){
+        .options      = w->theme_names,
+        .option_count = w->theme_count,
+        .selected     = w->theme_selected,
+        .on_change    = sw_on_theme_change,
+        .change_data  = w,
+        .on_hover     = sw_on_theme_hover,
+        .hover_data   = w,
+        .style        = "sw-select",
+    });
+
     ca_div_end();
     ca_div_end();
 
-    /* Scale row */
+    /* ---- Scale row ---- */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
     ca_text(&(Ca_TextDesc){ .text = "Scale", .style = "sw-setting-label" });
     ca_input(&(Ca_InputDesc){
@@ -283,52 +408,28 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
 
     if (!w->bg_effects) return;
 
+    /* ---- Effect selector ---- */
+    sw_rebuild_effect_table(w);
+
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
+    ca_text(&(Ca_TextDesc){ .text = "Background", .style = "sw-setting-label" });
 
-    ca_text(&(Ca_TextDesc){ .text = "Background Effect", .style = "sw-setting-label-block" });
-
-    /* Effect selector row */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-effect-row" });
-
-    const char *active_id = sol_bg_effect_active_id(w->bg_effects);
-    const bool  none_on   = (active_id == NULL || active_id[0] == '\0');
-
-    ca_btn_begin(&(Ca_BtnDesc){
-        .direction  = CA_HORIZONTAL,
-        .style      = none_on ? "sw-effect-btn sw-effect-btn-active" : "sw-effect-btn",
-        .on_click   = sw_on_effect_click,
-        .click_data = &w->effect_ctxs[0],
+    ca_select(&(Ca_SelectDesc){
+        .options      = w->effect_names,
+        .option_count = w->effect_count,
+        .selected     = w->effect_selected,
+        .on_change    = sw_on_effect_change,
+        .change_data  = w,
+        .on_hover     = sw_on_effect_hover,
+        .hover_data   = w,
+        .style        = "sw-select",
     });
-    ca_text(&(Ca_TextDesc){
-        .text  = "None",
-        .style = none_on ? "sw-effect-label sw-effect-label-active" : "sw-effect-label",
-    });
-    ca_btn_end();
 
-    size_t count = sol_bg_effect_count(w->bg_effects);
-    for (size_t i = 0; i < count && (i + 1) < SW_MAX_EFFECT_BTNS; ++i) {
-        const char *id = NULL, *name = NULL;
-        if (!sol_bg_effect_get_info(w->bg_effects, i, &id, &name)) continue;
-        w->effect_ctxs[i + 1].win = w;
-        snprintf(w->effect_ctxs[i + 1].effect_id,
-                 sizeof(w->effect_ctxs[i + 1].effect_id), "%s", id);
-        const bool is_on = active_id && id && strcmp(active_id, id) == 0;
-        ca_btn_begin(&(Ca_BtnDesc){
-            .direction  = CA_HORIZONTAL,
-            .style      = is_on ? "sw-effect-btn sw-effect-btn-active" : "sw-effect-btn",
-            .on_click   = sw_on_effect_click,
-            .click_data = &w->effect_ctxs[i + 1],
-        });
-        ca_text(&(Ca_TextDesc){
-            .text  = name,
-            .style = is_on ? "sw-effect-label sw-effect-label-active" : "sw-effect-label",
-        });
-        ca_btn_end();
-    }
+    ca_div_end();
+    ca_div_end();
 
-    ca_div_end(); /* sw-effect-row */
-
-    /* Intensity row */
+    /* ---- Intensity row ---- */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
     ca_text(&(Ca_TextDesc){ .text = "Intensity", .style = "sw-setting-label" });
     ca_input(&(Ca_InputDesc){
@@ -340,8 +441,6 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     });
     ca_text(&(Ca_TextDesc){ .text = "0.0 – 1.0", .style = "sw-setting-value" });
     ca_div_end();
-
-    ca_div_end(); /* sw-setting-group */
 }
 
 /*
@@ -431,6 +530,9 @@ static void sw_destroy(SolSettingsWindow *w)
  * instance    Causality instance for window creation.
  * settings    Settings object to read and write.
  * bg_effects  Background effect registry for the effect picker (may be NULL).
+ * bg_effect_revision  Signal bumped when effects change.
+ * ui          Sol UI system owning the theme registry.
+ * theme_revision  Signal bumped when themes change.
  */
 void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
                                   SolBgEffectRegistry *bg_effects,
@@ -463,19 +565,15 @@ void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
         w->tab_ctxs[i].tab_index = i;
     }
 
-    /* Effect contexts: slot 0 = None, slots 1..N = registered effects. */
-    w->effect_ctxs[0].win          = w;
-    w->effect_ctxs[0].effect_id[0] = '\0';
+    /* Snapshot committed selections for revert-on-dismiss. */
+    const char *active_theme = sol_ui_system_active_theme(ui);
+    if (active_theme)
+        snprintf(w->preview_theme_id, sizeof(w->preview_theme_id), "%s", active_theme);
+
     if (bg_effects) {
-        size_t count = sol_bg_effect_count(bg_effects);
-        for (size_t i = 0; i < count && (i + 1) < SW_MAX_EFFECT_BTNS; ++i) {
-            const char *id = NULL;
-            sol_bg_effect_get_info(bg_effects, i, &id, NULL);
-            w->effect_ctxs[i + 1].win = w;
-            if (id)
-                strncpy(w->effect_ctxs[i + 1].effect_id, id,
-                        sizeof(w->effect_ctxs[0].effect_id) - 1);
-        }
+        const char *active_fx = sol_bg_effect_active_id(bg_effects);
+        if (active_fx)
+            snprintf(w->preview_effect_id, sizeof(w->preview_effect_id), "%s", active_fx);
     }
 
     w->sig_rev = ca_signal_u32(instance, 0u);

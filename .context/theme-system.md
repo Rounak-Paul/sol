@@ -11,46 +11,74 @@
 
 - `com.sol.theme.glass` is the only built-in theme. It is a complete baseline stylesheet defined in `sol/src/ui/style.h` as `SOL_UI_DEFAULT_THEME_CSS`.
 - All other themes are shipped via `plugins/sol-plugin-themes` (plugin id: `com.sol.themes`).
-- Theme CSS owns: chrome (titlebar, status bar, splitters), panels (file tree, side panel, PM, settings), editor (buffer body, gutter, tabs, tab text, scrollbars, selection, caret), syntax tokens, aux windows (file picker, search, welcome, terminal, command flow popup).
-- Terminal ANSI indexed/RGB colors remain process content. Terminal surfaces, default text, and typography are CSS-owned.
 
 ## Plugin Themes (`plugins/sol-plugin-themes`)
 
-- Registers four themes via `sol_plugin_register_theme`, each with `base_id = "com.sol.theme.glass"`.
-- `com.sol.theme.ocean` — teal/cyan (Deep Ocean)
-- `com.sol.theme.amethyst` — purple/violet (Amethyst)
-- `com.sol.theme.graphite` — neutral monochrome (Graphite)
-- `com.sol.theme.ember` — amber/rust (Ember Glass)
-- Each override covers all major visual surfaces: chrome, panels, editor, syntax, aux windows, terminal.
-- The composed CSS (base + override) is validated by `sol_ui_system_register_theme` before acceptance.
+All themes extend `com.sol.theme.glass` using the `THEME_CSS()` macro that generates
+the full CSS template from palette tokens. 16 themes registered:
+
+  Deep Ocean, Amethyst, Graphite, Ember Glass  — custom palettes
+  Gruvbox Dark, Nord, Tokyo Night, Catppuccin   — popular neovim ports
+  Dracula, One Dark, Rosé Pine, Everforest      — popular neovim ports
+  Kanagawa, Carbonfox, Monokai Pro, Sonokai     — popular neovim ports
+
+Each override covers all major visual surfaces: chrome, panels, editor, syntax, aux windows, terminal, settings/PM UI.
+
+The `.buffer-caret { background: #xxxxxx; }` rule defines the accent color that
+`sol_ui_push_theme_color()` (workspace.c) extracts and forwards to the bg_effect
+registry as r/g/b push constants so shader-mode effects tint themselves.
+
+## Background Effect Push Constants
+
+`BgPushConst` in `sol/src/core/sol_bg_effect.c`:
+```c
+typedef struct { float time, width, height, opacity, r, g, b, _pad; } BgPushConst;
+```
+r/g/b are set via `sol_bg_effect_set_theme_color()`, called on every theme change.
+Shaders must declare all 8 floats or omit trailing ones (Vulkan ignores extras past
+what the shader reads).
+
+## Background Effects
+
+Only `com.sol.bfx.lava` is registered (others removed). The lava shader reads
+`pc.r, pc.g, pc.b` to tint its hot palette toward the active theme accent color.
+A saturation check falls back to classic orange if the theme is near-neutral.
 
 ## Runtime Application
 
 - `sol_ui_system_set_active_theme()` changes the registry selection.
 - The registry observer parses the selected complete CSS before replacing the old stylesheet.
-- `ca_instance_refresh_styles()` re-resolves all CSS-owned visual and layout fields for every live window, rebuilds system title bars, invalidates layout/paint, and wakes the event loop.
-- Widget-owned foreground/fill state is synchronized during CSS resolution for labels, buttons, inputs, checks, radios, tree nodes, progress bars, and splitters.
+- `ca_instance_refresh_styles()` re-resolves all CSS-owned visual and layout fields.
+- After CSS parse, `sol_ui_push_theme_color()` scans the CSS for `.buffer-caret { background: #rrggbb }`
+  and calls `sol_bg_effect_set_theme_color(reg, r, g, b)`.
 - Selection is persisted under `theme.style` in `~/.sol/settings.json` and restored after plugins load.
+
+## Settings UI (`sol/src/ui/settings_window.c`)
+
+- Theme and background effect use `ca_select` dropdowns (NOT buttons anymore).
+- `Ca_SelectDesc.on_hover` fires when the highlighted item changes → live preview.
+- `Ca_SelectDesc.on_change` fires on commit click → persist + update snapshot.
+- `on_hover(idx=-1)` means dropdown dismissed without commit → revert to `preview_theme_id`/`preview_effect_id` snapshot.
+- The snapshot is saved at window open time and updated on each commit.
+
+## Causality `Ca_Select` extension
+
+`ca_internal.h` `Ca_Select` struct gained:
+  `int hover_item` — index under cursor (-1 = none)
+  `Ca_SelectFn on_hover` + `void *hover_data`
+
+`paint.c` `paint_overlays()` updates `hover_item` and fires `on_hover` when it changes.
+Both close-paths (click option / click outside) reset `hover_item = -1` and fire `on_hover`.
+
+`ca_select_get_hover(const Ca_Select*)` exposed in `ca_components.h`.
 
 ## Plugin API
 
-- `sol_plugin_register_theme(ctx, desc)` validates CSS, copies it into the UI registry, and tracks the id on the plugin context.
+- `sol_plugin_register_theme(ctx, desc)` validates CSS, copies it into the UI registry.
 - `sol_plugin_unregister_theme(ctx, id)` removes an owned theme early.
-- Plugin cleanup removes all tracked themes before `dlclose`; removing an active plugin theme applies and persists the built-in fallback.
-- Use a complete stylesheet by leaving `base_id` null, or set `base_id = "com.sol.theme.glass"` and provide a CSS override document.
-
-## Settings UI
-
-- Settings > Theme enumerates the live registry and applies selections immediately.
-- Registry revisions rebuild an already-open Settings window when plugins add or remove themes.
+- Plugin cleanup removes all tracked themes before `dlclose`.
 
 ## Validation
 
-- `sol_ui_system_register_theme` registers first, then validates the **composed** CSS (base + override as stored) via `ca_css_parse`. Rolls back via `sol_theme_unregister` on failure.
-- `sol_ui_on_theme_change` bumps `sig_theme_rev` even when `ca_css_parse` fails so the Settings UI stays coherent; it does not replace the old stylesheet.
-- Settings > Theme click does not double-save; persistence flows exclusively through the registry change callback in `sol_ui_on_theme_change`.
-
-## Verification
-
-- `sol_theme_tests` covers ownership, copied CSS, inheritance, duplicate rejection, selection, and active-theme fallback.
-- `sol_plugin_tests` covers manual theme removal and automatic unload cleanup.
+- `sol_ui_system_register_theme` registers then validates via `ca_css_parse`. Rolls back on failure.
+- `sol_ui_on_theme_change` bumps `sig_theme_rev` even on parse failure so the Settings UI stays coherent.

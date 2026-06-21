@@ -272,6 +272,20 @@ void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
                                     size_t count);
 
 /* ================================================================== */
+/* Theme accent color                                                  */
+/* ================================================================== */
+
+/*
+ * Set the accent color pushed to shader-mode effects as r/g/b push constants.
+ * Each channel is in [0.0, 1.0]. Effects use this to tint animation to match
+ * the active theme. Default is (1.0, 1.0, 1.0) (white/neutral).
+ *
+ * reg  The registry.
+ * r,g,b  Linear RGB accent color channels.
+ */
+void sol_bg_effect_set_theme_color(SolBgEffectRegistry *reg, float r, float g, float b);
+
+/* ================================================================== */
 /* Change notification                                                 */
 /* ================================================================== */
 

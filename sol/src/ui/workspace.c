@@ -107,8 +107,9 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
         return false;
     }
 
+    const float ui_scale = ca_window_get_scale(ui->primary_window);
     const float title_h  = ca_window_get_title_bar_height(ui->primary_window);
-    const float status_h = (float)SOL_UI_STATUS_BAR_HEIGHT;
+    const float status_h = SOL_UI_STATUS_BAR_HEIGHT * (ui_scale > 0.0f ? ui_scale : 1.0f);
     const float tabs_h   = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX;
 
     float root_x = 0.0f;
@@ -150,9 +151,11 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
 
     const float window_w = (float)ui->window_w;
     const float window_h = (float)ui->window_h;
-    const float title_h = ca_window_get_title_bar_height(ui->primary_window) / window_h;
-    const float status_h = SOL_UI_STATUS_BAR_HEIGHT / window_h;
-    const float tabs_h = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX / window_h;
+    const float ui_scale = ca_window_get_scale(ui->primary_window);
+    const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
+    const float title_h  = ca_window_get_title_bar_height(ui->primary_window) / window_h;
+    const float status_h = (SOL_UI_STATUS_BAR_HEIGHT * scale) / window_h;
+    const float tabs_h   = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX / window_h;
     const uint32_t strong_blur_passes = sol_bg_effect_blur_passes(ui->bg_effects);
     SolBgEffectBlurRegion regions[5];
     size_t count = 0;
@@ -1220,6 +1223,53 @@ static void sol_ui_on_bg_effect_change(void *user_data)
     ca_instance_set_continuous(ui->instance, active);
 }
 
+/*
+ * Extract the caret accent color from the theme CSS and push it to the
+ * background effect registry so shader-mode effects can tint themselves.
+ * Scans for ".buffer-caret { background: #rrggbb" or "rgb(r,g,b)".
+ *
+ * css  Full theme CSS string.
+ * reg  Background effect registry; receives the extracted color.
+ */
+static void sol_ui_push_theme_color(const char *css, SolBgEffectRegistry *reg)
+{
+    if (!css || !reg) return;
+    const char *p = css;
+    /* Iterate over every .buffer-caret rule in the CSS; last one wins. */
+    float best_r = 1.0f, best_g = 1.0f, best_b = 1.0f;
+    bool found = false;
+    while ((p = strstr(p, ".buffer-caret")) != NULL) {
+        const char *bg = strstr(p, "background:");
+        const char *end_brace = strchr(p, '}');
+        if (!bg || (end_brace && bg > end_brace)) { ++p; continue; }
+        bg += 11; /* skip "background:" */
+        while (*bg == ' ' || *bg == '\t') ++bg;
+        if (*bg == '#' && strlen(bg) >= 7) {
+            unsigned int rv = 0, gv = 0, bv = 0;
+            if (sscanf(bg + 1, "%2x%2x%2x", &rv, &gv, &bv) == 3) {
+                best_r = rv / 255.0f;
+                best_g = gv / 255.0f;
+                best_b = bv / 255.0f;
+                found = true;
+            }
+        } else if (strncmp(bg, "rgb", 3) == 0) {
+            const char *paren = strchr(bg, '(');
+            if (paren) {
+                int rv = 0, gv = 0, bv = 0;
+                if (sscanf(paren + 1, "%d,%d,%d", &rv, &gv, &bv) == 3) {
+                    best_r = rv / 255.0f;
+                    best_g = gv / 255.0f;
+                    best_b = bv / 255.0f;
+                    found = true;
+                }
+            }
+        }
+        ++p;
+    }
+    if (found)
+        sol_bg_effect_set_theme_color(reg, best_r, best_g, best_b);
+}
+
 /* Apply the active registry theme to every live Causality window. */
 static void sol_ui_on_theme_change(void *user_data)
 {
@@ -1243,12 +1293,8 @@ static void sol_ui_on_theme_change(void *user_data)
     ca_instance_set_stylesheet(ui->instance, stylesheet);
     ca_instance_refresh_styles(ui->instance);
     if (previous) ca_css_destroy(previous);
+    if (ui->bg_effects) sol_ui_push_theme_color(css, ui->bg_effects);
     snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s", active_id);
-    if (ui->settings && strcmp(ui->settings->theme_id, active_id) != 0) {
-        snprintf(ui->settings->theme_id, sizeof(ui->settings->theme_id), "%s",
-                 active_id);
-        sol_settings_save(ui->settings);
-    }
     sol_ui_bump_u32(ui->sig_theme_rev);
 }
 
@@ -2722,8 +2768,9 @@ int sol_ui_system_title_bar_height(const SolUISystem *ui)
  */
 int sol_ui_system_status_bar_height(const SolUISystem *ui)
 {
-    (void)ui;
-    return (int)SOL_UI_STATUS_BAR_HEIGHT;
+    if (!ui || !ui->primary_window) return (int)SOL_UI_STATUS_BAR_HEIGHT;
+    const float sc = ca_window_get_scale(ui->primary_window);
+    return (int)(SOL_UI_STATUS_BAR_HEIGHT * (sc > 0.0f ? sc : 1.0f) + 0.5f);
 }
 
 /*

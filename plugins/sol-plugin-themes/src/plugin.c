@@ -3,19 +3,28 @@
 
 /* sol-plugin-themes — Built-in editor themes for Sol.
  *
- * Registers four CSS override themes that extend the default Glass baseline:
+ * Every theme extends the Glass baseline (com.sol.theme.glass) with CSS
+ * overrides. Surface RGB values are pushed to 20–60 per dominant hue channel
+ * so tints remain visible through the frosted-glass semi-transparency.
  *
- *   com.sol.theme.ocean      — deep teal/cyan palette
- *   com.sol.theme.amethyst   — purple/violet palette
- *   com.sol.theme.graphite   — neutral monochrome palette
- *   com.sol.theme.ember      — warm amber/rust palette
+ * Themes implemented (inspired by popular Neovim colorschemes):
  *
- * Each override targets every major visual surface:
- *   - Chrome (title bar, status bar, splitters)
- *   - Panels (file tree, side panel, plugin manager, settings)
- *   - Editor (buffer body, gutter, tabs, scrollbars, selection, caret)
- *   - Syntax highlighting tokens
- *   - Auxiliary windows (file picker, search, welcome, terminal)
+ *   Deep Ocean     — custom teal/cyan
+ *   Amethyst       — custom violet/plum
+ *   Graphite       — custom neutral monochrome
+ *   Ember Glass    — custom amber/rust
+ *   Gruvbox Dark   — warm retro brown/orange (gruvbox)
+ *   Nord           — arctic blue/slate (nord)
+ *   Tokyo Night    — cool indigo/purple (tokyonight)
+ *   Catppuccin     — pastel mauve/lavender (catppuccin mocha)
+ *   Dracula        — purple/pink cyberpunk (dracula)
+ *   One Dark       — muted blue-grey (onedark)
+ *   Rosé Pine      — dusty rose/pine (rose-pine)
+ *   Everforest     — muted green/sage (everforest)
+ *   Kanagawa       — deep Japanese ink/wave (kanagawa)
+ *   Carbonfox      — charcoal/orange (nightfox carbonfox)
+ *   Monokai Pro    — saturated pink/green (monokai-pro)
+ *   Sonokai        — vivid mixed accent (sonokai)
  */
 
 #include "sol_plugin.h"
@@ -23,427 +32,599 @@
 #include "sol_theme.h"
 
 /* ------------------------------------------------------------------ */
-/* Theme CSS overrides                                                 */
+/* Shared CSS template macro                                            */
 /* ------------------------------------------------------------------ */
 
 /*
- * Deep Ocean — teal and cyan tones, cool deep-sea atmosphere.
+ * SW_CSS(tb,ts,th,sp,sr,st,tp,ta,bb,bg,gl,bl,bs,bc,kw,cm,str,num,fn,ty,pr,op,tg,
+ *        acc,sprim,ssec)
+ *
+ * Generates the full theme CSS override block from palette tokens:
+ *
+ *   tb   = titlebar background rgba
+ *   ts   = titlebar title color hex
+ *   th   = titlebar menu item hover rgba
+ *   sp   = splitter rgba color
+ *   sr   = status-bar background rgba
+ *   st   = status-bar text hex
+ *   tp   = tree panel background rgba
+ *   ta   = tree arrow-open hex / accent
+ *   bb   = buffer-body background rgba
+ *   bg   = buffer gutter rgba
+ *   gl   = gutter line hex (dim)
+ *   bl   = buffer-line / plain text hex
+ *   bs   = buffer selection rgba
+ *   bc   = buffer caret hex (accent)
+ *   kw   = keyword hex
+ *   cm   = comment hex (dim)
+ *   str  = string hex
+ *   num  = number hex
+ *   fn   = function hex
+ *   ty   = type hex
+ *   pr   = property hex
+ *   op   = operator hex
+ *   tg   = tag hex
+ *   acc  = accent rgba for buttons/active-bg
+ *   sprim = sw-root / pm-root bg rgba
+ *   ssec = sw-left bg rgba
  */
-static const char k_ocean_css[] =
-    /* Chrome */
-    ".ca-titlebar { background: rgba(2, 10, 20, 0.96); }"
-    ".ca-titlebar-title { color: #4a8fa8; }"
-    ".ca-titlebar-menu-item { color: #7ab8cc; }"
-    ".ca-titlebar-menu-item:hover { background: rgba(64, 160, 190, 0.14); color: #b0dde8; }"
-    ".ca-titlebar-control { color: #4a8fa8; }"
-    ".ca-titlebar-control:hover { background: rgba(64, 160, 190, 0.12); }"
-    ".ca-titlebar-close { color: #60a8c0; }"
-    ".ca-titlebar-close:hover { background: rgba(60, 140, 180, 0.22); }"
-    "splitter { background: transparent; color: rgba(64, 184, 210, 0.60); }"
-    /* Status bar */
-    ".status-bar { background: rgba(2, 10, 20, 0.97); }"
-    ".status-bar-text { color: #4a8fa8; }"
-    ".status-bar-badge-key { background: rgba(48, 144, 184, 0.34); }"
-    ".status-bar-badge-command { background: rgba(40, 160, 140, 0.30); }"
-    ".status-bar-badge-leader { background: rgba(160, 120, 48, 0.30); }"
-    /* Panels */
-    ".tree-panel, .plugin-side-panel { background: rgba(3, 14, 24, 0.92); }"
-    ".tree-section-header { background: transparent; }"
-    ".tree-section-title { color: #4a8fa8; }"
-    ".tree-row:hover { background: rgba(64, 184, 210, 0.10); }"
-    ".tree-sticky-row { background: rgba(4, 18, 30, 0.94); }"
-    ".tree-sticky-row:hover { background: rgba(64, 184, 210, 0.12); }"
-    ".tree-arrow { color: #2a6080; }"
-    ".tree-arrow-open { color: #40b8d0; }"
-    ".tree-name { color: #8ab8cc; }"
-    ".tree-name-dir { color: #c0dde8; }"
-    /* Buffer / editor */
-    ".buffer-pane, .buffer-pane-active { background: transparent; }"
-    ".buffer-tabs-row { background: rgba(3, 12, 22, 0.86); }"
-    ".buffer-tab { background: transparent; corner-radius: 0px; }"
-    ".buffer-tab:hover { background: rgba(48, 160, 188, 0.12); }"
-    ".buffer-tab-active { background: rgba(24, 78, 100, 0.88); }"
-    ".buffer-tab-text { color: #3a7a94; }"
-    ".buffer-tab-text-active { color: #d0eef6; }"
-    ".buffer-tab-close:hover { background: rgba(60, 140, 180, 0.20); }"
-    ".buffer-body { background: rgba(3, 10, 18, 0.92); }"
-    ".buffer-gutter-col { background: rgba(4, 12, 20, 0.84); }"
-    ".buffer-gutter-line { color: #2a5868; }"
-    ".buffer-line, .buffer-body-text, .hl-plain { color: #c8dce4; }"
-    ".buffer-selection { background: rgba(20, 88, 112, 0.88); }"
-    ".buffer-caret { background: #40c0d8; }"
-    ".buffer-scrollbar { background: rgba(4, 12, 20, 0.30); }"
-    ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(48, 144, 172, 0.38); corner-radius: 0px;"
-    "}"
-    ".buffer-scrollbar-thumb:hover, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb:hover, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(64, 172, 204, 0.56);"
-    "}"
-    /* Syntax */
-    ".hl-keyword, .hl-macro { color: #56c8e0; }"
-    ".hl-comment { color: #3a7888; }"
-    ".hl-string, .hl-regex { color: #80d8a0; }"
-    ".hl-number, .hl-constant, .hl-escape { color: #7ad4c0; }"
-    ".hl-function, .hl-constructor { color: #60b8f0; }"
-    ".hl-type, .hl-namespace { color: #40cce0; }"
-    ".hl-property, .hl-attribute, .hl-parameter { color: #90c8d8; }"
-    ".hl-operator, .hl-label { color: #60b0c8; }"
-    ".hl-tag { color: #e06878; }"
-    /* Welcome */
-    ".welcome-pane { background: rgba(3, 10, 18, 0.90); }"
-    ".welcome-title { color: #b0dde8; }"
-    ".welcome-subtitle, .welcome-section-label { color: #3a7888; }"
-    ".welcome-hr { background: rgba(48, 144, 172, 0.24); }"
-    ".welcome-btn { background: rgba(48, 130, 160, 0.12); color: #90c0d0; }"
-    ".welcome-btn-primary { background: rgba(32, 110, 150, 0.28); color: #c8eaf4; }"
-    ".welcome-btn:hover, .welcome-btn-primary:hover { background: rgba(48, 144, 184, 0.26); }"
-    /* Aux windows */
-    ".fp-root, .search-root-window { background: rgba(4, 12, 22, 0.90); }"
-    ".fp-toolbar, .fp-footer, .fp-colhdr, .search-header, .search-footer {"
-    "  background: rgba(6, 18, 32, 0.92);"
-    "}"
-    ".fp-list, .search-results { background: rgba(3, 10, 18, 0.88); }"
-    ".fp-row:hover, .search-result:hover { background: rgba(48, 160, 188, 0.10); }"
-    ".fp-row-selected, .search-result-selected { background: rgba(20, 88, 120, 0.88); }"
-    ".fp-new-folder-input, .search-input { background: rgba(3, 10, 18, 0.88); corner-radius: 0px; color: #c8dce4; }"
-    ".search-result-line { color: #40b8d0; }"
-    /* Plugin/Settings windows */
-    ".pm-root, .sw-root { background: rgba(4, 12, 22, 0.90); }"
-    ".pm-left, .sw-left { background: rgba(3, 14, 26, 0.88); }"
-    ".pm-item:hover, .sw-tab-btn:hover { background: rgba(48, 160, 188, 0.10); }"
-    ".pm-item-selected, .sw-tab-btn-active { background: rgba(20, 88, 120, 0.80); }"
-    ".pm-right, .sw-right { background: rgba(4, 10, 18, 0.60); }"
-    ".sw-hr, .pm-hr { background: #1a4c60; }"
-    ".pm-btn, .pm-btn-enable, .pm-btn-disable, .sw-effect-btn { background: rgba(40, 130, 160, 0.14); corner-radius: 0px; }"
-    ".pm-btn:hover, .sw-effect-btn:hover { background: rgba(48, 150, 184, 0.22); }"
-    ".sw-effect-btn-active { background: rgba(24, 100, 140, 0.34); }"
-    /* Command flow popup */
-    ".cf-panel { background: rgba(3, 12, 22, 0.95); corner-radius: 0px; }"
-    ".cf-row-key { background: rgba(48, 144, 184, 0.16); corner-radius: 0px; }"
-    ".cf-row-key-text { color: #40c0d8; }"
-    /* Terminal */
-    ".term-panel, .term-viewport, .term-filler { background: rgba(3, 10, 18, 0.96); }"
-    ".term-header { background: rgba(4, 14, 24, 0.96); }"
-    ".term-tab { background: rgba(4, 14, 24, 0.96); color: #3a7888; }"
-    ".term-tab-active { background: rgba(3, 10, 18, 0.96); color: #a0d0dc; }"
-    ".term-cursor-focused { background: #40c0d8; color: #02080e; }";
 
-/*
- * Amethyst — purple and violet tones, rich jewel-toned atmosphere.
- */
-static const char k_amethyst_css[] =
-    /* Chrome */
-    ".ca-titlebar { background: rgba(12, 5, 22, 0.97); }"
-    ".ca-titlebar-title { color: #8a5ab8; }"
-    ".ca-titlebar-menu-item { color: #a878d8; }"
-    ".ca-titlebar-menu-item:hover { background: rgba(140, 80, 200, 0.14); color: #d0a8f0; }"
-    ".ca-titlebar-control { color: #8a5ab8; }"
-    ".ca-titlebar-control:hover { background: rgba(140, 80, 200, 0.12); }"
-    ".ca-titlebar-close { color: #c060a0; }"
-    ".ca-titlebar-close:hover { background: rgba(180, 60, 120, 0.22); }"
-    "splitter { background: transparent; color: rgba(176, 100, 220, 0.60); }"
-    /* Status bar */
-    ".status-bar { background: rgba(10, 4, 20, 0.98); }"
-    ".status-bar-text { color: #8a5ab8; }"
-    ".status-bar-badge-key { background: rgba(120, 72, 196, 0.34); }"
-    ".status-bar-badge-command { background: rgba(80, 100, 160, 0.30); }"
-    ".status-bar-badge-leader { background: rgba(160, 100, 48, 0.30); }"
-    /* Panels */
-    ".tree-panel, .plugin-side-panel { background: rgba(14, 6, 26, 0.92); }"
-    ".tree-section-header { background: transparent; }"
-    ".tree-section-title { color: #8a5ab8; }"
-    ".tree-row:hover { background: rgba(140, 80, 200, 0.10); }"
-    ".tree-sticky-row { background: rgba(18, 8, 34, 0.95); }"
-    ".tree-sticky-row:hover { background: rgba(140, 80, 200, 0.12); }"
-    ".tree-arrow { color: #5a3880; }"
-    ".tree-arrow-open { color: #b068e0; }"
-    ".tree-name { color: #c0a0dc; }"
-    ".tree-name-dir { color: #e0c8f4; }"
-    /* Buffer / editor */
-    ".buffer-pane, .buffer-pane-active { background: transparent; }"
-    ".buffer-tabs-row { background: rgba(12, 5, 22, 0.86); }"
-    ".buffer-tab { background: transparent; corner-radius: 0px; }"
-    ".buffer-tab:hover { background: rgba(120, 64, 180, 0.12); }"
-    ".buffer-tab-active { background: rgba(60, 28, 90, 0.90); }"
-    ".buffer-tab-text { color: #6a3a90; }"
-    ".buffer-tab-text-active { color: #e8d0f8; }"
-    ".buffer-tab-close:hover { background: rgba(180, 60, 120, 0.20); }"
-    ".buffer-body { background: rgba(10, 4, 18, 0.92); }"
-    ".buffer-gutter-col { background: rgba(14, 6, 24, 0.84); }"
-    ".buffer-gutter-line { color: #3a2258; }"
-    ".buffer-line, .buffer-body-text, .hl-plain { color: #dcd0e8; }"
-    ".buffer-selection { background: rgba(80, 36, 120, 0.88); }"
-    ".buffer-caret { background: #c080e8; }"
-    ".buffer-scrollbar { background: rgba(14, 6, 24, 0.30); }"
-    ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(120, 72, 180, 0.38); corner-radius: 0px;"
-    "}"
-    ".buffer-scrollbar-thumb:hover, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb:hover, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(150, 96, 220, 0.56);"
-    "}"
-    /* Syntax */
-    ".hl-keyword, .hl-macro { color: #c890f0; }"
-    ".hl-comment { color: #5a3878; }"
-    ".hl-string, .hl-regex { color: #a8d870; }"
-    ".hl-number, .hl-constant, .hl-escape { color: #e8b878; }"
-    ".hl-function, .hl-constructor { color: #90b0f8; }"
-    ".hl-type, .hl-namespace { color: #80e0d0; }"
-    ".hl-property, .hl-attribute, .hl-parameter { color: #c0b0e0; }"
-    ".hl-operator, .hl-label { color: #a890d0; }"
-    ".hl-tag { color: #f07890; }"
-    /* Welcome */
-    ".welcome-pane { background: rgba(10, 4, 18, 0.90); }"
-    ".welcome-title { color: #d8b8f8; }"
-    ".welcome-subtitle, .welcome-section-label { color: #6a3a90; }"
-    ".welcome-hr { background: rgba(120, 72, 180, 0.24); }"
-    ".welcome-btn { background: rgba(100, 60, 150, 0.12); color: #c0a0e0; }"
-    ".welcome-btn-primary { background: rgba(80, 40, 130, 0.28); color: #e0c8f8; }"
-    ".welcome-btn:hover, .welcome-btn-primary:hover { background: rgba(120, 72, 180, 0.26); }"
-    /* Aux windows */
-    ".fp-root, .search-root-window { background: rgba(12, 5, 20, 0.90); }"
-    ".fp-toolbar, .fp-footer, .fp-colhdr, .search-header, .search-footer {"
-    "  background: rgba(16, 8, 28, 0.92);"
-    "}"
-    ".fp-list, .search-results { background: rgba(10, 4, 18, 0.88); }"
-    ".fp-row:hover, .search-result:hover { background: rgba(120, 64, 180, 0.10); }"
-    ".fp-row-selected, .search-result-selected { background: rgba(60, 28, 100, 0.88); }"
-    ".fp-new-folder-input, .search-input { background: rgba(10, 4, 18, 0.88); corner-radius: 0px; color: #dcd0e8; }"
-    ".search-result-line { color: #c080e8; }"
-    /* Plugin/Settings windows */
-    ".pm-root, .sw-root { background: rgba(12, 5, 22, 0.90); }"
-    ".pm-left, .sw-left { background: rgba(14, 6, 26, 0.88); }"
-    ".pm-item:hover, .sw-tab-btn:hover { background: rgba(120, 64, 180, 0.10); }"
-    ".pm-item-selected, .sw-tab-btn-active { background: rgba(60, 28, 100, 0.80); }"
-    ".pm-right, .sw-right { background: rgba(10, 4, 18, 0.60); }"
-    ".sw-hr, .pm-hr { background: #3a1c60; }"
-    ".pm-btn, .pm-btn-enable, .pm-btn-disable, .sw-effect-btn { background: rgba(110, 60, 170, 0.14); corner-radius: 0px; }"
-    ".pm-btn:hover, .sw-effect-btn:hover { background: rgba(130, 80, 200, 0.22); }"
-    ".sw-effect-btn-active { background: rgba(80, 36, 130, 0.34); }"
-    /* Command flow popup */
-    ".cf-panel { background: rgba(10, 4, 20, 0.96); corner-radius: 0px; }"
-    ".cf-row-key { background: rgba(120, 72, 196, 0.16); corner-radius: 0px; }"
-    ".cf-row-key-text { color: #c080e8; }"
-    /* Terminal */
-    ".term-panel, .term-viewport, .term-filler { background: rgba(10, 4, 18, 0.96); }"
-    ".term-header { background: rgba(14, 6, 26, 0.96); }"
-    ".term-tab { background: rgba(14, 6, 26, 0.96); color: #6a3a90; }"
-    ".term-tab-active { background: rgba(10, 4, 18, 0.96); color: #d0b0f0; }"
-    ".term-cursor-focused { background: #c080e8; color: #080410; }";
-
-/*
- * Graphite — neutral grays, high-contrast monochrome focus.
- */
-static const char k_graphite_css[] =
-    /* Chrome */
-    ".ca-titlebar { background: rgba(8, 8, 10, 0.98); }"
-    ".ca-titlebar-title { color: #707880; }"
-    ".ca-titlebar-menu-item { color: #909aa4; }"
-    ".ca-titlebar-menu-item:hover { background: rgba(140, 148, 160, 0.12); color: #c8d0d8; }"
-    ".ca-titlebar-control { color: #606870; }"
-    ".ca-titlebar-control:hover { background: rgba(140, 148, 160, 0.10); }"
-    ".ca-titlebar-close { color: #c07070; }"
-    ".ca-titlebar-close:hover { background: rgba(200, 80, 80, 0.18); }"
-    "splitter { background: transparent; color: rgba(160, 168, 178, 0.50); }"
-    /* Status bar */
-    ".status-bar { background: rgba(5, 5, 7, 0.98); }"
-    ".status-bar-text { color: #606870; }"
-    ".status-bar-badge-key { background: rgba(100, 110, 125, 0.32); }"
-    ".status-bar-badge-command { background: rgba(80, 110, 90, 0.28); }"
-    ".status-bar-badge-leader { background: rgba(130, 110, 60, 0.28); }"
-    /* Panels */
-    ".tree-panel, .plugin-side-panel { background: rgba(10, 10, 13, 0.93); }"
-    ".tree-section-header { background: transparent; }"
-    ".tree-section-title { color: #606870; }"
-    ".tree-row:hover { background: rgba(140, 148, 160, 0.08); }"
-    ".tree-sticky-row { background: rgba(12, 12, 16, 0.95); }"
-    ".tree-sticky-row:hover { background: rgba(140, 148, 160, 0.10); }"
-    ".tree-arrow { color: #484e56; }"
-    ".tree-arrow-open { color: #909aa4; }"
-    ".tree-name { color: #a0a8b0; }"
-    ".tree-name-dir { color: #c8d0d8; }"
-    /* Buffer / editor */
-    ".buffer-pane, .buffer-pane-active { background: transparent; }"
-    ".buffer-tabs-row { background: rgba(8, 8, 10, 0.86); }"
-    ".buffer-tab { background: transparent; corner-radius: 0px; }"
-    ".buffer-tab:hover { background: rgba(120, 128, 138, 0.10); }"
-    ".buffer-tab-active { background: rgba(44, 46, 52, 0.94); }"
-    ".buffer-tab-text { color: #4a5058; }"
-    ".buffer-tab-text-active { color: #e8ecf0; }"
-    ".buffer-tab-close:hover { background: rgba(200, 80, 80, 0.16); }"
-    ".buffer-body { background: rgba(8, 8, 10, 0.93); }"
-    ".buffer-gutter-col { background: rgba(10, 10, 13, 0.86); }"
-    ".buffer-gutter-line { color: #2e3238; }"
-    ".buffer-line, .buffer-body-text, .hl-plain { color: #d8dce0; }"
-    ".buffer-selection { background: rgba(54, 58, 66, 0.92); }"
-    ".buffer-caret { background: #c8d0d8; }"
-    ".buffer-scrollbar { background: rgba(10, 10, 13, 0.28); }"
-    ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(100, 108, 118, 0.38); corner-radius: 0px;"
-    "}"
-    ".buffer-scrollbar-thumb:hover, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb:hover, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(130, 140, 152, 0.54);"
-    "}"
-    /* Syntax — desaturated but readable */
-    ".hl-keyword, .hl-macro { color: #c0c8d0; }"
-    ".hl-comment { color: #505860; }"
-    ".hl-string, .hl-regex { color: #a8b8a0; }"
-    ".hl-number, .hl-constant, .hl-escape { color: #b8b090; }"
-    ".hl-function, .hl-constructor { color: #b0c0d0; }"
-    ".hl-type, .hl-namespace { color: #98b8c8; }"
-    ".hl-property, .hl-attribute, .hl-parameter { color: #a8b0bc; }"
-    ".hl-operator, .hl-label { color: #909aa4; }"
-    ".hl-tag { color: #c89090; }"
-    /* Welcome */
-    ".welcome-pane { background: rgba(8, 8, 10, 0.92); }"
-    ".welcome-title { color: #d8dce0; }"
-    ".welcome-subtitle, .welcome-section-label { color: #505860; }"
-    ".welcome-hr { background: rgba(100, 108, 118, 0.22); }"
-    ".welcome-btn { background: rgba(100, 108, 118, 0.10); color: #a0a8b0; }"
-    ".welcome-btn-primary { background: rgba(70, 78, 90, 0.26); color: #d8dce0; }"
-    ".welcome-btn:hover, .welcome-btn-primary:hover { background: rgba(110, 120, 132, 0.24); }"
-    /* Aux windows */
-    ".fp-root, .search-root-window { background: rgba(8, 8, 10, 0.92); }"
-    ".fp-toolbar, .fp-footer, .fp-colhdr, .search-header, .search-footer {"
-    "  background: rgba(12, 12, 16, 0.94);"
-    "}"
-    ".fp-list, .search-results { background: rgba(8, 8, 10, 0.90); }"
-    ".fp-row:hover, .search-result:hover { background: rgba(110, 118, 128, 0.09); }"
-    ".fp-row-selected, .search-result-selected { background: rgba(44, 48, 56, 0.90); }"
-    ".fp-new-folder-input, .search-input { background: rgba(8, 8, 10, 0.90); corner-radius: 0px; color: #d8dce0; }"
-    ".search-result-line { color: #9090a0; }"
-    /* Plugin/Settings windows */
-    ".pm-root, .sw-root { background: rgba(8, 8, 12, 0.92); }"
-    ".pm-left, .sw-left { background: rgba(10, 10, 14, 0.90); }"
-    ".pm-item:hover, .sw-tab-btn:hover { background: rgba(110, 118, 128, 0.09); }"
-    ".pm-item-selected, .sw-tab-btn-active { background: rgba(44, 48, 56, 0.88); }"
-    ".pm-right, .sw-right { background: rgba(8, 8, 10, 0.60); }"
-    ".sw-hr, .pm-hr { background: #282e36; }"
-    ".pm-btn, .pm-btn-enable, .pm-btn-disable, .sw-effect-btn { background: rgba(90, 98, 108, 0.13); corner-radius: 0px; }"
-    ".pm-btn:hover, .sw-effect-btn:hover { background: rgba(110, 120, 132, 0.20); }"
-    ".sw-effect-btn-active { background: rgba(60, 66, 76, 0.36); }"
-    /* Command flow popup */
-    ".cf-panel { background: rgba(8, 8, 12, 0.97); corner-radius: 0px; }"
-    ".cf-row-key { background: rgba(90, 100, 112, 0.16); corner-radius: 0px; }"
-    ".cf-row-key-text { color: #a0a8b4; }"
-    /* Terminal */
-    ".term-panel, .term-viewport, .term-filler { background: rgba(8, 8, 10, 0.97); }"
-    ".term-header { background: rgba(10, 10, 14, 0.97); }"
-    ".term-tab { background: rgba(10, 10, 14, 0.97); color: #505860; }"
-    ".term-tab-active { background: rgba(8, 8, 10, 0.97); color: #c8d0d8; }"
-    ".term-cursor-focused { background: #c8d0d8; color: #080810; }";
-
-/*
- * Ember Glass — warm amber, rust, and orange tones.
- */
-static const char k_ember_css[] =
-    /* Chrome */
-    ".ca-titlebar { background: rgba(18, 8, 4, 0.97); }"
-    ".ca-titlebar-title { color: #a06038; }"
-    ".ca-titlebar-menu-item { color: #c88050; }"
-    ".ca-titlebar-menu-item:hover { background: rgba(190, 110, 50, 0.14); color: #f0c090; }"
-    ".ca-titlebar-control { color: #a06038; }"
-    ".ca-titlebar-control:hover { background: rgba(190, 110, 50, 0.12); }"
-    ".ca-titlebar-close { color: #e07040; }"
-    ".ca-titlebar-close:hover { background: rgba(220, 80, 50, 0.22); }"
-    "splitter { background: transparent; color: rgba(220, 140, 70, 0.60); }"
-    /* Status bar */
-    ".status-bar { background: rgba(14, 6, 2, 0.98); }"
-    ".status-bar-text { color: #906030; }"
-    ".status-bar-badge-key { background: rgba(180, 110, 48, 0.34); }"
-    ".status-bar-badge-command { background: rgba(100, 130, 70, 0.28); }"
-    ".status-bar-badge-leader { background: rgba(180, 80, 48, 0.30); }"
-    /* Panels */
-    ".tree-panel, .plugin-side-panel { background: rgba(22, 10, 5, 0.92); }"
-    ".tree-section-header { background: transparent; }"
-    ".tree-section-title { color: #905530; }"
-    ".tree-row:hover { background: rgba(190, 110, 50, 0.10); }"
-    ".tree-sticky-row { background: rgba(28, 12, 6, 0.95); }"
-    ".tree-sticky-row:hover { background: rgba(190, 110, 50, 0.12); }"
-    ".tree-arrow { color: #6a3820; }"
-    ".tree-arrow-open { color: #d08040; }"
-    ".tree-name { color: #d0a070; }"
-    ".tree-name-dir { color: #f0c890; }"
-    /* Buffer / editor */
-    ".buffer-pane, .buffer-pane-active { background: transparent; }"
-    ".buffer-tabs-row { background: rgba(16, 7, 3, 0.87); }"
-    ".buffer-tab { background: transparent; corner-radius: 0px; }"
-    ".buffer-tab:hover { background: rgba(180, 100, 40, 0.12); }"
-    ".buffer-tab-active { background: rgba(76, 36, 16, 0.92); }"
-    ".buffer-tab-text { color: #7a4020; }"
-    ".buffer-tab-text-active { color: #f4ddb8; }"
-    ".buffer-tab-close:hover { background: rgba(220, 80, 40, 0.20); }"
-    ".buffer-body { background: rgba(14, 6, 2, 0.93); }"
-    ".buffer-gutter-col { background: rgba(18, 8, 4, 0.86); }"
-    ".buffer-gutter-line { color: #4a2810; }"
-    ".buffer-line, .buffer-body-text, .hl-plain { color: #e8d4b8; }"
-    ".buffer-selection { background: rgba(100, 48, 18, 0.90); }"
-    ".buffer-caret { background: #e08040; }"
-    ".buffer-scrollbar { background: rgba(18, 8, 4, 0.30); }"
-    ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(160, 90, 40, 0.38); corner-radius: 0px;"
-    "}"
-    ".buffer-scrollbar-thumb:hover, .buffer-scrollbar-thumb-active,"
-    ".buffer-hscrollbar-thumb:hover, .buffer-hscrollbar-thumb-active {"
-    "  background: rgba(200, 120, 60, 0.56);"
-    "}"
-    /* Syntax */
-    ".hl-keyword, .hl-macro { color: #e8a060; }"
-    ".hl-comment { color: #6a4020; }"
-    ".hl-string, .hl-regex { color: #a8c870; }"
-    ".hl-number, .hl-constant, .hl-escape { color: #f0b860; }"
-    ".hl-function, .hl-constructor { color: #e0c880; }"
-    ".hl-type, .hl-namespace { color: #78d0b0; }"
-    ".hl-property, .hl-attribute, .hl-parameter { color: #d8b888; }"
-    ".hl-operator, .hl-label { color: #c09060; }"
-    ".hl-tag { color: #e86050; }"
-    /* Welcome */
-    ".welcome-pane { background: rgba(14, 6, 2, 0.91); }"
-    ".welcome-title { color: #f0c898; }"
-    ".welcome-subtitle, .welcome-section-label { color: #6a4020; }"
-    ".welcome-hr { background: rgba(160, 90, 40, 0.24); }"
-    ".welcome-btn { background: rgba(140, 80, 32, 0.12); color: #c0a060; }"
-    ".welcome-btn-primary { background: rgba(110, 56, 20, 0.28); color: #f0d4a0; }"
-    ".welcome-btn:hover, .welcome-btn-primary:hover { background: rgba(170, 100, 44, 0.26); }"
-    /* Aux windows */
-    ".fp-root, .search-root-window { background: rgba(16, 7, 3, 0.91); }"
-    ".fp-toolbar, .fp-footer, .fp-colhdr, .search-header, .search-footer {"
-    "  background: rgba(22, 10, 5, 0.93);"
-    "}"
-    ".fp-list, .search-results { background: rgba(14, 6, 2, 0.89); }"
-    ".fp-row:hover, .search-result:hover { background: rgba(180, 100, 40, 0.10); }"
-    ".fp-row-selected, .search-result-selected { background: rgba(76, 36, 14, 0.90); }"
-    ".fp-new-folder-input, .search-input { background: rgba(14, 6, 2, 0.89); corner-radius: 0px; color: #e8d4b8; }"
-    ".search-result-line { color: #d08040; }"
-    /* Plugin/Settings windows */
-    ".pm-root, .sw-root { background: rgba(16, 7, 3, 0.91); }"
-    ".pm-left, .sw-left { background: rgba(20, 9, 4, 0.90); }"
-    ".pm-item:hover, .sw-tab-btn:hover { background: rgba(180, 100, 40, 0.10); }"
-    ".pm-item-selected, .sw-tab-btn-active { background: rgba(76, 36, 14, 0.82); }"
-    ".pm-right, .sw-right { background: rgba(14, 6, 2, 0.60); }"
-    ".sw-hr, .pm-hr { background: #4a2810; }"
-    ".pm-btn, .pm-btn-enable, .pm-btn-disable, .sw-effect-btn { background: rgba(150, 80, 30, 0.14); corner-radius: 0px; }"
-    ".pm-btn:hover, .sw-effect-btn:hover { background: rgba(180, 100, 44, 0.22); }"
-    ".sw-effect-btn-active { background: rgba(100, 48, 16, 0.36); }"
-    /* Command flow popup */
-    ".cf-panel { background: rgba(14, 6, 2, 0.96); corner-radius: 0px; }"
-    ".cf-row-key { background: rgba(170, 96, 40, 0.16); corner-radius: 0px; }"
-    ".cf-row-key-text { color: #e08040; }"
-    /* Terminal */
-    ".term-panel, .term-viewport, .term-filler { background: rgba(14, 6, 2, 0.97); }"
-    ".term-header { background: rgba(20, 9, 4, 0.97); }"
-    ".term-tab { background: rgba(20, 9, 4, 0.97); color: #6a4020; }"
-    ".term-tab-active { background: rgba(14, 6, 2, 0.97); color: #e8c080; }"
-    ".term-cursor-focused { background: #e08040; color: #0c0400; }";
+/* Helper macro to generate all theme-common CSS from basic palette tokens.
+ * Strings are concatenated by the C preprocessor (adjacent string literals). */
+#define THEME_CSS(\
+    /* chrome */ TB, TS, TC, TM, TCH, TCL,\
+    /* splitter */ SP,\
+    /* status */ SR, ST, SBK, SBC, SBL,\
+    /* tree panel */ TP, TT, TRH, TSR, TAD, TAO, TNA, TND,\
+    /* tabs row */ BT,\
+    /* tab bg, active tab */ BTAB, BTAA,\
+    /* tab text, active text */ BTXT, BTXA,\
+    /* buffer body, gutter, gutter-line */ BB, BG, GL,\
+    /* plain text, selection, caret */ BL, BSL, BC,\
+    /* scrollbar */ SB,\
+    /* syntax */ KW, CM, STR, NUM, FN, TY, PR, OP, TG,\
+    /* ui accent rgba */ UA,\
+    /* fp/pm/sw root, left panel, hover, selected */ FR, FL, FH, FS)\
+\
+    /* Chrome */\
+    ".ca-titlebar { background: " TB "; }"\
+    ".ca-titlebar-title { color: " TS "; }"\
+    ".ca-titlebar-menu-item { color: " TC "; }"\
+    ".ca-titlebar-menu-item:hover { background: " TM "; color: " TS "; }"\
+    ".ca-titlebar-control { color: " TCH "; }"\
+    ".ca-titlebar-control:hover { background: " TM "; }"\
+    ".ca-titlebar-close { color: " TCL "; }"\
+    ".ca-titlebar-close:hover { background: " TM "; }"\
+    /* Splitter */\
+    "splitter { background: transparent; color: " SP "; }"\
+    /* Status bar */\
+    ".status-bar { background: " SR "; }"\
+    ".status-bar-text { color: " ST "; }"\
+    ".status-bar-badge-key { background: " SBK "; }"\
+    ".status-bar-badge-command { background: " SBC "; }"\
+    ".status-bar-badge-leader { background: " SBL "; }"\
+    /* File tree */\
+    ".tree-panel, .plugin-side-panel { background: " TP "; }"\
+    ".tree-section-header { background: transparent; }"\
+    ".tree-section-title { color: " TT "; letter-spacing: 0.9px; }"\
+    ".tree-row:hover { background: " TRH "; }"\
+    ".tree-sticky-row { background: " TSR "; corner-radius: 0px; }"\
+    ".tree-sticky-row:hover { background: " TRH "; }"\
+    ".tree-arrow { color: " TAD "; }"\
+    ".tree-arrow-open { color: " TAO "; }"\
+    ".tree-name { color: " TNA "; }"\
+    ".tree-name-dir { color: " TND "; }"\
+    /* Buffer tabs */\
+    ".buffer-tabs-row { height: 30px; padding: 3px 6px; gap: 4px; align-items: center; background: " BT "; }"\
+    ".buffer-tab { height: 24px; padding: 0px 4px 0px 10px; background: transparent; corner-radius: 0px; }"\
+    ".buffer-tab:hover { background: " UA "; }"\
+    ".buffer-tab-active { background: " BTAA "; }"\
+    ".buffer-tab-text { color: " TAD "; }"\
+    ".buffer-tab-text-active { color: " TND "; }"\
+    ".buffer-tab-close:hover { background: " UA "; }"\
+    /* Buffer body */\
+    ".buffer-body { background: " BB "; }"\
+    ".buffer-gutter-col { background: " BG "; }"\
+    ".buffer-gutter-line { color: " GL "; }"\
+    ".buffer-line, .buffer-body-text, .hl-plain { color: " BL "; }"\
+    ".buffer-selection { background: " BSL "; }"\
+    ".buffer-caret { background: " BC "; }"\
+    ".buffer-scrollbar { background: " SB "; }"\
+    ".buffer-hscrollbar { background: " SB "; }"\
+    ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active,"\
+    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active"\
+    " { background: " UA "; corner-radius: 0px; width: 9px; }"\
+    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active { height: 9px; }"\
+    ".buffer-scrollbar-thumb:hover, .buffer-scrollbar-thumb-active,"\
+    ".buffer-hscrollbar-thumb:hover, .buffer-hscrollbar-thumb-active"\
+    " { background: " SP "; }"\
+    /* Syntax */\
+    ".hl-keyword, .hl-macro { color: " KW "; }"\
+    ".hl-comment { color: " CM "; }"\
+    ".hl-string, .hl-regex { color: " STR "; }"\
+    ".hl-number, .hl-constant, .hl-escape { color: " NUM "; }"\
+    ".hl-function, .hl-constructor { color: " FN "; }"\
+    ".hl-type, .hl-namespace { color: " TY "; }"\
+    ".hl-property, .hl-attribute, .hl-parameter { color: " PR "; }"\
+    ".hl-operator, .hl-label { color: " OP "; }"\
+    ".hl-tag { color: " TG "; }"\
+    /* Welcome */\
+    ".welcome-pane { background: " BB "; padding: 60px 72px; align-items: center; }"\
+    ".welcome-title { color: " TND "; }"\
+    ".welcome-subtitle, .welcome-section-label { color: " CM "; }"\
+    ".welcome-desc { color: " TNA "; }"\
+    ".welcome-hr { background: " UA "; }"\
+    ".welcome-btn { corner-radius: 0px; background: " UA "; color: " TNA "; }"\
+    ".welcome-btn-primary { corner-radius: 0px; background: " FS "; color: " TND "; }"\
+    ".welcome-btn:hover, .welcome-btn-primary:hover { background: " FH "; }"\
+    /* File picker + search */\
+    ".fp-root, .search-root-window { background: " FR "; }"\
+    ".fp-toolbar, .fp-footer, .fp-colhdr, .search-header, .search-footer { background: " FL "; }"\
+    ".fp-list, .search-results { background: " BB "; }"\
+    ".fp-row, .search-result { corner-radius: 0px; }"\
+    ".fp-row:hover, .search-result:hover { background: " FH "; }"\
+    ".fp-row-selected, .search-result-selected { background: " FS "; }"\
+    ".fp-new-folder-input, .search-input { background: " BB "; corner-radius: 0px; color: " BL "; }"\
+    ".search-result-line { color: " BC "; }"\
+    /* Plugin manager / settings */\
+    ".pm-root, .sw-root { background: " FR "; }"\
+    ".pm-left, .sw-left { background: " FL "; }"\
+    ".pm-search-row { background: " FL "; }"\
+    ".pm-search-input, .sw-scale-input, .sw-select { background: " BB "; corner-radius: 0px; }"\
+    ".pm-item, .sw-tab-btn { corner-radius: 0px; }"\
+    ".pm-item:hover, .sw-tab-btn:hover { background: " FH "; }"\
+    ".pm-item-selected, .sw-tab-btn-active { background: " FS "; }"\
+    ".pm-right, .sw-right { background: " BB "; }"\
+    ".pm-btn, .pm-btn-enable, .pm-btn-disable { corner-radius: 0px; background: " UA "; }"\
+    ".pm-btn:hover { background: " FH "; }"\
+    ".sw-hr, .pm-hr { background: " GL "; }"\
+    /* Command flow popup */\
+    ".cf-panel { background: " FR "; corner-radius: 0px; shadow-offset-y: 6px; shadow-blur: 18px; shadow-color: rgba(0,0,0,0.46); }"\
+    ".cf-row { corner-radius: 0px; }"\
+    ".cf-row:hover { background: transparent; }"\
+    ".cf-row-key { background: " UA "; corner-radius: 0px; }"\
+    ".cf-row-key-text { color: " BC "; }"\
+    /* SCM */\
+    ".scm-root, .scm-view { background: " BB "; }"\
+    ".scm-toolbar, .scm-repository, .scm-commit-box, .scm-section-header { background: " FL "; }"\
+    ".scm-file-row:hover, .scm-commit-row:hover, .scm-branch-row:hover { background: " FH "; }"\
+    ".scm-commit-input, .scm-branch-input { background: " BB "; corner-radius: 0px; }"\
+    ".scm-branch-row-current { background: " FS "; }"\
+    /* Terminal */\
+    ".term-panel, .term-filler { background: " SR "; }"\
+    ".term-viewport { background: " SR "; padding: 4px 6px; }"\
+    ".term-header { background: " FR "; }"\
+    ".term-tab { background: " FR "; color: " CM "; }"\
+    ".term-tab-active { background: " SR "; color: " TNA "; }"\
+    ".term-cursor-focused { background: " BC "; }"
 
 /* ------------------------------------------------------------------ */
-/* Plugin lifecycle                                                    */
+/* Theme palette definitions                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Deep Ocean — custom cool navy/teal.
+ */
+static const char k_ocean_css[] = THEME_CSS(
+    "rgba(5,18,38,0.91)",    /* TB  titlebar bg */
+    "#4a9ab8",               /* TS  title color */
+    "#5ab4cc",               /* TC  menu item */
+    "rgba(40,160,200,0.16)", /* TM  menu hover */
+    "#3a7898",               /* TCH control */
+    "#50a8c0",               /* TCL close */
+    "rgba(0,200,230,0.80)",  /* SP  splitter */
+    "rgba(3,12,28,0.97)",    /* SR  status bar */
+    "#3a7898",               /* ST  status text */
+    "rgba(20,130,180,0.44)", /* SBK badge key */
+    "rgba(16,150,120,0.36)", /* SBC badge cmd */
+    "rgba(140,120,30,0.34)", /* SBL badge leader */
+    "rgba(6,20,44,0.93)",    /* TP  tree panel */
+    "#3a7898",               /* TT  section title */
+    "rgba(30,170,210,0.12)", /* TRH row hover */
+    "rgba(8,28,56,0.94)",    /* TSR sticky row */
+    "#1e5470",               /* TAD arrow dim */
+    "#00c8e0",               /* TAO arrow open */
+    "#80c0d4",               /* TNA name */
+    "#c4e4f0",               /* TND name-dir */
+    "rgba(5,16,36,0.84)",    /* BT  tabs row */
+    "rgba(6,16,30,0.60)",    /* BTAB tab bg (unused) */
+    "rgba(12,90,140,0.56)",  /* BTAA active tab */
+    "#2a5878",               /* BTXT tab text */
+    "#d0ecf8",               /* BTXA active tab text */
+    "rgba(4,14,30,0.91)",    /* BB  buffer body */
+    "rgba(5,18,38,0.82)",    /* BG  gutter */
+    "#143050",               /* GL  gutter line */
+    "#c0dce8",               /* BL  plain text */
+    "rgba(10,80,130,0.70)",  /* BSL selection */
+    "#00d4e8",               /* BC  caret */
+    "rgba(5,16,36,0.28)",    /* SB  scrollbar */
+    "#00c8e0",               /* KW  keyword */
+    "#1e5468",               /* CM  comment */
+    "#70d090",               /* STR string */
+    "#58d0b8",               /* NUM number */
+    "#48b0f0",               /* FN  function */
+    "#28d8c8",               /* TY  type */
+    "#80bcd0",               /* PR  property */
+    "#40a8c0",               /* OP  operator */
+    "#d05868",               /* TG  tag */
+    "rgba(20,140,180,0.35)", /* UA  ui accent */
+    "rgba(5,16,36,0.88)",    /* FR  fp/pm/sw root */
+    "rgba(6,22,48,0.86)",    /* FL  left panel */
+    "rgba(30,155,200,0.13)", /* FH  hover */
+    "rgba(10,80,130,0.46)"   /* FS  selected */
+);
+
+/*
+ * Amethyst — custom violet/plum.
+ */
+static const char k_amethyst_css[] = THEME_CSS(
+    "rgba(22,8,48,0.91)",
+    "#8050b8", "#9868cc", "rgba(140,70,220,0.17)", "#6840a0", "#b05898",
+    "rgba(190,90,255,0.82)",
+    "rgba(14,4,32,0.97)", "#6840a0",
+    "rgba(110,55,200,0.46)", "rgba(60,80,180,0.38)", "rgba(160,100,30,0.34)",
+    "rgba(24,9,52,0.93)", "#6840a0", "rgba(140,70,220,0.12)",
+    "rgba(30,12,64,0.94)", "#40206a", "#c050f8", "#b890d8", "#e0cef8",
+    "rgba(20,7,44,0.84)", "rgba(20,7,44,0.60)", "rgba(70,22,140,0.60)",
+    "#503080", "#eedcfc",
+    "rgba(16,5,36,0.91)", "rgba(20,7,44,0.82)", "#2a1048",
+    "#d8cce8", "rgba(80,22,160,0.66)", "#c050f8",
+    "rgba(18,6,40,0.28)",
+    "#c050f8", "#38186a", "#90d060", "#f0b060", "#80a8fc",
+    "#50d8c8", "#c0a8e0", "#a080d0", "#f06080",
+    "rgba(110,55,195,0.38)",
+    "rgba(20,7,44,0.88)", "rgba(26,10,56,0.86)",
+    "rgba(130,60,210,0.13)", "rgba(70,20,140,0.46)"
+);
+
+/*
+ * Graphite — custom neutral monochrome.
+ */
+static const char k_graphite_css[] = THEME_CSS(
+    "rgba(14,15,17,0.91)",
+    "#7a8290", "#8890a0", "rgba(155,162,175,0.14)", "#6a7280", "#c06868",
+    "rgba(200,208,218,0.72)",
+    "rgba(10,10,12,0.97)", "#6a7280",
+    "rgba(105,115,130,0.42)", "rgba(75,115,85,0.34)", "rgba(130,115,55,0.34)",
+    "rgba(16,17,20,0.93)", "#6a7280", "rgba(155,165,180,0.11)",
+    "rgba(20,22,26,0.94)", "#484e58", "#b0b8c4", "#8890a0", "#ccd4dc",
+    "rgba(13,14,17,0.84)", "rgba(13,14,17,0.60)", "rgba(64,70,82,0.65)",
+    "#484e58", "#e8ecf2",
+    "rgba(11,12,14,0.91)", "rgba(14,15,17,0.82)", "#2c3038",
+    "#d4d8e0", "rgba(65,72,86,0.75)", "#d8dce4",
+    "rgba(13,14,17,0.28)",
+    "#ccd2da", "#484e58", "#a0b098", "#b8aa90", "#a0b8cc",
+    "#88aabb", "#98a0b0", "#7888a0", "#b88888",
+    "rgba(112,122,138,0.38)",
+    "rgba(13,14,17,0.88)", "rgba(16,17,20,0.86)",
+    "rgba(148,156,172,0.11)", "rgba(62,68,82,0.52)"
+);
+
+/*
+ * Ember Glass — custom amber/rust.
+ */
+static const char k_ember_css[] = THEME_CSS(
+    "rgba(40,14,4,0.91)",
+    "#a86028", "#c07838", "rgba(200,100,30,0.17)", "#985018", "#d05830",
+    "rgba(248,140,40,0.82)",
+    "rgba(26,8,2,0.97)", "#985018",
+    "rgba(185,95,30,0.46)", "rgba(95,135,50,0.36)", "rgba(195,70,30,0.34)",
+    "rgba(44,16,4,0.93)", "#985018", "rgba(200,100,28,0.13)",
+    "rgba(56,20,5,0.94)", "#622810", "#f08820", "#c89858", "#f0cc80",
+    "rgba(36,12,3,0.84)", "rgba(36,12,3,0.60)", "rgba(110,40,8,0.62)",
+    "#7a3810", "#f8e0a0",
+    "rgba(30,10,2,0.91)", "rgba(36,12,3,0.82)", "#401c08",
+    "#ecd8a8", "rgba(130,48,10,0.70)", "#f08820",
+    "rgba(34,12,3,0.28)",
+    "#f08820", "#602810", "#a0c860", "#f8b850", "#e8d060",
+    "#50cca0", "#d8b070", "#c08840", "#e04828",
+    "rgba(175,82,26,0.38)",
+    "rgba(36,12,3,0.88)", "rgba(44,16,4,0.86)",
+    "rgba(188,95,24,0.13)", "rgba(110,40,8,0.48)"
+);
+
+/*
+ * Gruvbox Dark — warm retro brown/orange palette (gruvbox dark medium).
+ * bg0=#282828 fg1=#ebdbb2 yellow=#d79921 orange=#d65d0e green=#98971a
+ * blue=#458588 aqua=#689d6a red=#cc241d purple=#b16286
+ */
+static const char k_gruvbox_css[] = THEME_CSS(
+    "rgba(32,28,24,0.91)",
+    "#d79921", "#d5c4a1", "rgba(168,153,132,0.18)", "#928374", "#cc241d",
+    "rgba(214,93,14,0.85)",
+    "rgba(20,18,14,0.97)", "#928374",
+    "rgba(215,153,33,0.44)", "rgba(104,157,106,0.38)", "rgba(177,98,134,0.36)",
+    "rgba(40,36,30,0.93)", "#928374", "rgba(168,153,132,0.12)",
+    "rgba(50,46,38,0.94)", "#504945", "#d79921", "#d5c4a1", "#ebdbb2",
+    "rgba(32,28,22,0.84)", "rgba(32,28,22,0.60)", "rgba(80,60,36,0.65)",
+    "#7c6f64", "#ebdbb2",
+    "rgba(24,22,18,0.91)", "rgba(40,36,30,0.82)", "#3c3836",
+    "#ebdbb2", "rgba(80,60,36,0.72)", "#d79921",
+    "rgba(32,28,22,0.28)",
+    "#d79921", "#665c54", "#98971a", "#d65d0e", "#fabd2f",
+    "#689d6a", "#d5c4a1", "#d65d0e", "#cc241d",
+    "rgba(168,153,132,0.28)",
+    "rgba(32,28,22,0.88)", "rgba(40,36,30,0.86)",
+    "rgba(168,153,132,0.12)", "rgba(80,60,36,0.52)"
+);
+
+/*
+ * Nord — arctic blue/slate palette (nord0–nord15).
+ * nord0=#2e3440 nord3=#4c566a nord8=#88c0d0 nord11=#bf616a nord13=#ebcb8b
+ */
+static const char k_nord_css[] = THEME_CSS(
+    "rgba(36,42,54,0.91)",
+    "#88c0d0", "#81a1c1", "rgba(136,192,208,0.15)", "#5e81ac", "#bf616a",
+    "rgba(136,192,208,0.80)",
+    "rgba(22,26,34,0.97)", "#5e81ac",
+    "rgba(94,129,172,0.44)", "rgba(163,190,140,0.38)", "rgba(235,203,139,0.36)",
+    "rgba(46,52,64,0.93)", "#4c566a", "rgba(136,192,208,0.12)",
+    "rgba(58,66,82,0.94)", "#3b4252", "#88c0d0", "#d8dee9", "#eceff4",
+    "rgba(36,40,52,0.84)", "rgba(36,40,52,0.60)", "rgba(67,76,94,0.65)",
+    "#4c566a", "#eceff4",
+    "rgba(30,34,46,0.91)", "rgba(40,46,58,0.82)", "#3b4252",
+    "#d8dee9", "rgba(67,76,94,0.72)", "#88c0d0",
+    "rgba(36,40,52,0.28)",
+    "#81a1c1", "#4c566a", "#a3be8c", "#b48ead", "#88c0d0",
+    "#8fbcbb", "#d8dee9", "#81a1c1", "#bf616a",
+    "rgba(94,129,172,0.30)",
+    "rgba(36,40,52,0.88)", "rgba(46,52,64,0.86)",
+    "rgba(136,192,208,0.11)", "rgba(67,76,94,0.52)"
+);
+
+/*
+ * Tokyo Night — cool indigo/purple (tokyonight night variant).
+ * bg=#1a1b26 fg=#c0caf5 blue=#7aa2f7 cyan=#7dcfff purple=#bb9af7
+ * green=#9ece6a red=#f7768e orange=#ff9e64 yellow=#e0af68
+ */
+static const char k_tokyonight_css[] = THEME_CSS(
+    "rgba(22,22,36,0.91)",
+    "#7aa2f7", "#c0caf5", "rgba(122,162,247,0.16)", "#565f89", "#f7768e",
+    "rgba(125,207,255,0.82)",
+    "rgba(12,12,24,0.97)", "#565f89",
+    "rgba(122,162,247,0.42)", "rgba(158,206,106,0.36)", "rgba(224,175,104,0.36)",
+    "rgba(28,29,50,0.93)", "#565f89", "rgba(122,162,247,0.12)",
+    "rgba(36,38,62,0.94)", "#3b3f61", "#7aa2f7", "#c0caf5", "#cdd6f4",
+    "rgba(22,22,40,0.84)", "rgba(22,22,40,0.60)", "rgba(52,56,92,0.65)",
+    "#3b3f61", "#cdd6f4",
+    "rgba(16,17,32,0.91)", "rgba(24,24,42,0.82)", "#292e42",
+    "#c0caf5", "rgba(52,56,92,0.75)", "#7aa2f7",
+    "rgba(22,22,40,0.28)",
+    "#bb9af7", "#565f89", "#9ece6a", "#ff9e64", "#7aa2f7",
+    "#2ac3de", "#c0caf5", "#89ddff", "#f7768e",
+    "rgba(122,162,247,0.28)",
+    "rgba(22,22,40,0.88)", "rgba(28,29,50,0.86)",
+    "rgba(122,162,247,0.13)", "rgba(52,56,92,0.52)"
+);
+
+/*
+ * Catppuccin Mocha — pastel mauve/lavender.
+ * base=#1e1e2e surface0=#313244 mauve=#cba6f7 blue=#89b4fa
+ * green=#a6e3a1 red=#f38ba8 yellow=#f9e2af peach=#fab387 teal=#94e2d5
+ */
+static const char k_catppuccin_css[] = THEME_CSS(
+    "rgba(24,24,37,0.91)",
+    "#cba6f7", "#cdd6f4", "rgba(203,166,247,0.16)", "#6c7086", "#f38ba8",
+    "rgba(203,166,247,0.80)",
+    "rgba(12,12,20,0.97)", "#6c7086",
+    "rgba(203,166,247,0.42)", "rgba(166,227,161,0.36)", "rgba(249,226,175,0.36)",
+    "rgba(30,30,46,0.93)", "#6c7086", "rgba(203,166,247,0.12)",
+    "rgba(40,40,56,0.94)", "#45475a", "#cba6f7", "#cdd6f4", "#f5f5f7",
+    "rgba(24,24,40,0.84)", "rgba(24,24,40,0.60)", "rgba(69,71,90,0.65)",
+    "#45475a", "#f5f5f7",
+    "rgba(18,18,32,0.91)", "rgba(24,24,38,0.82)", "#313244",
+    "#cdd6f4", "rgba(69,71,90,0.75)", "#cba6f7",
+    "rgba(24,24,40,0.28)",
+    "#cba6f7", "#585b70", "#a6e3a1", "#fab387", "#89b4fa",
+    "#94e2d5", "#cdd6f4", "#89dceb", "#f38ba8",
+    "rgba(137,180,250,0.30)",
+    "rgba(24,24,38,0.88)", "rgba(30,30,46,0.86)",
+    "rgba(203,166,247,0.12)", "rgba(69,71,90,0.52)"
+);
+
+/*
+ * Dracula — purple/pink cyberpunk.
+ * bg=#282a36 fg=#f8f8f2 pink=#ff79c6 purple=#bd93f9 cyan=#8be9fd
+ * green=#50fa7b orange=#ffb86c red=#ff5555 yellow=#f1fa8c
+ */
+static const char k_dracula_css[] = THEME_CSS(
+    "rgba(32,34,46,0.91)",
+    "#bd93f9", "#f8f8f2", "rgba(189,147,249,0.17)", "#6272a4", "#ff5555",
+    "rgba(255,121,198,0.85)",
+    "rgba(18,20,30,0.97)", "#6272a4",
+    "rgba(189,147,249,0.44)", "rgba(80,250,123,0.36)", "rgba(241,250,140,0.36)",
+    "rgba(40,42,56,0.93)", "#6272a4", "rgba(189,147,249,0.13)",
+    "rgba(50,52,68,0.94)", "#44475a", "#bd93f9", "#f8f8f2", "#ffffff",
+    "rgba(32,34,46,0.84)", "rgba(32,34,46,0.60)", "rgba(68,71,90,0.65)",
+    "#44475a", "#ffffff",
+    "rgba(26,28,40,0.91)", "rgba(40,42,56,0.82)", "#44475a",
+    "#f8f8f2", "rgba(68,71,90,0.75)", "#ff79c6",
+    "rgba(32,34,46,0.28)",
+    "#ff79c6", "#6272a4", "#f1fa8c", "#ffb86c", "#50fa7b",
+    "#8be9fd", "#f8f8f2", "#ff79c6", "#ff5555",
+    "rgba(189,147,249,0.30)",
+    "rgba(32,34,46,0.88)", "rgba(40,42,56,0.86)",
+    "rgba(189,147,249,0.13)", "rgba(68,71,90,0.52)"
+);
+
+/*
+ * One Dark Pro — muted blue-grey (atom one dark).
+ * bg=#282c34 fg=#abb2bf blue=#61afef green=#98c379 red=#e06c75
+ * yellow=#e5c07b cyan=#56b6c2 purple=#c678dd orange=#d19a66
+ */
+static const char k_onedark_css[] = THEME_CSS(
+    "rgba(30,33,40,0.91)",
+    "#61afef", "#abb2bf", "rgba(97,175,239,0.16)", "#5c6370", "#e06c75",
+    "rgba(97,175,239,0.82)",
+    "rgba(18,20,26,0.97)", "#5c6370",
+    "rgba(97,175,239,0.42)", "rgba(152,195,121,0.36)", "rgba(229,192,123,0.36)",
+    "rgba(36,40,50,0.93)", "#5c6370", "rgba(97,175,239,0.12)",
+    "rgba(46,50,60,0.94)", "#3e4451", "#61afef", "#abb2bf", "#d0d5e0",
+    "rgba(30,33,42,0.84)", "rgba(30,33,42,0.60)", "rgba(62,68,86,0.65)",
+    "#3e4451", "#d0d5e0",
+    "rgba(24,26,34,0.91)", "rgba(30,33,42,0.82)", "#3e4451",
+    "#abb2bf", "rgba(62,68,86,0.75)", "#61afef",
+    "rgba(30,33,42,0.28)",
+    "#c678dd", "#5c6370", "#98c379", "#d19a66", "#61afef",
+    "#56b6c2", "#abb2bf", "#56b6c2", "#e06c75",
+    "rgba(97,175,239,0.28)",
+    "rgba(30,33,42,0.88)", "rgba(36,40,50,0.86)",
+    "rgba(97,175,239,0.12)", "rgba(62,68,86,0.52)"
+);
+
+/*
+ * Rosé Pine — dusty rose/pine (rose-pine main).
+ * base=#191724 surface=#1f1d2e gold=#f6c177 iris=#c4a7e7 pine=#31748f
+ * foam=#9ccfd8 rose=#ebbcba love=#eb6f92 muted=#6e6a86
+ */
+static const char k_rosepine_css[] = THEME_CSS(
+    "rgba(22,20,32,0.91)",
+    "#c4a7e7", "#e0d9f0", "rgba(196,167,231,0.16)", "#6e6a86", "#eb6f92",
+    "rgba(196,167,231,0.82)",
+    "rgba(12,11,22,0.97)", "#6e6a86",
+    "rgba(196,167,231,0.42)", "rgba(156,207,216,0.38)", "rgba(246,193,119,0.36)",
+    "rgba(26,24,40,0.93)", "#6e6a86", "rgba(196,167,231,0.12)",
+    "rgba(34,32,52,0.94)", "#44415a", "#c4a7e7", "#e0d9f0", "#f5eeff",
+    "rgba(20,18,34,0.84)", "rgba(20,18,34,0.60)", "rgba(62,58,84,0.65)",
+    "#44415a", "#f5eeff",
+    "rgba(16,14,30,0.91)", "rgba(22,20,36,0.82)", "#393552",
+    "#e0d9f0", "rgba(62,58,84,0.75)", "#c4a7e7",
+    "rgba(20,18,34,0.28)",
+    "#c4a7e7", "#6e6a86", "#9ccfd8", "#f6c177", "#9ccfd8",
+    "#31748f", "#e0d9f0", "#c4a7e7", "#eb6f92",
+    "rgba(196,167,231,0.28)",
+    "rgba(20,18,34,0.88)", "rgba(26,24,40,0.86)",
+    "rgba(196,167,231,0.12)", "rgba(62,58,84,0.52)"
+);
+
+/*
+ * Everforest — muted green/sage (everforest dark hard).
+ * bg0=#272e33 fg=#d3c6aa green=#a7c080 yellow=#dbbc7f orange=#e69875
+ * red=#e67e80 purple=#d699b6 blue=#7fbbb3 aqua=#83c092 grey=#859289
+ */
+static const char k_everforest_css[] = THEME_CSS(
+    "rgba(30,36,40,0.91)",
+    "#a7c080", "#d3c6aa", "rgba(167,192,128,0.16)", "#859289", "#e67e80",
+    "rgba(131,192,146,0.82)",
+    "rgba(18,24,28,0.97)", "#859289",
+    "rgba(127,187,179,0.42)", "rgba(167,192,128,0.38)", "rgba(219,188,127,0.36)",
+    "rgba(36,44,48,0.93)", "#859289", "rgba(167,192,128,0.12)",
+    "rgba(46,56,60,0.94)", "#374247", "#a7c080", "#d3c6aa", "#f0e6cc",
+    "rgba(30,36,42,0.84)", "rgba(30,36,42,0.60)", "rgba(56,68,72,0.65)",
+    "#374247", "#f0e6cc",
+    "rgba(24,30,34,0.91)", "rgba(30,38,42,0.82)", "#3d4e54",
+    "#d3c6aa", "rgba(56,68,72,0.75)", "#a7c080",
+    "rgba(30,36,42,0.28)",
+    "#a7c080", "#5c6a72", "#a7c080", "#dbbc7f", "#7fbbb3",
+    "#83c092", "#d3c6aa", "#7fbbb3", "#e67e80",
+    "rgba(127,187,179,0.30)",
+    "rgba(30,36,42,0.88)", "rgba(36,44,48,0.86)",
+    "rgba(167,192,128,0.12)", "rgba(56,68,72,0.52)"
+);
+
+/*
+ * Kanagawa — deep Japanese ink/wave (kanagawa wave).
+ * bg=#1f1f28 fg=#dcd7ba dragonBlue=#658594 waveBlue=#223249 lotusBlue=#c7d7e0
+ * sakuraPink=#d27e99 springGreen=#98bb6c carpYellow=#e6c384 waveAqua=#6a9589
+ * oniViolet=#957fb8 crystalBlue=#7e9cd8 roninYellow=#ff9e3b
+ */
+static const char k_kanagawa_css[] = THEME_CSS(
+    "rgba(22,22,30,0.91)",
+    "#7e9cd8", "#dcd7ba", "rgba(126,156,216,0.16)", "#54546d", "#c34043",
+    "rgba(101,133,148,0.82)",
+    "rgba(12,12,18,0.97)", "#54546d",
+    "rgba(126,156,216,0.42)", "rgba(152,187,108,0.36)", "rgba(230,195,132,0.36)",
+    "rgba(26,26,36,0.93)", "#54546d", "rgba(126,156,216,0.12)",
+    "rgba(34,34,46,0.94)", "#363646", "#7e9cd8", "#dcd7ba", "#f2ecbc",
+    "rgba(20,20,30,0.84)", "rgba(20,20,30,0.60)", "rgba(54,54,80,0.65)",
+    "#363646", "#f2ecbc",
+    "rgba(16,16,26,0.91)", "rgba(22,22,34,0.82)", "#2a2a3a",
+    "#dcd7ba", "rgba(54,54,80,0.75)", "#7e9cd8",
+    "rgba(20,20,30,0.28)",
+    "#957fb8", "#54546d", "#98bb6c", "#ff9e3b", "#7e9cd8",
+    "#6a9589", "#dcd7ba", "#e6c384", "#c34043",
+    "rgba(126,156,216,0.28)",
+    "rgba(20,20,30,0.88)", "rgba(26,26,36,0.86)",
+    "rgba(126,156,216,0.12)", "rgba(54,54,80,0.52)"
+);
+
+/*
+ * Carbonfox — charcoal/orange (nightfox carbonfox).
+ * bg=#161616 fg=#f2f4f8 orange=#3ddbd9 blue=#78a9ff red=#ee5396 green=#25be6a
+ * yellow=#08bdba magenta=#be95ff cyan=#3ddbd9
+ */
+static const char k_carbonfox_css[] = THEME_CSS(
+    "rgba(18,18,20,0.91)",
+    "#78a9ff", "#f2f4f8", "rgba(120,169,255,0.16)", "#525252", "#ee5396",
+    "rgba(61,219,217,0.80)",
+    "rgba(10,10,12,0.97)", "#525252",
+    "rgba(120,169,255,0.42)", "rgba(37,190,106,0.36)", "rgba(8,189,186,0.36)",
+    "rgba(22,22,26,0.93)", "#525252", "rgba(120,169,255,0.12)",
+    "rgba(30,30,34,0.94)", "#393939", "#78a9ff", "#f2f4f8", "#ffffff",
+    "rgba(16,16,20,0.84)", "rgba(16,16,20,0.60)", "rgba(57,57,65,0.65)",
+    "#393939", "#ffffff",
+    "rgba(12,12,16,0.91)", "rgba(18,18,22,0.82)", "#262626",
+    "#f2f4f8", "rgba(57,57,65,0.75)", "#78a9ff",
+    "rgba(16,16,20,0.28)",
+    "#be95ff", "#525252", "#25be6a", "#ff832b", "#78a9ff",
+    "#3ddbd9", "#f2f4f8", "#3ddbd9", "#ee5396",
+    "rgba(120,169,255,0.28)",
+    "rgba(16,16,20,0.88)", "rgba(22,22,26,0.86)",
+    "rgba(120,169,255,0.12)", "rgba(57,57,65,0.52)"
+);
+
+/*
+ * Monokai Pro — saturated pink/green (monokai pro classic).
+ * bg=#2d2a2e fg=#fcfcfa yellow=#ffd866 orange=#fc9867 red=#ff6188
+ * purple=#ab9df2 green=#a9dc76 blue=#78dce8
+ */
+static const char k_monokai_css[] = THEME_CSS(
+    "rgba(34,32,36,0.91)",
+    "#ffd866", "#fcfcfa", "rgba(255,216,102,0.17)", "#727072", "#ff6188",
+    "rgba(120,220,232,0.82)",
+    "rgba(20,18,22,0.97)", "#727072",
+    "rgba(171,157,242,0.42)", "rgba(169,220,118,0.36)", "rgba(255,216,102,0.36)",
+    "rgba(40,38,42,0.93)", "#727072", "rgba(255,216,102,0.13)",
+    "rgba(50,48,54,0.94)", "#5b595c", "#ffd866", "#fcfcfa", "#ffffff",
+    "rgba(34,32,38,0.84)", "rgba(34,32,38,0.60)", "rgba(82,78,88,0.65)",
+    "#5b595c", "#ffffff",
+    "rgba(28,26,32,0.91)", "rgba(34,32,40,0.82)", "#403e41",
+    "#fcfcfa", "rgba(82,78,88,0.75)", "#ff6188",
+    "rgba(34,32,38,0.28)",
+    "#ff6188", "#5b595c", "#a9dc76", "#fc9867", "#78dce8",
+    "#ab9df2", "#fcfcfa", "#78dce8", "#ff6188",
+    "rgba(171,157,242,0.30)",
+    "rgba(34,32,38,0.88)", "rgba(40,38,42,0.86)",
+    "rgba(255,216,102,0.13)", "rgba(82,78,88,0.52)"
+);
+
+/*
+ * Sonokai — vivid mixed accent (sonokai shusia variant).
+ * bg=#2d2a2e fg=#e2e2e3 red=#f85e84 orange=#ef9062 yellow=#e7c664
+ * green=#9ed06c blue=#76cce0 purple=#b39df3
+ */
+static const char k_sonokai_css[] = THEME_CSS(
+    "rgba(34,32,38,0.91)",
+    "#76cce0", "#e2e2e3", "rgba(118,204,224,0.17)", "#7f8490", "#f85e84",
+    "rgba(118,204,224,0.82)",
+    "rgba(20,18,24,0.97)", "#7f8490",
+    "rgba(179,157,243,0.42)", "rgba(158,208,108,0.36)", "rgba(231,198,100,0.36)",
+    "rgba(40,38,46,0.93)", "#7f8490", "rgba(118,204,224,0.13)",
+    "rgba(50,48,58,0.94)", "#4a4a59", "#76cce0", "#e2e2e3", "#f2f2f3",
+    "rgba(34,32,42,0.84)", "rgba(34,32,42,0.60)", "rgba(72,70,88,0.65)",
+    "#4a4a59", "#f2f2f3",
+    "rgba(26,24,34,0.91)", "rgba(34,32,44,0.82)", "#3a384a",
+    "#e2e2e3", "rgba(72,70,88,0.75)", "#f85e84",
+    "rgba(34,32,42,0.28)",
+    "#f85e84", "#4a4a59", "#9ed06c", "#ef9062", "#76cce0",
+    "#b39df3", "#e2e2e3", "#76cce0", "#f85e84",
+    "rgba(179,157,243,0.28)",
+    "rgba(34,32,42,0.88)", "rgba(40,38,46,0.86)",
+    "rgba(118,204,224,0.13)", "rgba(72,70,88,0.52)"
+);
+
+/* ------------------------------------------------------------------ */
+/* Theme table                                                          */
 /* ------------------------------------------------------------------ */
 
 static const struct {
@@ -451,14 +632,30 @@ static const struct {
     const char *name;
     const char *css;
 } k_themes[] = {
-    { "com.sol.theme.ocean",     "Deep Ocean",  k_ocean_css     },
-    { "com.sol.theme.amethyst",  "Amethyst",    k_amethyst_css  },
-    { "com.sol.theme.graphite",  "Graphite",    k_graphite_css  },
-    { "com.sol.theme.ember",     "Ember Glass", k_ember_css     },
+    { "com.sol.theme.ocean",       "Deep Ocean",     k_ocean_css       },
+    { "com.sol.theme.amethyst",    "Amethyst",       k_amethyst_css    },
+    { "com.sol.theme.graphite",    "Graphite",       k_graphite_css    },
+    { "com.sol.theme.ember",       "Ember Glass",    k_ember_css       },
+    { "com.sol.theme.gruvbox",     "Gruvbox Dark",   k_gruvbox_css     },
+    { "com.sol.theme.nord",        "Nord",           k_nord_css        },
+    { "com.sol.theme.tokyonight",  "Tokyo Night",    k_tokyonight_css  },
+    { "com.sol.theme.catppuccin",  "Catppuccin",     k_catppuccin_css  },
+    { "com.sol.theme.dracula",     "Dracula",        k_dracula_css     },
+    { "com.sol.theme.onedark",     "One Dark",       k_onedark_css     },
+    { "com.sol.theme.rosepine",    "Rosé Pine",      k_rosepine_css    },
+    { "com.sol.theme.everforest",  "Everforest",     k_everforest_css  },
+    { "com.sol.theme.kanagawa",    "Kanagawa",       k_kanagawa_css    },
+    { "com.sol.theme.carbonfox",   "Carbonfox",      k_carbonfox_css   },
+    { "com.sol.theme.monokai",     "Monokai Pro",    k_monokai_css     },
+    { "com.sol.theme.sonokai",     "Sonokai",        k_sonokai_css     },
 };
 
+/* ------------------------------------------------------------------ */
+/* Plugin lifecycle                                                     */
+/* ------------------------------------------------------------------ */
+
 /*
- * Register all four theme overrides, each extending the Glass baseline.
+ * Register all theme overrides, each extending the Glass baseline.
  *
  * ctx  Plugin context for registration tracking.
  */
@@ -480,6 +677,14 @@ static void themes_on_unload(SolPluginCtx *ctx)
     (void)ctx;
 }
 
+/*
+ * Query function exported by the plugin; called by the plugin manager to
+ * discover capabilities and verify API compatibility.
+ *
+ * requested_api_version  API version the manager was compiled against.
+ * out_api                Filled with this plugin's descriptor.
+ * Returns  true if the plugin supports the requested API version.
+ */
 bool sol_plugin_query(uint32_t requested_api_version, SolPluginAPI *out_api)
 {
     if (requested_api_version != SOL_PLUGIN_API_VERSION) return false;

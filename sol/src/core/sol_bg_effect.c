@@ -33,8 +33,9 @@ static const char k_fullscreen_vert[] =
     "    gl_Position = vec4(v_uv * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-/* Push constants layout shared by all shader-mode effects. */
-typedef struct { float time, width, height, opacity; } BgPushConst;
+/* Push constants layout shared by all shader-mode effects.
+ * r,g,b carry the active theme accent color in [0,1] linear. */
+typedef struct { float time, width, height, opacity, r, g, b, _pad; } BgPushConst;
 
 /* Push constants for the blur passes. */
 typedef struct { float inv_w, inv_h; } BlurPushConst;
@@ -148,6 +149,7 @@ struct SolBgEffectRegistry {
     int           active_idx;   /* -1 = none */
     double        start_sec;    /* CLOCK_MONOTONIC base */
     float         opacity;      /* [0.0, 1.0] */
+    float         theme_r, theme_g, theme_b;  /* accent color from active theme */
     int           blur_passes;  /* how many separable blur iterations (0 = off) */
     BlurGPU       blur[CA_FRAMES_IN_FLIGHT];
     AuxWindowBlurGPU aux_blur[CA_MAX_WINDOWS_TOTAL];
@@ -775,6 +777,9 @@ SolBgEffectRegistry *sol_bg_effect_registry_create(Ca_Instance *instance)
     reg->instance   = instance;
     reg->active_idx = -1;
     reg->opacity    = 1.0f;
+    reg->theme_r    = 1.0f;
+    reg->theme_g    = 1.0f;
+    reg->theme_b    = 1.0f;
     reg->blur_passes = 4;
     reg->start_sec  = get_monotonic_sec();
     return reg;
@@ -990,6 +995,20 @@ float sol_bg_effect_opacity(const SolBgEffectRegistry *reg)
     return reg ? reg->opacity : 1.0f;
 }
 
+/*
+ * Set the theme accent color forwarded to shader-mode effects as r/g/b push constants.
+ *
+ * reg      The registry.
+ * r,g,b    Linear RGB channels, each clamped to [0.0, 1.0].
+ */
+void sol_bg_effect_set_theme_color(SolBgEffectRegistry *reg, float r, float g, float b)
+{
+    if (!reg) return;
+    reg->theme_r = r < 0.0f ? 0.0f : (r > 1.0f ? 1.0f : r);
+    reg->theme_g = g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g);
+    reg->theme_b = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
+}
+
 /* Return the configured maximum number of localized blur iterations. */
 uint32_t sol_bg_effect_blur_passes(const SolBgEffectRegistry *reg)
 {
@@ -1160,7 +1179,8 @@ static bool bg_effect_render(VkCommandBuffer cmd,
         vkCmdSetViewport(cmd, 0, 1, &vk_vp);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        BgPushConst pc = { t, (float)width, (float)height, reg->opacity };
+        BgPushConst pc = { t, (float)width, (float)height, reg->opacity,
+                           reg->theme_r, reg->theme_g, reg->theme_b, 0.0f };
         vkCmdPushConstants(cmd, e->gpu.pipeline_layout,
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
         vkCmdDraw(cmd, 3, 1, 0, 0);

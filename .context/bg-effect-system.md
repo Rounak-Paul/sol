@@ -1,5 +1,13 @@
 # Background Effect System
 
+## Current Status
+
+- Only `com.sol.bfx.lava` effect is active (other effects removed).
+- The lava shader uses theme accent color (r/g/b push constants) to tint the hot palette.
+- Push constant layout extended to 8 floats: `{time, width, height, opacity, r, g, b, _pad}`.
+- Theme color is extracted from `.buffer-caret` CSS rule and forwarded via `sol_bg_effect_set_theme_color()`.
+- Settings UI uses `ca_select` dropdown (not buttons) with live hover preview and revert-on-dismiss.
+
 ## Architecture Overview
 
 Background shader effects render directly into the swapchain image **before** the Causality UI pass using the `Ca_BgRenderFn` hook. The UI composites on top with `LOAD_OP_LOAD`, allowing semi-transparent panel backgrounds to reveal the shader art.
