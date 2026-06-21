@@ -85,16 +85,19 @@ typedef struct TextClickCtx {
     SolUISystem        *ui;
     SolBufferNodeId     leaf_id;
     SolTextBuffer      *tb;
+    SolBufferSystem    *system;
 } TextClickCtx;
 
 typedef struct ScrollbarDragCtx {
-    SolUISystem    *ui;
-    SolTextBuffer  *tb;
-    bool            is_vertical;
-    int             max_scroll;
-    float           track_len;
-    float           thumb_len;
-    float           grab_offset;
+    SolUISystem     *ui;
+    SolTextBuffer   *tb;
+    SolBufferSystem *system;
+    SolBufferNodeId  leaf_id;
+    bool             is_vertical;
+    int              max_scroll;
+    float            track_len;
+    float            thumb_len;
+    float            grab_offset;
 } ScrollbarDragCtx;
 
 /* Count displayed monospace columns in the first `byte_len` bytes of `buf`.
@@ -187,10 +190,11 @@ static int          g_click_ring_cursor = 0;
 static ScrollbarDragCtx g_scrollbar_ring[SOL_TEXT_VIEW_SCROLLBAR_RING];
 static int              g_scrollbar_ring_cursor = 0;
 
-static SolTextBuffer *g_scrollbar_drag_tb = NULL;
-static bool           g_scrollbar_drag_vertical = false;
-static float          g_scrollbar_drag_grab_offset = 0.0f;
-static bool           g_scrollbar_drag_active = false;
+static SolTextBuffer   *g_scrollbar_drag_tb = NULL;
+static SolBufferNodeId  g_scrollbar_drag_leaf_id = 0u;
+static bool             g_scrollbar_drag_vertical = false;
+static float            g_scrollbar_drag_grab_offset = 0.0f;
+static bool             g_scrollbar_drag_active = false;
 
 /* Return the next available per-frame line text slot from the ring buffer. */
 static char *acquire_line_slot(void)
@@ -500,9 +504,11 @@ static size_t visible_max_line_cols(const SolTextBuffer *tb, int scroll_top,
  * out_cp_col      Receives the resolved codepoint column index.
  * Returns         true on success.
  */
-static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
-                                 float event_local_x, float event_local_y,
-                                 size_t *out_line, size_t *out_cp_col)
+static bool tv_local_to_line_col_ex(SolUISystem *ui, SolTextBuffer *tb,
+                                    SolBufferSystem *bsystem,
+                                    SolBufferNodeId bleaf_id,
+                                    float event_local_x, float event_local_y,
+                                    size_t *out_line, size_t *out_cp_col)
 {
     if (!ui || !tb || !out_line || !out_cp_col) {
         return false;
@@ -517,10 +523,13 @@ static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
     if (local_x < 0.0f) local_x = 0.0f;
     if (local_y < 0.0f) local_y = 0.0f;
 
+    const bool use_leaf = (bsystem != NULL && bleaf_id != 0u);
     const float line_h = (float)SOL_TEXT_LINE_HEIGHT_PX * scale;
     const int   row    = (int)(local_y / line_h);
-    const int   scroll = sol_text_buffer_scroll_top(tb);
-    int line_idx = scroll + row;
+    const int   scroll_top = use_leaf
+        ? sol_buffer_leaf_scroll_top(bsystem, bleaf_id)
+        : sol_text_buffer_scroll_top(tb);
+    int line_idx = scroll_top + row;
     if (line_idx < 0) line_idx = 0;
     const int total = (int)sol_text_buffer_line_count(tb);
     if (total <= 0) {
@@ -530,9 +539,11 @@ static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
     }
     if (line_idx >= total) line_idx = total - 1;
 
+    const int scroll_left = use_leaf
+        ? sol_buffer_leaf_scroll_left(bsystem, bleaf_id)
+        : sol_text_buffer_scroll_left(tb);
     const float adv = glyph_advance_px_for(win);
-    int visual_col = sol_text_buffer_scroll_left(tb)
-        + (int)((local_x / adv) + 0.5f);
+    int visual_col = scroll_left + (int)((local_x / adv) + 0.5f);
     if (visual_col < 0) visual_col = 0;
 
     char line_buf[SOL_TEXT_VIEW_MAX_LINE_BYTES];
@@ -544,6 +555,15 @@ static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
     *out_line = (size_t)line_idx;
     *out_cp_col = cp_col;
     return true;
+}
+
+static bool tv_local_to_line_col(SolUISystem *ui, SolTextBuffer *tb,
+                                 float event_local_x, float event_local_y,
+                                 size_t *out_line, size_t *out_cp_col)
+{
+    return tv_local_to_line_col_ex(ui, tb, NULL, 0u,
+                                   event_local_x, event_local_y,
+                                   out_line, out_cp_col);
 }
 
 bool sol_text_view_local_point_to_line_col(SolUISystem *ui,
@@ -572,8 +592,9 @@ static void tv_ev_to_line_col(const Ca_DragEvent *ev, const TextClickCtx *cb,
 {
     size_t line = 0u;
     size_t cp_col = 0u;
-    if (!tv_local_to_line_col(cb->ui, cb->tb, ev->local_x, ev->local_y,
-                              &line, &cp_col)) {
+    if (!tv_local_to_line_col_ex(cb->ui, cb->tb, cb->system, cb->leaf_id,
+                                  ev->local_x, ev->local_y,
+                                  &line, &cp_col)) {
         *out_line = 0;
         *out_cp_col = 0;
         return;
@@ -636,9 +657,12 @@ static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
     ScrollbarDragCtx *ctx = (ScrollbarDragCtx *)user_data;
     if (!ev || !ctx || !ctx->tb) return;
 
+    const bool has_leaf = (ctx->system != NULL && ctx->leaf_id != 0u);
     const int current = ctx->is_vertical
-        ? sol_text_buffer_scroll_top(ctx->tb)
-        : sol_text_buffer_scroll_left(ctx->tb);
+        ? (has_leaf ? sol_buffer_leaf_scroll_top(ctx->system, ctx->leaf_id)
+                    : sol_text_buffer_scroll_top(ctx->tb))
+        : (has_leaf ? sol_buffer_leaf_scroll_left(ctx->system, ctx->leaf_id)
+                    : sol_text_buffer_scroll_left(ctx->tb));
     const float travel = ctx->track_len - ctx->thumb_len;
     const float pct = (ctx->max_scroll > 0 && travel > 0.0f)
         ? (float)current / (float)ctx->max_scroll : 0.0f;
@@ -651,6 +675,7 @@ static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
         ctx->grab_offset = ctx->thumb_len * 0.5f;
     }
     g_scrollbar_drag_tb = ctx->tb;
+    g_scrollbar_drag_leaf_id = ctx->leaf_id;
     g_scrollbar_drag_vertical = ctx->is_vertical;
     g_scrollbar_drag_grab_offset = ctx->grab_offset;
     g_scrollbar_drag_active = true;
@@ -671,7 +696,8 @@ static void on_scrollbar_drag(const Ca_DragEvent *ev, void *user_data)
     const float pointer = ctx->is_vertical ? ev->local_y : ev->local_x;
     float grab_offset = ctx->grab_offset;
     if (g_scrollbar_drag_active &&
-        g_scrollbar_drag_tb == ctx->tb &&
+        (g_scrollbar_drag_leaf_id == ctx->leaf_id ||
+         g_scrollbar_drag_tb == ctx->tb) &&
         g_scrollbar_drag_vertical == ctx->is_vertical) {
         grab_offset = g_scrollbar_drag_grab_offset;
     }
@@ -683,10 +709,17 @@ static void on_scrollbar_drag(const Ca_DragEvent *ev, void *user_data)
     if (scroll < 0) scroll = 0;
     if (scroll > ctx->max_scroll) scroll = ctx->max_scroll;
 
+    const bool has_leaf = (ctx->system != NULL && ctx->leaf_id != 0u);
     if (ctx->is_vertical) {
-        sol_text_buffer_set_scroll_top(ctx->tb, scroll);
+        if (has_leaf)
+            sol_buffer_set_leaf_scroll_top(ctx->system, ctx->leaf_id, scroll);
+        else
+            sol_text_buffer_set_scroll_top(ctx->tb, scroll);
     } else {
-        sol_text_buffer_set_scroll_left(ctx->tb, scroll);
+        if (has_leaf)
+            sol_buffer_set_leaf_scroll_left(ctx->system, ctx->leaf_id, scroll);
+        else
+            sol_text_buffer_set_scroll_left(ctx->tb, scroll);
     }
     if (ctx->ui) sol_ui_system_invalidate_buffer_area(ctx->ui);
 }
@@ -697,6 +730,7 @@ static void on_scrollbar_drag_end(const Ca_DragEvent *ev, void *user_data)
     (void)ev;
     (void)user_data;
     g_scrollbar_drag_tb = NULL;
+    g_scrollbar_drag_leaf_id = 0u;
     g_scrollbar_drag_vertical = false;
     g_scrollbar_drag_grab_offset = 0.0f;
     g_scrollbar_drag_active = false;
@@ -746,11 +780,20 @@ void sol_text_view_render(const SolBuffer *buffer,
 
     const int total   = (int)sol_text_buffer_line_count(tb);
     const int max_top = total > viewport ? total - viewport : 0;
-    int scroll_top = sol_text_buffer_scroll_top(tb);
+    /* Use per-leaf scroll when a leaf id and system are available so that
+     * multiple panes showing the same buffer each track their own position. */
+    SolBufferSystem *bsys = args ? (SolBufferSystem *)args->system : NULL;
+    const SolBufferNodeId leaf_id = args ? args->leaf_id : 0u;
+    const bool has_leaf_scroll = (bsys != NULL && leaf_id != 0u);
+    int scroll_top = has_leaf_scroll
+        ? sol_buffer_leaf_scroll_top(bsys, leaf_id)
+        : sol_text_buffer_scroll_top(tb);
     if (scroll_top > max_top) scroll_top = max_top;
     if (scroll_top < 0)       scroll_top = 0;
-    /* Clamp back into the state in case scroll drifted. */
-    if (scroll_top != sol_text_buffer_scroll_top(tb)) {
+    if (has_leaf_scroll) {
+        if (scroll_top != sol_buffer_leaf_scroll_top(bsys, leaf_id))
+            sol_buffer_set_leaf_scroll_top(bsys, leaf_id, scroll_top);
+    } else if (scroll_top != sol_text_buffer_scroll_top(tb)) {
         sol_text_buffer_set_scroll_top(tb, scroll_top);
     }
 
@@ -762,10 +805,15 @@ void sol_text_view_render(const SolBuffer *buffer,
     const size_t max_line_cols = visible_max_line_cols(tb, scroll_top, rendered);
     const int max_left = max_line_cols > (size_t)viewport_cols
         ? (int)(max_line_cols - (size_t)viewport_cols) : 0;
-    int scroll_left = sol_text_buffer_scroll_left(tb);
+    int scroll_left = has_leaf_scroll
+        ? sol_buffer_leaf_scroll_left(bsys, leaf_id)
+        : sol_text_buffer_scroll_left(tb);
     if (scroll_left > max_left) scroll_left = max_left;
     if (scroll_left < 0) scroll_left = 0;
-    if (scroll_left != sol_text_buffer_scroll_left(tb)) {
+    if (has_leaf_scroll) {
+        if (scroll_left != sol_buffer_leaf_scroll_left(bsys, leaf_id))
+            sol_buffer_set_leaf_scroll_left(bsys, leaf_id, scroll_left);
+    } else if (scroll_left != sol_text_buffer_scroll_left(tb)) {
         sol_text_buffer_set_scroll_left(tb, scroll_left);
     }
     const float scroll_x = (float)scroll_left * adv_css;
@@ -818,6 +866,7 @@ void sol_text_view_render(const SolBuffer *buffer,
     cb->ui      = ui;
     cb->leaf_id = args ? args->leaf_id : 0u;
     cb->tb      = tb;
+    cb->system  = bsys;
 
     ca_div_begin(&(Ca_DivDesc){
         .direction     = CA_VERTICAL,
@@ -998,6 +1047,8 @@ void sol_text_view_render(const SolBuffer *buffer,
         ScrollbarDragCtx *hctx = acquire_scrollbar_slot();
         hctx->ui = ui;
         hctx->tb = tb;
+        hctx->system = bsys;
+        hctx->leaf_id = leaf_id;
         hctx->is_vertical = false;
         hctx->max_scroll = max_left;
         hctx->track_len = track_w;
@@ -1057,6 +1108,8 @@ void sol_text_view_render(const SolBuffer *buffer,
         ScrollbarDragCtx *vctx = acquire_scrollbar_slot();
         vctx->ui = ui;
         vctx->tb = tb;
+        vctx->system = bsys;
+        vctx->leaf_id = leaf_id;
         vctx->is_vertical = true;
         vctx->max_scroll = max_top;
         vctx->track_len = track_h;

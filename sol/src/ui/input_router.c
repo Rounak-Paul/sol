@@ -205,11 +205,17 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
         if (viewport < 1) viewport = 1;
         const int viewport_cols = sol_text_view_visible_cols_for_width(
             leaf_rect.w, ui_scale, router_glyph_advance_px(win));
-        sol_text_buffer_ensure_cursor_visible_2d(tb, viewport, viewport_cols);
+        int scroll_top  = sol_buffer_leaf_scroll_top(r->buffers, leaf_id);
+        int scroll_left = sol_buffer_leaf_scroll_left(r->buffers, leaf_id);
+        sol_text_buffer_ensure_cursor_visible_2d_ex(
+            tb, viewport, viewport_cols, &scroll_top, &scroll_left);
+        sol_buffer_set_leaf_scroll_top(r->buffers, leaf_id, scroll_top);
+        sol_buffer_set_leaf_scroll_left(r->buffers, leaf_id, scroll_left);
         sol_ui_system_invalidate_buffer_area(r->ui);
         return;
     }
 
+    /* Fallback: no leaf geometry — use window dimensions and active leaf. */
     int win_w = 0, win_h = 0;
     sol_ui_system_window_size(r->ui, &win_w, &win_h);
     if (win_w <= 0) win_w = 800;
@@ -219,7 +225,16 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
     if (viewport < 1) viewport = 1;
     const int viewport_cols = sol_text_view_visible_cols_for_width(
         (float)win_w, ui_scale, router_glyph_advance_px(win));
-    sol_text_buffer_ensure_cursor_visible_2d(tb, viewport, viewport_cols);
+    if (leaf_id != 0u) {
+        int scroll_top  = sol_buffer_leaf_scroll_top(r->buffers, leaf_id);
+        int scroll_left = sol_buffer_leaf_scroll_left(r->buffers, leaf_id);
+        sol_text_buffer_ensure_cursor_visible_2d_ex(
+            tb, viewport, viewport_cols, &scroll_top, &scroll_left);
+        sol_buffer_set_leaf_scroll_top(r->buffers, leaf_id, scroll_top);
+        sol_buffer_set_leaf_scroll_left(r->buffers, leaf_id, scroll_left);
+    } else {
+        sol_text_buffer_ensure_cursor_visible_2d(tb, viewport, viewport_cols);
+    }
     sol_ui_system_invalidate_buffer_area(r->ui);
 }
 
@@ -647,11 +662,13 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
                   : ev->mouse_scroll.dy < 0.0 ? 1 : 0;
         }
 
-        int new_top = sol_text_buffer_scroll_top(tb) + delta;
+        int cur_top  = sol_buffer_leaf_scroll_top(r->buffers, target_leaf);
+        int cur_left = sol_buffer_leaf_scroll_left(r->buffers, target_leaf);
+        int new_top  = cur_top + delta;
         if (new_top < 0) new_top = 0;
         if (new_top > max_top) new_top = max_top;
 
-        int new_left = sol_text_buffer_scroll_left(tb);
+        int new_left = cur_left;
         if (ev->mouse_scroll.dx != 0.0) {
             const int dx = horizontal_scroll_delta(r, ev->mouse_scroll.dx);
             new_left += dx;
@@ -661,15 +678,16 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
             }
         }
 
-        if (new_top != sol_text_buffer_scroll_top(tb) ||
-            new_left != sol_text_buffer_scroll_left(tb)) {
-            sol_text_buffer_set_scroll_top(tb, new_top);
-            sol_text_buffer_set_scroll_left(tb, new_left);
+        if (new_top != cur_top || new_left != cur_left) {
+            sol_buffer_set_leaf_scroll_top(r->buffers, target_leaf, new_top);
+            sol_buffer_set_leaf_scroll_left(r->buffers, target_leaf, new_left);
             sol_ui_system_invalidate_buffer_area(r->ui);
         }
         return;
     }
 
+    /* Fallback path: no leaf geometry available — scroll the active leaf. */
+    const SolBufferNodeId active_leaf = sol_buffer_active_leaf(r->buffers);
     const int rendered = sol_text_view_visible_lines(win_h, scale);
     int viewport = rendered - 2;
     if (viewport < 1) viewport = 1;
@@ -683,11 +701,13 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
               : ev->mouse_scroll.dy < 0.0 ? 1 : 0;
     }
 
-    int new_top = sol_text_buffer_scroll_top(tb) + delta;
+    int cur_top  = active_leaf ? sol_buffer_leaf_scroll_top(r->buffers, active_leaf) : 0;
+    int cur_left = active_leaf ? sol_buffer_leaf_scroll_left(r->buffers, active_leaf) : 0;
+    int new_top  = cur_top + delta;
     if (new_top < 0) new_top = 0;
     if (new_top > max_top) new_top = max_top;
 
-    int new_left = sol_text_buffer_scroll_left(tb);
+    int new_left = cur_left;
     if (ev->mouse_scroll.dx != 0.0) {
         const int dx = horizontal_scroll_delta(r, ev->mouse_scroll.dx);
         new_left += dx;
@@ -697,10 +717,11 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
         }
     }
 
-    if (new_top != sol_text_buffer_scroll_top(tb) ||
-        new_left != sol_text_buffer_scroll_left(tb)) {
-        sol_text_buffer_set_scroll_top(tb, new_top);
-        sol_text_buffer_set_scroll_left(tb, new_left);
+    if (new_top != cur_top || new_left != cur_left) {
+        if (active_leaf) {
+            sol_buffer_set_leaf_scroll_top(r->buffers, active_leaf, new_top);
+            sol_buffer_set_leaf_scroll_left(r->buffers, active_leaf, new_left);
+        }
         sol_ui_system_invalidate_buffer_area(r->ui);
     }
 }

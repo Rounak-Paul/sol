@@ -177,6 +177,24 @@ void sol_text_buffer_ensure_cursor_visible_2d(SolTextBuffer *tb,
                                               int viewport_cols);
 
 /*
+ * Adjust caller-owned scroll_top/scroll_left so the cursor is fully visible.
+ *
+ * Use this variant when each pane maintains its own independent scroll state
+ * (e.g. the same buffer open in multiple split panes).
+ *
+ * tb              The text buffer whose cursor position is read.
+ * viewport_lines  Visible height in lines.
+ * viewport_cols   Visible width in visual columns.
+ * scroll_top      In/out: first visible line; clamped to [0, max_top].
+ * scroll_left     In/out: first visible column; clamped to [0, max_left].
+ */
+void sol_text_buffer_ensure_cursor_visible_2d_ex(const SolTextBuffer *tb,
+                                                  int viewport_lines,
+                                                  int viewport_cols,
+                                                  int *scroll_top,
+                                                  int *scroll_left);
+
+/*
  * Returns the total logical line count (always >= 1; empty buffers have one line).
  */
 size_t sol_text_buffer_line_count(const SolTextBuffer *tb);

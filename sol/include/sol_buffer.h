@@ -53,6 +53,10 @@ typedef struct SolBufferRenderArgs {
     void *ui_context;
     SolBufferNodeId leaf_id;
     SolBufferRect rect;
+    /* Owning buffer system — available so renderers can access per-leaf
+     * state (e.g. independent scroll positions) without a separate context
+     * pointer. May be NULL in tests that do not provide a system. */
+    SolBufferSystem *system;
 } SolBufferRenderArgs;
 
 /* Callback invoked to release the caller-owned state attached to a buffer. */
@@ -293,6 +297,26 @@ SolBufferId sol_buffer_leaf_tab_last_active(const SolBufferSystem *system,
 void sol_buffer_set_leaf_tab_last_active(SolBufferSystem *system,
                                          SolBufferNodeId leaf_id,
                                          SolBufferId buffer_id);
+
+/* Per-leaf independent scroll positions.  When the same buffer is open
+ * in multiple panes, each leaf tracks its own viewport so panes can show
+ * different parts of the same file simultaneously. */
+
+/* Return the first visible line for a leaf's viewport (0 when not found). */
+int  sol_buffer_leaf_scroll_top (const SolBufferSystem *system,
+                                 SolBufferNodeId leaf_id);
+
+/* Set the first visible line for a leaf's viewport. */
+void sol_buffer_set_leaf_scroll_top (SolBufferSystem *system,
+                                     SolBufferNodeId leaf_id, int line);
+
+/* Return the first visible visual column for a leaf's viewport (0 when not found). */
+int  sol_buffer_leaf_scroll_left(const SolBufferSystem *system,
+                                 SolBufferNodeId leaf_id);
+
+/* Set the first visible visual column for a leaf's viewport. */
+void sol_buffer_set_leaf_scroll_left(SolBufferSystem *system,
+                                     SolBufferNodeId leaf_id, int col);
 
 /*
  * Hit-test the split tree against a point in screen space.

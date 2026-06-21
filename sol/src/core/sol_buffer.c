@@ -27,6 +27,10 @@ typedef struct SolLayoutNode {
             size_t tab_capacity;
             size_t tab_view_start;
             SolBufferId tab_last_active_id;
+            /* Per-pane scroll state — independent even when the same
+             * buffer is open in multiple leaves simultaneously. */
+            int scroll_top;
+            int scroll_left;
         } leaf;
         struct {
             SolBufferSplitDirection direction;
@@ -986,6 +990,42 @@ bool sol_buffer_close_leaf_tab(SolBufferSystem *system,
         return sol_buffer_close(system, buffer_id);
     bump_rev(system);
     return true;
+}
+
+/* ---- Per-leaf scroll ------------------------------------------------ */
+
+int sol_buffer_leaf_scroll_top(const SolBufferSystem *system,
+                                SolBufferNodeId leaf_id)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return 0;
+    return leaf->as.leaf.scroll_top;
+}
+
+void sol_buffer_set_leaf_scroll_top(SolBufferSystem *system,
+                                    SolBufferNodeId leaf_id, int line)
+{
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return;
+    if (line < 0) line = 0;
+    leaf->as.leaf.scroll_top = line;
+}
+
+int sol_buffer_leaf_scroll_left(const SolBufferSystem *system,
+                                 SolBufferNodeId leaf_id)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return 0;
+    return leaf->as.leaf.scroll_left;
+}
+
+void sol_buffer_set_leaf_scroll_left(SolBufferSystem *system,
+                                     SolBufferNodeId leaf_id, int col)
+{
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return;
+    if (col < 0) col = 0;
+    leaf->as.leaf.scroll_left = col;
 }
 
 /* Recursive hit-test helper. (x,y,w,h) is the rect this subtree

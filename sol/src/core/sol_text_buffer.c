@@ -1028,6 +1028,43 @@ void sol_text_buffer_ensure_cursor_visible_2d(SolTextBuffer *tb,
     if (tb->scroll_left_col < 0) tb->scroll_left_col = 0;
 }
 
+void sol_text_buffer_ensure_cursor_visible_2d_ex(const SolTextBuffer *tb,
+                                                  int viewport_lines,
+                                                  int viewport_cols,
+                                                  int *scroll_top,
+                                                  int *scroll_left)
+{
+    if (!tb || !tb->rope || !scroll_top || !scroll_left) return;
+
+    const int cur_line = (int)sol_text_buffer_cursor_line(tb);
+    if (viewport_lines > 0) {
+        if (cur_line < *scroll_top) {
+            *scroll_top = cur_line;
+        } else if (cur_line >= *scroll_top + viewport_lines) {
+            *scroll_top = cur_line - viewport_lines + 1;
+        }
+        if (*scroll_top < 0) *scroll_top = 0;
+    }
+
+    if (viewport_cols > 0) {
+        const size_t line = (size_t)cur_line;
+        const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
+        size_t col_bytes = tb->cursor_byte >= line_start
+            ? tb->cursor_byte - line_start : 0u;
+        const size_t line_bytes = tb_line_byte_len(tb->rope, line);
+        if (col_bytes > line_bytes) col_bytes = line_bytes;
+
+        const int cursor_col = (int)tb_line_visual_col_count(
+            tb->rope, line, col_bytes);
+        if (cursor_col < *scroll_left) {
+            *scroll_left = cursor_col;
+        } else if (cursor_col >= *scroll_left + viewport_cols) {
+            *scroll_left = cursor_col - viewport_cols + 1;
+        }
+        if (*scroll_left < 0) *scroll_left = 0;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Cursor mutation helpers                                             */
 /* ------------------------------------------------------------------ */

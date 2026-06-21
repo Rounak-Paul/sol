@@ -690,6 +690,7 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
             .is_active   = is_active,
             .ui_context  = ui,
             .leaf_id     = leaf_id,
+            .system      = ui->buffers,
         };
         if (rect) {
             args.rect = *rect;
