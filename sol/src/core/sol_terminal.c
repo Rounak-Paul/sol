@@ -1981,6 +1981,20 @@ void sol_terminal_send_text(SolTerminal *term, const char *data, size_t len)
 #endif
 }
 
+void sol_terminal_paste(SolTerminal *term, const char *data, size_t len)
+{
+    if (!term || !data || len == 0 || !term->is_alive) return;
+    if (term->mode_bracketed_paste) {
+        static const char bracket_open[]  = "\033[200~";
+        static const char bracket_close[] = "\033[201~";
+        sol_terminal_send_text(term, bracket_open,  sizeof(bracket_open)  - 1u);
+        sol_terminal_send_text(term, data, len);
+        sol_terminal_send_text(term, bracket_close, sizeof(bracket_close) - 1u);
+    } else {
+        sol_terminal_send_text(term, data, len);
+    }
+}
+
 /* Modifier bitmask for xterm-style modified key sequences (1-based). */
 static int term_modifier_number(uint8_t mods)
 {

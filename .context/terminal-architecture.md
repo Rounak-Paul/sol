@@ -88,6 +88,7 @@ if any output was processed. Also bumps + wakes if terminal is focused (cursor b
 
 `on_key` in `input_router.c` checks `sol_ui_system_terminal_manager(r->ui)` first:
 - If terminal focused + ESC → defocus (`set_focused(false)`) + notify, return
+- If terminal focused + Super+V or Ctrl+Shift+V → clipboard paste via `sol_terminal_paste()`, suppress next char, return
 - If terminal focused + other key → `sol_terminal_send_key(term, key, mods)`, return
 - Suppresses next CHAR event after a KEY_DOWN in terminal mode
 
@@ -98,6 +99,24 @@ if any output was processed. Also bumps + wakes if terminal is focused (cursor b
 
 Focus is set by clicking the terminal viewport (Ca_Button click handler) or via `L t t` command.
 Defocus happens on ESC keypress.
+
+## Clipboard Paste
+
+`sol_terminal_paste(term, data, len)` (in `sol_terminal.c` / `sol_terminal.h`):
+- When `mode_bracketed_paste` is set (XTerm ?2004h): wraps text with `\033[200~` / `\033[201~`
+- Otherwise: calls `sol_terminal_send_text` directly
+- Used by: `input_router.c` paste intercept, `terminal.paste` command action in `main.c`
+
+Paste chord intercept in `on_key`:
+- **macOS**: `Super+V` (Cmd+V)
+- **Linux/Windows**: `Ctrl+Shift+V`
+- Both checked before the generic `has_ctrl_alt` PTY-forward path so the chord is consumed and never reaches `sol_terminal_send_key`
+- `suppress_next_text_input = true` set after paste to drop the decoded CHAR event
+
+`terminal.paste` command action:
+- Registered in the `terminal.*` dispatcher in `main.c`
+- Reads clipboard via `ca_clipboard_get_text`, calls `sol_terminal_paste`
+- Can be bound in `~/.sol/bindings.conf` or triggered from the command panel
 
 ## Command Flows (registered in main.c via `sol_register_terminal_command_defaults`)
 

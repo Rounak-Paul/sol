@@ -342,6 +342,34 @@ static void on_key(const Ca_Event *ev, void *user_data)
                 return;
             }
 
+            /* Paste intercept: Cmd+V (macOS Super+V) or Ctrl+Shift+V (Linux/Win).
+               Both paste the system clipboard into the PTY with bracketed-paste
+               framing when the application has enabled XTerm ?2004 mode.
+               Must be checked before the generic has_ctrl_alt PTY-forward path
+               so the paste chord is consumed here and never reaches send_key. */
+            const SolModifierMask paste_mods = ie.data.key.modifiers;
+            const SolKeyCode      paste_key  = ie.data.key.key;
+            const bool is_super_v =
+                (paste_mods == SOL_MOD_SUPER) && (paste_key == 'V' || paste_key == 'v');
+            const bool is_ctrl_shift_v =
+                ((paste_mods & (SOL_MOD_CTRL | SOL_MOD_SHIFT)) ==
+                 (SOL_MOD_CTRL | SOL_MOD_SHIFT)) &&
+                !(paste_mods & (SOL_MOD_ALT | SOL_MOD_SUPER)) &&
+                (paste_key == 'V' || paste_key == 'v');
+            if (is_super_v || is_ctrl_shift_v) {
+                SolTerminal *term = sol_terminal_manager_active(tmgr);
+                if (term) {
+                    Ca_Window *win = sol_ui_system_primary_window(r->ui);
+                    const char *text = win ? ca_clipboard_get_text(win) : NULL;
+                    if (text && text[0] != '\0') {
+                        sol_terminal_set_view_scroll(term, 0);
+                        sol_terminal_paste(term, text, strlen(text));
+                    }
+                }
+                r->suppress_next_text_input = true;
+                return;
+            }
+
             /* Everything else (Ctrl+C, Ctrl+Z, ESC, arrows, etc.) → PTY.
                Unmodified printable chars are handled by on_char; send via
                sol_terminal_send_key only for non-printable keys or

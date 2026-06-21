@@ -245,6 +245,19 @@ void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods);
  */
 void sol_terminal_send_text(SolTerminal *term, const char *data, size_t len);
 
+/*
+ * Paste clipboard text into the terminal, wrapping with bracketed-paste
+ * sequences (\033[200~ / \033[201~) when the application has enabled
+ * bracketed paste mode (XTerm ?2004).  Use this instead of send_text for
+ * all user-initiated paste operations so applications like vim and bash
+ * receive the correct framing.
+ *
+ * term  The terminal.
+ * data  UTF-8 clipboard text to paste.
+ * len   Number of bytes.
+ */
+void sol_terminal_paste(SolTerminal *term, const char *data, size_t len);
+
 /* Returns true while the child process is still running. */
 bool sol_terminal_is_alive(const SolTerminal *term);
 

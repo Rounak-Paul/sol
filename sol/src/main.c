@@ -1332,6 +1332,16 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
             return true;
         }
 
+        if (strcmp(p->action, "terminal.paste") == 0) {
+            SolTerminal *term = sol_terminal_manager_active(mgr);
+            if (!term) return false;
+            Ca_Window *win = sol_ui_system_primary_window(app->ui);
+            const char *text = win ? ca_clipboard_get_text(win) : NULL;
+            if (!text || text[0] == '\0') return false;
+            sol_terminal_paste(term, text, strlen(text));
+            return true;
+        }
+
         return false;
     }
 
