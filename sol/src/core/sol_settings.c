@@ -32,8 +32,14 @@
 SolSettings sol_settings_defaults(void)
 {
     SolSettings s = {
-        .ui_scale  = SOL_SETTINGS_UI_SCALE_DEFAULT,
-        .bg_opacity = SOL_SETTINGS_BG_OPACITY_DEFAULT,
+        .ui_scale         = SOL_SETTINGS_UI_SCALE_DEFAULT,
+        .bg_opacity       = SOL_SETTINGS_BG_OPACITY_DEFAULT,
+        .corner_radius    = SOL_SETTINGS_CORNER_RADIUS_DEFAULT,
+        .shadow_blur      = SOL_SETTINGS_SHADOW_BLUR_DEFAULT,
+        .shadow_offset    = SOL_SETTINGS_SHADOW_OFFSET_DEFAULT,
+        .panel_opacity    = SOL_SETTINGS_PANEL_OPACITY_DEFAULT,
+        .scrollbar_width  = SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT,
+        .scrollbar_radius = SOL_SETTINGS_SCROLLBAR_RADIUS_DEFAULT,
     };
     snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
     s.bg_effect_id[0] = '\0';
@@ -211,6 +217,46 @@ static void jp_parse_theme(JP *j, SolSettings *s)
 }
 
 /*
+ * Parse appearance overlay object from JSON.
+ *
+ * j  Parser cursor positioned at appearance object.
+ * s  Settings struct to populate.
+ */
+static void jp_parse_appearance(JP *j, SolSettings *s)
+{
+    if (!jp_expect(j, '{')) return;
+    while (*j->p) {
+        jp_skip_ws(j);
+        if (*j->p == '}') { ++j->p; break; }
+        char key[64];
+        if (!jp_string(j, key, sizeof(key))) break;
+        if (!jp_expect(j, ':')) break;
+
+#define PARSE_FLOAT_FIELD(field_name, field, mn, mx)  \
+        if (strcmp(key, field_name) == 0) {           \
+            float v = jp_float(j);                    \
+            if (!isnan(v) && v >= (mn) && v <= (mx))  \
+                s->field = v;                         \
+        } else
+
+        PARSE_FLOAT_FIELD("corner_radius",    corner_radius,    SOL_SETTINGS_CORNER_RADIUS_MIN,    SOL_SETTINGS_CORNER_RADIUS_MAX)
+        PARSE_FLOAT_FIELD("shadow_blur",      shadow_blur,      SOL_SETTINGS_SHADOW_BLUR_MIN,      SOL_SETTINGS_SHADOW_BLUR_MAX)
+        PARSE_FLOAT_FIELD("shadow_offset",    shadow_offset,    SOL_SETTINGS_SHADOW_OFFSET_MIN,    SOL_SETTINGS_SHADOW_OFFSET_MAX)
+        PARSE_FLOAT_FIELD("panel_opacity",    panel_opacity,    SOL_SETTINGS_PANEL_OPACITY_MIN,    SOL_SETTINGS_PANEL_OPACITY_MAX)
+        PARSE_FLOAT_FIELD("scrollbar_width",  scrollbar_width,  SOL_SETTINGS_SCROLLBAR_WIDTH_MIN,  SOL_SETTINGS_SCROLLBAR_WIDTH_MAX)
+        PARSE_FLOAT_FIELD("scrollbar_radius", scrollbar_radius, SOL_SETTINGS_SCROLLBAR_RADIUS_MIN, SOL_SETTINGS_SCROLLBAR_RADIUS_MAX)
+        /* else */
+        {
+            jp_skip_value(j);
+        }
+#undef PARSE_FLOAT_FIELD
+
+        jp_skip_ws(j);
+        if (*j->p == ',') ++j->p;
+    }
+}
+
+/*
  * Parse top-level settings object from JSON.
  *
  * j  Parser cursor positioned at root object.
@@ -227,6 +273,8 @@ static void jp_parse_root(JP *j, SolSettings *s)
         if (!jp_expect(j, ':')) break;
         if (strcmp(key, "theme") == 0) {
             jp_parse_theme(j, s);
+        } else if (strcmp(key, "appearance") == 0) {
+            jp_parse_appearance(j, s);
         } else {
             jp_skip_value(j);
         }
@@ -326,13 +374,114 @@ bool sol_settings_save(const SolSettings *settings)
         "    \"style\": \"%s\",\n"
         "    \"effect\": \"%s\",\n"
         "    \"opacity\": %.2f\n"
+        "  },\n"
+        "  \"appearance\": {\n"
+        "    \"corner_radius\": %.2f,\n"
+        "    \"shadow_blur\": %.2f,\n"
+        "    \"shadow_offset\": %.2f,\n"
+        "    \"panel_opacity\": %.2f,\n"
+        "    \"scrollbar_width\": %.2f,\n"
+        "    \"scrollbar_radius\": %.2f\n"
         "  }\n"
         "}\n",
         (double)settings->ui_scale,
         esc_theme,
         esc_id,
-        (double)settings->bg_opacity);
+        (double)settings->bg_opacity,
+        (double)settings->corner_radius,
+        (double)settings->shadow_blur,
+        (double)settings->shadow_offset,
+        (double)settings->panel_opacity,
+        (double)settings->scrollbar_width,
+        (double)settings->scrollbar_radius);
 
     fclose(fp);
     return n > 0;
+}
+
+/*
+ * Build a CSS override snippet encoding the appearance overlay settings.
+ *
+ * The generated CSS overrides corner-radius, shadow, scrollbar width/radius,
+ * and panel opacity. It is appended after the active theme so it wins by
+ * declaration order.
+ *
+ * Corner-radius is applied to every interactive element that has a
+ * `corner-radius: 0px` declaration in the default stylesheet so the slider
+ * produces a uniform effect across the whole UI.
+ *
+ * Panel opacity uses the CSS `opacity` property (theme-independent) rather
+ * than baking a specific rgba colour, so it works with any registered theme.
+ */
+int sol_settings_build_appearance_css(const SolSettings *settings,
+                                      char *buf, int bufsz)
+{
+    if (!settings || !buf || bufsz <= 0) return 0;
+
+    float cr      = settings->corner_radius;
+    float sw      = settings->scrollbar_width;
+    float sr      = settings->scrollbar_radius;
+    float sblur   = settings->shadow_blur;
+    float soffset = settings->shadow_offset;
+    float op      = settings->panel_opacity;
+
+    int written = snprintf(buf, (size_t)bufsz,
+        "/* sol appearance overlay */"
+        /* Scrollbar geometry — wildcard wins by appending after theme. */
+        "* { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx; }"
+        /* Panel shadow + corner-radius + opacity. */
+        ".cf-panel {"
+        "  corner-radius: %.1fpx;"
+        "  shadow-offset-y: %.1fpx; shadow-blur: %.1fpx;"
+        "  shadow-color: rgba(0,0,0,0.38);"
+        "  opacity: %.3f;"
+        "}"
+        /* Titlebar opacity */
+        ".ca-titlebar { opacity: %.3f; }"
+        /* Corner-radius on every interactive / card element. */
+        ".ca-popup-card,"
+        ".ca-popup-btn,"
+        ".ca-select-popup,"
+        ".ca-tooltip,"
+        ".ca-context-menu,"
+        ".ca-menubar-popup,"
+        ".ca-menubar-popup .ca-titlebar-menu-item,"
+        ".ca-titlebar-menu-item,"
+        ".ca-titlebar-control,"
+        ".ca-overlay-hover,"
+        ".buffer-tab,"
+        ".buffer-tab-close,"
+        ".buffer-hscrollbar-thumb,"
+        ".buffer-hscrollbar-thumb-active,"
+        ".fp-row,"
+        ".fp-new-folder-input,"
+        ".fp-action-new-folder,"
+        ".fp-nf-create,"
+        ".fp-nf-cancel,"
+        ".pm-btn-disable,"
+        ".pm-search-input,"
+        ".scm-branch-input,"
+        ".scm-branch-row,"
+        ".scm-branch-row-current,"
+        ".search-result,"
+        ".search-input,"
+        ".sw-scale-input,"
+        ".sw-select,"
+        ".sw-tab-btn,"
+        ".pm-item,"
+        ".tree-row,"
+        ".tree-sticky-row,"
+        ".cf-row,"
+        ".cf-row-key,"
+        ".status-bar-badge,"
+        ".welcome-btn,"
+        ".welcome-btn-primary"
+        " { corner-radius: %.1fpx; }",
+        (double)sw, (double)sr,
+        (double)cr, (double)soffset, (double)sblur, (double)op,
+        (double)op,
+        (double)cr);
+
+    if (written < 0 || written >= bufsz) return 0;
+    return written;
 }

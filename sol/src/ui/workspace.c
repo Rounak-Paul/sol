@@ -45,6 +45,7 @@
 #include "sol_file_picker.h"
 #include "sol_event.h"
 #include "sol_platform.h"
+#include "sol_settings.h"
 #include "style.h"
 
 #include <assert.h>
@@ -1353,6 +1354,43 @@ static void sol_ui_push_theme_color(const char *css, SolBgEffectRegistry *reg)
         sol_bg_effect_set_theme_color(reg, best_r, best_g, best_b);
 }
 
+/* Build and apply a stylesheet from theme CSS + appearance overlay.
+ * active_id must be non-NULL; css must be the full theme CSS string.
+ * Returns true on success. */
+static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
+                                      const char *active_id,
+                                      const char *css)
+{
+    /* Compose: theme CSS + appearance overlay (if settings attached). */
+    char *composed = NULL;
+    if (ui->settings) {
+        char overlay[4096];
+        int olen = sol_settings_build_appearance_css(ui->settings,
+                                                      overlay, (int)sizeof(overlay));
+        if (olen > 0) {
+            size_t tlen = strlen(css);
+            composed = (char *)malloc(tlen + (size_t)olen + 1);
+            if (composed) {
+                memcpy(composed, css, tlen);
+                memcpy(composed + tlen, overlay, (size_t)olen + 1);
+            }
+        }
+    }
+
+    Ca_Stylesheet *stylesheet = ca_css_parse(composed ? composed : css);
+    free(composed);
+    if (!stylesheet) return false;
+
+    Ca_Stylesheet *previous = ui->stylesheet;
+    ui->stylesheet = stylesheet;
+    ca_instance_set_stylesheet(ui->instance, stylesheet);
+    ca_instance_refresh_styles(ui->instance);
+    if (previous) ca_css_destroy(previous);
+    if (ui->bg_effects) sol_ui_push_theme_color(css, ui->bg_effects);
+    snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s", active_id);
+    return true;
+}
+
 /* Apply the active registry theme to every live Causality window. */
 static void sol_ui_on_theme_change(void *user_data)
 {
@@ -1361,23 +1399,20 @@ static void sol_ui_on_theme_change(void *user_data)
     const char *active_id = sol_theme_active_id(ui->themes);
     const char *css = sol_theme_active_css(ui->themes);
     if (!active_id || !css) return;
-    if (strcmp(ui->applied_theme_id, active_id) == 0) {
-        sol_ui_bump_u32(ui->sig_theme_rev);
-        return;
-    }
 
-    Ca_Stylesheet *stylesheet = ca_css_parse(css);
-    if (!stylesheet) {
-        sol_ui_bump_u32(ui->sig_theme_rev);
-        return;
-    }
-    Ca_Stylesheet *previous = ui->stylesheet;
-    ui->stylesheet = stylesheet;
-    ca_instance_set_stylesheet(ui->instance, stylesheet);
-    ca_instance_refresh_styles(ui->instance);
-    if (previous) ca_css_destroy(previous);
-    if (ui->bg_effects) sol_ui_push_theme_color(css, ui->bg_effects);
-    snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s", active_id);
+    sol_ui_rebuild_stylesheet(ui, active_id, css);
+    sol_ui_bump_u32(ui->sig_theme_rev);
+}
+
+/* Re-apply the current stylesheet with the updated appearance overlay. */
+void sol_ui_system_apply_appearance(SolUISystem *ui)
+{
+    if (!ui || !ui->instance || !ui->themes) return;
+    const char *active_id = sol_theme_active_id(ui->themes);
+    const char *css = sol_theme_active_css(ui->themes);
+    if (!active_id || !css) return;
+
+    sol_ui_rebuild_stylesheet(ui, active_id, css);
     sol_ui_bump_u32(ui->sig_theme_rev);
 }
 
@@ -2559,7 +2594,10 @@ void sol_ui_system_open_plugin_window(SolUISystem *ui)
  */
 void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
 {
-    if (ui) ui->settings = settings;
+    if (!ui) return;
+    ui->settings = settings;
+    /* Apply appearance overlay now that settings are attached. */
+    sol_ui_system_apply_appearance(ui);
 }
 
 /*

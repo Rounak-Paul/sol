@@ -31,6 +31,7 @@
 #include "sol_ui_internal.h"
 #include "sol_bg_effect.h"
 #include "sol_settings.h"
+#include "sol_ui_system.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,6 +81,14 @@ struct SolSettingsWindow {
     char          scale_input_text[16];
     char          opacity_input_text[16];
 
+    /* Appearance overlay input buffers */
+    char          corner_radius_text[16];
+    char          shadow_blur_text[16];
+    char          shadow_offset_text[16];
+    char          panel_opacity_text[16];
+    char          scrollbar_width_text[16];
+    char          scrollbar_radius_text[16];
+
     /* Theme select state */
     const char   *theme_names[SW_MAX_THEMES];   /* pointers into registry (stable) */
     char          theme_ids[SW_MAX_THEMES][SOL_THEME_ID_MAX + 1];
@@ -118,6 +127,16 @@ static void sw_update_opacity_label(SolSettingsWindow *w)
 {
     snprintf(w->opacity_input_text, sizeof(w->opacity_input_text),
              "%.2f", (double)w->settings->bg_opacity);
+}
+
+static void sw_update_appearance_labels(SolSettingsWindow *w)
+{
+    snprintf(w->corner_radius_text,   sizeof(w->corner_radius_text),   "%.1f", (double)w->settings->corner_radius);
+    snprintf(w->shadow_blur_text,     sizeof(w->shadow_blur_text),     "%.1f", (double)w->settings->shadow_blur);
+    snprintf(w->shadow_offset_text,   sizeof(w->shadow_offset_text),   "%.1f", (double)w->settings->shadow_offset);
+    snprintf(w->panel_opacity_text,   sizeof(w->panel_opacity_text),   "%.2f", (double)w->settings->panel_opacity);
+    snprintf(w->scrollbar_width_text, sizeof(w->scrollbar_width_text), "%.1f", (double)w->settings->scrollbar_width);
+    snprintf(w->scrollbar_radius_text,sizeof(w->scrollbar_radius_text),"%.1f", (double)w->settings->scrollbar_radius);
 }
 
 /* ------------------------------------------------------------------ */
@@ -354,6 +373,42 @@ static void sw_on_opacity_input_change(Ca_TextInput *inp, void *user_data)
 }
 
 /* ------------------------------------------------------------------ */
+/* Appearance overlay callbacks                                        */
+/* ------------------------------------------------------------------ */
+
+/* Macro to generate a float-input callback for an appearance field. */
+#define SW_MAKE_APPEARANCE_CB(fn_name, field, text_buf, mn, mx)             \
+static void fn_name(Ca_TextInput *inp, void *user_data)                     \
+{                                                                           \
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;                  \
+    const char *text = ca_get_text(inp);                                    \
+    if (!text) return;                                                      \
+    char *end;                                                              \
+    float val = strtof(text, &end);                                         \
+    if (end == text || *end != '\0') return;                                \
+    if (val < (mn) || val > (mx)) return;                                   \
+    w->settings->field = val;                                               \
+    sol_ui_system_apply_appearance(w->ui);                                  \
+    sol_settings_save(w->settings);                                         \
+    snprintf(w->text_buf, sizeof(w->text_buf), "%s", text);                 \
+}
+
+SW_MAKE_APPEARANCE_CB(sw_on_corner_radius_change,    corner_radius,    corner_radius_text,
+                      SOL_SETTINGS_CORNER_RADIUS_MIN,    SOL_SETTINGS_CORNER_RADIUS_MAX)
+SW_MAKE_APPEARANCE_CB(sw_on_shadow_blur_change,      shadow_blur,      shadow_blur_text,
+                      SOL_SETTINGS_SHADOW_BLUR_MIN,      SOL_SETTINGS_SHADOW_BLUR_MAX)
+SW_MAKE_APPEARANCE_CB(sw_on_shadow_offset_change,    shadow_offset,    shadow_offset_text,
+                      SOL_SETTINGS_SHADOW_OFFSET_MIN,    SOL_SETTINGS_SHADOW_OFFSET_MAX)
+SW_MAKE_APPEARANCE_CB(sw_on_panel_opacity_change,    panel_opacity,    panel_opacity_text,
+                      SOL_SETTINGS_PANEL_OPACITY_MIN,    SOL_SETTINGS_PANEL_OPACITY_MAX)
+SW_MAKE_APPEARANCE_CB(sw_on_scrollbar_width_change,  scrollbar_width,  scrollbar_width_text,
+                      SOL_SETTINGS_SCROLLBAR_WIDTH_MIN,  SOL_SETTINGS_SCROLLBAR_WIDTH_MAX)
+SW_MAKE_APPEARANCE_CB(sw_on_scrollbar_radius_change, scrollbar_radius, scrollbar_radius_text,
+                      SOL_SETTINGS_SCROLLBAR_RADIUS_MIN, SOL_SETTINGS_SCROLLBAR_RADIUS_MAX)
+
+#undef SW_MAKE_APPEARANCE_CB
+
+/* ------------------------------------------------------------------ */
 /* Content builder                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -441,6 +496,31 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     });
     ca_text(&(Ca_TextDesc){ .text = "0.0 – 1.0", .style = "sw-setting-value" });
     ca_div_end();
+
+    /* ---- Appearance section ---- */
+    ca_text(&(Ca_TextDesc){ .text = "APPEARANCE", .style = "sw-section-title" });
+    ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
+
+#define SW_APPEARANCE_ROW(label, buf_field, cb, hint) \
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" }); \
+    ca_text(&(Ca_TextDesc){ .text = (label), .style = "sw-setting-label" }); \
+    ca_input(&(Ca_InputDesc){ \
+        .text        = w->buf_field, \
+        .on_change   = (cb), \
+        .change_data = w, \
+        .style       = "sw-scale-input", \
+    }); \
+    ca_text(&(Ca_TextDesc){ .text = (hint), .style = "sw-setting-value" }); \
+    ca_div_end();
+
+    SW_APPEARANCE_ROW("Corner Radius",    corner_radius_text,    sw_on_corner_radius_change,    "0 – 20 px")
+    SW_APPEARANCE_ROW("Panel Opacity",    panel_opacity_text,    sw_on_panel_opacity_change,    "0.0 – 1.0")
+    SW_APPEARANCE_ROW("Shadow Blur",      shadow_blur_text,      sw_on_shadow_blur_change,      "0 – 40 px")
+    SW_APPEARANCE_ROW("Shadow Offset",    shadow_offset_text,    sw_on_shadow_offset_change,    "0 – 20 px")
+    SW_APPEARANCE_ROW("Scrollbar Width",  scrollbar_width_text,  sw_on_scrollbar_width_change,  "2 – 20 px")
+    SW_APPEARANCE_ROW("Scrollbar Radius", scrollbar_radius_text, sw_on_scrollbar_radius_change, "0 – 10 px")
+
+#undef SW_APPEARANCE_ROW
 }
 
 /*
@@ -559,6 +639,7 @@ void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
 
     sw_update_scale_label(w);
     sw_update_opacity_label(w);
+    sw_update_appearance_labels(w);
 
     for (int i = 0; i < SW_TAB_COUNT; i++) {
         w->tab_ctxs[i].win       = w;

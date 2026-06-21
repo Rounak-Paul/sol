@@ -321,6 +321,11 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
 /* Open the settings window. No-op if one is already open. */
 void sol_ui_system_open_settings_window(SolUISystem *ui);
 
+/* Re-generate and apply the stylesheet with the current appearance overlay
+ * from the attached SolSettings.  Call after modifying any appearance field
+ * in settings to make the change take effect immediately. */
+void sol_ui_system_apply_appearance(SolUISystem *ui);
+
 /* Register a complete CSS theme after validating that it parses. */
 bool sol_ui_system_register_theme(SolUISystem *ui, const SolThemeDesc *desc);
 
