@@ -187,6 +187,8 @@ static int sol_active_buffer_viewport_lines(SolAppContext *app, SolTextBuffer *t
         const SolBufferNodeId leaf = sol_buffer_active_leaf(app->buffers);
         if (leaf != 0u &&
             sol_buffer_leaf_geometry(app->buffers, leaf, &root_rect, 1.0f, &leaf_rect)) {
+            leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+            if (leaf_rect.h < 0.0f) leaf_rect.h = 0.0f;
             int viewport = sol_text_view_visible_lines_for_height(leaf_rect.h, scale) - 2;
             if (viewport < 1) viewport = 1;
             return viewport;
@@ -696,6 +698,11 @@ static bool sol_on_context_action(const SolUIContextActionRequest *request,
     case SOL_UI_CONTEXT_ACTION_CLOSE_BUFFER:
         sol_focus_context_target(app, request);
         return sol_publish_command(app, "buffer.close");
+    case SOL_UI_CONTEXT_ACTION_CLOSE_TAB:
+        return sol_buffer_close_leaf_tab(app->buffers, request->leaf_id,
+                                         request->buffer_id);
+    case SOL_UI_CONTEXT_ACTION_CLOSE_ALL_BUFFERS:
+        return sol_buffer_close_all(app->buffers) > 0u;
     case SOL_UI_CONTEXT_ACTION_SPLIT_VERTICAL:
         sol_focus_context_target(app, request);
         return sol_publish_command(app, "pane.split.vertical");

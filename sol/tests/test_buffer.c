@@ -161,6 +161,26 @@ static void test_close_buffer(SolTestCtx *T)
     sol_buffer_system_destroy(sys);
 }
 
+static void test_close_all_buffers(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    make_buffer(sys, "a");
+    make_buffer(sys, "b");
+    make_buffer(sys, "c");
+
+    SOL_CHECK_EQ_SZ(T, sol_buffer_close_all(sys), 3u);
+    SOL_CHECK_EQ_SZ(T, sol_buffer_count(sys), 0u);
+    SOL_CHECK_EQ_SZ(T, sol_buffer_active_buffer(sys), 0u);
+    SOL_CHECK_EQ_SZ(T, sol_buffer_close_all(sys), 0u);
+    SOL_CHECK_EQ_SZ(T, sol_buffer_close_all(NULL), 0u);
+
+    SolBufferId resumed = make_buffer(sys, "resumed");
+    SOL_CHECK(T, resumed != 0u);
+    SOL_CHECK(T, sol_buffer_active_buffer(sys) == resumed);
+
+    sol_buffer_system_destroy(sys);
+}
+
 static void test_buffer_at_order(SolTestCtx *T)
 {
     SolBufferSystem *sys = make_system();
@@ -293,6 +313,8 @@ static void test_cycle_active_leaf(SolTestCtx *T)
     SolBufferId b = make_buffer(sys, "b");
     SolBufferId c = make_buffer(sys, "c");
 
+    sol_buffer_set_active_leaf_buffer(sys, b);
+    sol_buffer_set_active_leaf_buffer(sys, c);
     sol_buffer_set_active_leaf_buffer(sys, a);
     bool ok = sol_buffer_cycle_active_leaf(sys, +1);
     SOL_CHECK(T, ok);
@@ -300,6 +322,36 @@ static void test_cycle_active_leaf(SolTestCtx *T)
     SOL_CHECK(T, now == b || now == c);  /* advanced from a */
 
     (void)a; (void)b; (void)c;
+    sol_buffer_system_destroy(sys);
+}
+
+static void test_pane_local_tabs(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolBufferId a = make_buffer(sys, "a");
+    SolBufferId b = make_buffer(sys, "b");
+    SolBufferId c = make_buffer(sys, "c");
+    const SolBufferNodeId first = sol_buffer_active_leaf(sys);
+
+    SOL_CHECK(T, sol_buffer_set_active_leaf_buffer(sys, b));
+    SolBufferNodeId second = 0u;
+    SOL_CHECK(T, sol_buffer_split_active(sys, SOL_BUFFER_SPLIT_VERTICAL,
+                                        0.5f, c, &second));
+    SOL_CHECK_EQ_SZ(T, sol_buffer_leaf_tab_count(sys, first), 2u);
+    SOL_CHECK_EQ_SZ(T, sol_buffer_leaf_tab_count(sys, second), 1u);
+    SOL_CHECK(T, sol_buffer_leaf_tab_at(sys, first, 0u) == a);
+    SOL_CHECK(T, sol_buffer_leaf_tab_at(sys, second, 0u) == c);
+
+    SOL_CHECK(T, sol_buffer_set_leaf_buffer(sys, second, a));
+    SOL_CHECK_EQ_SZ(T, sol_buffer_leaf_tab_count(sys, second), 2u);
+    SOL_CHECK(T, sol_buffer_close_leaf_tab(sys, second, a));
+    SOL_CHECK_NOT_NULL(T, sol_buffer_get(sys, a));
+    SOL_CHECK(T, sol_buffer_leaf_buffer(sys, second) == c);
+
+    SOL_CHECK(T, sol_buffer_close_leaf_tab(sys, first, a));
+    SOL_CHECK_NULL(T, sol_buffer_get(sys, a));
+    SOL_CHECK_EQ_SZ(T, sol_buffer_leaf_tab_count(sys, first), 1u);
+
     sol_buffer_system_destroy(sys);
 }
 
@@ -520,6 +572,7 @@ int main(void)
     SOL_RUN(s, test_create_destroy);
     SOL_RUN(s, test_create_buffer);
     SOL_RUN(s, test_close_buffer);
+    SOL_RUN(s, test_close_all_buffers);
     SOL_RUN(s, test_buffer_at_order);
     SOL_RUN(s, test_active_buffer);
     SOL_RUN(s, test_split_vertical);
@@ -527,6 +580,7 @@ int main(void)
     SOL_RUN(s, test_split_ratio_clamping);
     SOL_RUN(s, test_cycle_active_pane);
     SOL_RUN(s, test_cycle_active_leaf);
+    SOL_RUN(s, test_pane_local_tabs);
     SOL_RUN(s, test_focus_previous_buffer);
     SOL_RUN(s, test_set_leaf_buffer);
     SOL_RUN(s, test_leaf_at_point);

@@ -46,7 +46,7 @@ typedef struct SolBufferRect {
 } SolBufferRect;
 
 /* Geometry for a rendered buffer leaf. `rect` is in the same layout
- * space used by the workspace split tree and excludes the global tab
+ * space used by the workspace split tree and excludes its pane-local tab
  * strip. */
 typedef struct SolBufferRenderArgs {
     bool is_active;
@@ -160,6 +160,14 @@ SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc
  */
 bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id);
 
+/* Close every live buffer. Returns the number successfully closed. */
+size_t sol_buffer_close_all(SolBufferSystem *system);
+
+/* Close one pane's tab, destroying the buffer only when no pane retains it. */
+bool sol_buffer_close_leaf_tab(SolBufferSystem *system,
+                               SolBufferNodeId leaf_id,
+                               SolBufferId buffer_id);
+
 /*
  * Look up a mutable buffer by id.
  *
@@ -271,6 +279,21 @@ bool sol_buffer_set_leaf_buffer(SolBufferSystem *system, SolBufferNodeId leaf_id
  */
 SolBufferId sol_buffer_leaf_buffer(const SolBufferSystem *system, SolBufferNodeId leaf_id);
 
+/* Pane-local tabs and their horizontal viewport. */
+size_t sol_buffer_leaf_tab_count(const SolBufferSystem *system,
+                                 SolBufferNodeId leaf_id);
+SolBufferId sol_buffer_leaf_tab_at(const SolBufferSystem *system,
+                                   SolBufferNodeId leaf_id, size_t index);
+size_t sol_buffer_leaf_tab_view_start(const SolBufferSystem *system,
+                                      SolBufferNodeId leaf_id);
+bool sol_buffer_set_leaf_tab_view_start(SolBufferSystem *system,
+                                        SolBufferNodeId leaf_id, size_t start);
+SolBufferId sol_buffer_leaf_tab_last_active(const SolBufferSystem *system,
+                                            SolBufferNodeId leaf_id);
+void sol_buffer_set_leaf_tab_last_active(SolBufferSystem *system,
+                                         SolBufferNodeId leaf_id,
+                                         SolBufferId buffer_id);
+
 /*
  * Hit-test the split tree against a point in screen space.
  *
@@ -332,7 +355,7 @@ size_t sol_buffer_count(const SolBufferSystem *system);
 SolBufferId sol_buffer_at(const SolBufferSystem *system, size_t index);
 
 /*
- * Cycle the buffer shown in the active leaf through all live buffers.
+ * Cycle the buffer shown in the active leaf through that pane's tabs.
  *
  * system     The buffer system.
  * direction  Positive to advance to the next buffer, negative for previous.

@@ -165,6 +165,7 @@ typedef struct SolPaneClickCtx {
     struct SolUISystem *ui;
     SolBufferNodeId     leaf_id;
     SolBufferId         tab_buffer_id;
+    size_t              tab_visible_count;
 } SolPaneClickCtx;
 
 typedef struct SolContextMenuCtx {

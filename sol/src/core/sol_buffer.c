@@ -22,6 +22,11 @@ typedef struct SolLayoutNode {
     union {
         struct {
             SolBufferId buffer_id;
+            SolBufferId *tabs;
+            size_t tab_count;
+            size_t tab_capacity;
+            size_t tab_view_start;
+            SolBufferId tab_last_active_id;
         } leaf;
         struct {
             SolBufferSplitDirection direction;
@@ -77,6 +82,60 @@ struct SolBufferSystem {
 };
 
 static const SolBuffer *sol_buffer_find_const(const SolBufferSystem *system, SolBufferId id);
+
+static bool sol_leaf_add_tab(SolLayoutNode *leaf, SolBufferId buffer_id)
+{
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF || buffer_id == 0u)
+        return false;
+    for (size_t i = 0u; i < leaf->as.leaf.tab_count; i++)
+        if (leaf->as.leaf.tabs[i] == buffer_id) return true;
+    if (leaf->as.leaf.tab_count == leaf->as.leaf.tab_capacity) {
+        size_t capacity = leaf->as.leaf.tab_capacity
+            ? leaf->as.leaf.tab_capacity * 2u : 4u;
+        SolBufferId *tabs = (SolBufferId *)realloc(
+            leaf->as.leaf.tabs, capacity * sizeof(SolBufferId));
+        if (!tabs) return false;
+        leaf->as.leaf.tabs = tabs;
+        leaf->as.leaf.tab_capacity = capacity;
+    }
+    leaf->as.leaf.tabs[leaf->as.leaf.tab_count++] = buffer_id;
+    return true;
+}
+
+static bool sol_leaf_remove_tab(SolLayoutNode *leaf, SolBufferId buffer_id)
+{
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return false;
+    size_t index = leaf->as.leaf.tab_count;
+    for (size_t i = 0u; i < leaf->as.leaf.tab_count; i++)
+        if (leaf->as.leaf.tabs[i] == buffer_id) { index = i; break; }
+    if (index == leaf->as.leaf.tab_count) return false;
+
+    if (leaf->as.leaf.buffer_id == buffer_id) {
+        leaf->as.leaf.buffer_id = index > 0u
+            ? leaf->as.leaf.tabs[index - 1u]
+            : (index + 1u < leaf->as.leaf.tab_count
+                ? leaf->as.leaf.tabs[index + 1u] : 0u);
+    }
+    memmove(&leaf->as.leaf.tabs[index], &leaf->as.leaf.tabs[index + 1u],
+            (leaf->as.leaf.tab_count - index - 1u) * sizeof(SolBufferId));
+    leaf->as.leaf.tab_count--;
+    if (leaf->as.leaf.tab_view_start > leaf->as.leaf.tab_count)
+        leaf->as.leaf.tab_view_start = leaf->as.leaf.tab_count;
+    return true;
+}
+
+static bool sol_buffer_has_tab(const SolBufferSystem *system,
+                               SolBufferId buffer_id)
+{
+    if (!system) return false;
+    for (size_t i = 0u; i < system->node_count; i++) {
+        const SolLayoutNode *node = &system->nodes[i];
+        if (!node->in_use || node->type != SOL_LAYOUT_NODE_LEAF) continue;
+        for (size_t j = 0u; j < node->as.leaf.tab_count; j++)
+            if (node->as.leaf.tabs[j] == buffer_id) return true;
+    }
+    return false;
+}
 
 /* Track focus history and publish sol.buffer.focused when the active
    buffer changes. Safe to call from every focus-touching mutator;
@@ -284,6 +343,7 @@ static SolLayoutNode *sol_layout_create_leaf(SolBufferSystem *system, SolBufferI
     node.in_use = true;
     node.type = SOL_LAYOUT_NODE_LEAF;
     node.as.leaf.buffer_id = buffer_id;
+    if (buffer_id != 0u && !sol_leaf_add_tab(&node, buffer_id)) return NULL;
 
     system->nodes[system->node_count++] = node;
     return &system->nodes[system->node_count - 1u];
@@ -344,53 +404,6 @@ static SolBufferId sol_first_live_buffer_id(const SolBufferSystem *system)
     }
 
     return 0u;
-}
-
-/* Returns the buffer that should receive focus when `closing_id` is
-   closed: the buffer immediately before it in tab order, or the one
-   immediately after it if it was the first tab, or 0 if it is the
-   only live buffer.  Must be called BEFORE the buffer is marked
-   in_use = false so it is still visible in the live list. */
-static SolBufferId sol_neighbor_buffer_id(const SolBufferSystem *system,
-                                          SolBufferId closing_id)
-{
-    if (!system) return 0u;
-
-    SolBufferId prev = 0u;
-    for (size_t i = 0u; i < system->buffer_count; ++i) {
-        if (!system->buffers[i].in_use) continue;
-        if (system->buffers[i].id == closing_id) {
-            if (prev != 0u) return prev;   /* prefer buffer before */
-            /* closing_id is the first live tab — return the next one */
-            for (size_t j = i + 1u; j < system->buffer_count; ++j) {
-                if (system->buffers[j].in_use) return system->buffers[j].id;
-            }
-            return 0u;   /* only buffer remaining */
-        }
-        prev = system->buffers[i].id;
-    }
-    return 0u;
-}
-
-/*
- * Replace every leaf that references old_id with new_id across the whole layout.
- *
- * system  Buffer system whose layout nodes are updated.
- * old_id  Buffer id to search for.
- * new_id  Buffer id to substitute (may be 0 to leave panes empty).
- */
-static void sol_replace_buffer_in_layout(SolBufferSystem *system, SolBufferId old_id, SolBufferId new_id)
-{
-    for (size_t i = 0u; i < system->node_count; ++i) {
-        SolLayoutNode *node = &system->nodes[i];
-        if (!node->in_use || node->type != SOL_LAYOUT_NODE_LEAF) {
-            continue;
-        }
-
-        if (node->as.leaf.buffer_id == old_id) {
-            node->as.leaf.buffer_id = new_id;
-        }
-    }
 }
 
 /*
@@ -491,6 +504,11 @@ void sol_buffer_system_destroy(SolBufferSystem *system)
         memset(buffer, 0, sizeof(*buffer));
     }
 
+    for (size_t i = 0u; i < system->node_count; i++) {
+        if (system->nodes[i].type == SOL_LAYOUT_NODE_LEAF)
+            free(system->nodes[i].as.leaf.tabs);
+    }
+
     free(system->buffers);
     free(system->nodes);
     free(system);
@@ -528,6 +546,7 @@ SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc
         return 0u;
     }
 
+    const bool had_live_buffers = sol_first_live_buffer_id(system) != 0u;
     const char *name = desc->name ? desc->name : "[No Name]";
     char *name_copy = sol_strdup(name);
     if (!name_copy) {
@@ -563,6 +582,15 @@ SolBufferId sol_buffer_create(SolBufferSystem *system, const SolBufferDesc *desc
 
         system->root_id = leaf->id;
         system->active_leaf_id = leaf->id;
+    } else if (!had_live_buffers) {
+        /* Closing all buffers preserves the split tree. Reuse its active leaf
+         * when editing resumes instead of leaving the new buffer invisible. */
+        SolLayoutNode *leaf = sol_layout_find_node(
+            system, system->active_leaf_id);
+        if (leaf && leaf->type == SOL_LAYOUT_NODE_LEAF) {
+            (void)sol_leaf_add_tab(leaf, buffer.id);
+            leaf->as.leaf.buffer_id = buffer.id;
+        }
     }
 
     if (system->events) {
@@ -603,10 +631,6 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
                            &closed_payload, sizeof(closed_payload), system);
     }
 
-    /* Compute the fallback BEFORE zeroing the slot so the neighbor
-       search still sees this buffer in the live list. */
-    const SolBufferId fallback = sol_neighbor_buffer_id(system, buffer_id);
-
     if (buffer->ops.destroy) {
         buffer->ops.destroy(buffer->state);
     }
@@ -616,10 +640,27 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id)
     buffer->state = NULL;
     buffer->in_use = false;
 
-    sol_replace_buffer_in_layout(system, buffer_id, fallback);
+    for (size_t i = 0u; i < system->node_count; i++) {
+        SolLayoutNode *node = &system->nodes[i];
+        if (node->in_use && node->type == SOL_LAYOUT_NODE_LEAF)
+            (void)sol_leaf_remove_tab(node, buffer_id);
+    }
 
     bump_rev(system);   /* also publishes sol.buffer.focused if active changed */
     return true;
+}
+
+size_t sol_buffer_close_all(SolBufferSystem *system)
+{
+    if (!system) return 0u;
+
+    size_t closed = 0u;
+    SolBufferId id;
+    while ((id = sol_buffer_at(system, 0u)) != 0u) {
+        if (!sol_buffer_close(system, id)) break;
+        closed++;
+    }
+    return closed;
 }
 
 SolBuffer *sol_buffer_get(SolBufferSystem *system, SolBufferId buffer_id)
@@ -692,18 +733,27 @@ bool sol_buffer_split_active(
         return false;
     }
 
+    const SolBufferNodeId active_id = active_leaf->id;
+    const SolBufferNodeId parent_id = active_leaf->parent_id;
+
     SolLayoutNode *new_leaf = sol_layout_create_leaf(system, new_buffer_id);
     if (!new_leaf) {
         return false;
     }
 
-    SolLayoutNode *split = sol_layout_create_split(system, direction, ratio, active_leaf->id, new_leaf->id);
+    const SolBufferNodeId new_leaf_id = new_leaf->id;
+    SolLayoutNode *split = sol_layout_create_split(system, direction, ratio,
+                                                    active_id, new_leaf_id);
     if (!split) {
+        free(new_leaf->as.leaf.tabs);
+        new_leaf->as.leaf.tabs = NULL;
         new_leaf->in_use = false;
         return false;
     }
 
-    const SolBufferNodeId parent_id = active_leaf->parent_id;
+    active_leaf = sol_layout_find_node(system, active_id);
+    new_leaf = sol_layout_find_node(system, new_leaf_id);
+    if (!active_leaf || !new_leaf) return false;
     split->parent_id = parent_id;
     active_leaf->parent_id = split->id;
     new_leaf->parent_id = split->id;
@@ -815,6 +865,7 @@ bool sol_buffer_focus_previous_buffer(SolBufferSystem *system)
         return false;
     }
 
+    if (!sol_leaf_add_tab(leaf, target)) return false;
     leaf->as.leaf.buffer_id = target;
     bump_rev(system);
     return true;
@@ -831,6 +882,7 @@ bool sol_buffer_set_active_leaf_buffer(SolBufferSystem *system, SolBufferId buff
         return false;
     }
 
+    if (!sol_leaf_add_tab(leaf, buffer_id)) return false;
     leaf->as.leaf.buffer_id = buffer_id;
     bump_rev(system);
     return true;
@@ -857,6 +909,7 @@ bool sol_buffer_set_leaf_buffer(SolBufferSystem *system, SolBufferNodeId leaf_id
     SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
     if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return false;
     if (leaf->as.leaf.buffer_id == buffer_id) return false;
+    if (!sol_leaf_add_tab(leaf, buffer_id)) return false;
     leaf->as.leaf.buffer_id = buffer_id;
     bump_rev(system);
     return true;
@@ -867,6 +920,72 @@ SolBufferId sol_buffer_leaf_buffer(const SolBufferSystem *system, SolBufferNodeI
     const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
     if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return 0u;
     return leaf->as.leaf.buffer_id;
+}
+
+size_t sol_buffer_leaf_tab_count(const SolBufferSystem *system,
+                                 SolBufferNodeId leaf_id)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    return (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF)
+        ? 0u : leaf->as.leaf.tab_count;
+}
+
+SolBufferId sol_buffer_leaf_tab_at(const SolBufferSystem *system,
+                                   SolBufferNodeId leaf_id, size_t index)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF ||
+        index >= leaf->as.leaf.tab_count) return 0u;
+    return leaf->as.leaf.tabs[index];
+}
+
+size_t sol_buffer_leaf_tab_view_start(const SolBufferSystem *system,
+                                      SolBufferNodeId leaf_id)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    return (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF)
+        ? 0u : leaf->as.leaf.tab_view_start;
+}
+
+bool sol_buffer_set_leaf_tab_view_start(SolBufferSystem *system,
+                                        SolBufferNodeId leaf_id, size_t start)
+{
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF) return false;
+    if (start > leaf->as.leaf.tab_count) start = leaf->as.leaf.tab_count;
+    if (start == leaf->as.leaf.tab_view_start) return false;
+    leaf->as.leaf.tab_view_start = start;
+    return true;
+}
+
+SolBufferId sol_buffer_leaf_tab_last_active(const SolBufferSystem *system,
+                                            SolBufferNodeId leaf_id)
+{
+    const SolLayoutNode *leaf = sol_layout_find_node_const(system, leaf_id);
+    return (!leaf || leaf->type != SOL_LAYOUT_NODE_LEAF)
+        ? 0u : leaf->as.leaf.tab_last_active_id;
+}
+
+void sol_buffer_set_leaf_tab_last_active(SolBufferSystem *system,
+                                         SolBufferNodeId leaf_id,
+                                         SolBufferId buffer_id)
+{
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (leaf && leaf->type == SOL_LAYOUT_NODE_LEAF)
+        leaf->as.leaf.tab_last_active_id = buffer_id;
+}
+
+bool sol_buffer_close_leaf_tab(SolBufferSystem *system,
+                               SolBufferNodeId leaf_id,
+                               SolBufferId buffer_id)
+{
+    if (!system) return false;
+    SolLayoutNode *leaf = sol_layout_find_node(system, leaf_id);
+    if (!sol_leaf_remove_tab(leaf, buffer_id)) return false;
+    if (!sol_buffer_has_tab(system, buffer_id))
+        return sol_buffer_close(system, buffer_id);
+    bump_rev(system);
+    return true;
 }
 
 /* Recursive hit-test helper. (x,y,w,h) is the rect this subtree
@@ -1097,7 +1216,7 @@ SolBufferId sol_buffer_at(const SolBufferSystem *system, size_t index)
 }
 
 /*
- * Cycle the buffer shown in the active leaf through all live buffers.
+ * Cycle the buffer shown in the active leaf through that pane's tabs.
  *
  * system     Buffer system to operate on.
  * direction  Positive = next buffer, negative = previous buffer.
@@ -1114,27 +1233,14 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
         return false;
     }
 
-    /* Build a flat list of live buffer ids in registration order. */
-    size_t total = sol_buffer_count(system);
+    size_t total = leaf->as.leaf.tab_count;
     if (total < 2u) {
         return false;
     }
 
-    SolBufferId *ids = (SolBufferId *)calloc(total, sizeof(SolBufferId));
-    if (!ids) {
-        return false;
-    }
-
-    size_t cursor = 0u;
-    for (size_t i = 0u; i < system->buffer_count; ++i) {
-        if (system->buffers[i].in_use) {
-            ids[cursor++] = system->buffers[i].id;
-        }
-    }
-
     size_t current = total;   /* sentinel = not found */
     for (size_t i = 0u; i < total; ++i) {
-        if (ids[i] == leaf->as.leaf.buffer_id) {
+        if (leaf->as.leaf.tabs[i] == leaf->as.leaf.buffer_id) {
             current = i;
             break;
         }
@@ -1149,9 +1255,8 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction)
         next = (current + total - 1u) % total;
     }
 
-    bool changed = (ids[next] != leaf->as.leaf.buffer_id);
-    leaf->as.leaf.buffer_id = ids[next];
-    free(ids);
+    bool changed = (leaf->as.leaf.tabs[next] != leaf->as.leaf.buffer_id);
+    leaf->as.leaf.buffer_id = leaf->as.leaf.tabs[next];
     if (changed) {
         bump_rev(system);
     }

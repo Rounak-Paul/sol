@@ -75,11 +75,32 @@ typedef struct SolWorkspaceVisitorContext {
     SolUISystem *ui;
 } SolWorkspaceVisitorContext;
 
-/* Buffer split-tree root geometry.
-   The tree lives below the global tab strip and inside the right pane of
-   the workspace split. */
-#define SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX 30.0f
+/* Buffer split-tree and pane-local tab geometry. */
 #define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX    1.0f
+#define SOL_UI_BUFFER_TAB_WIDTH_PX        140.0f
+#define SOL_UI_BUFFER_TAB_LABEL_CHARS      18u
+
+#define SOL_UI_TAB_LABEL_RING 256u
+static char g_tab_label_ring[SOL_UI_TAB_LABEL_RING][64];
+static size_t g_tab_label_ring_cursor;
+
+static const char *sol_ui_tab_display_name(const char *name, bool *truncated)
+{
+    if (!name) name = "[No Name]";
+    const size_t len = strlen(name);
+    if (len <= SOL_UI_BUFFER_TAB_LABEL_CHARS) {
+        if (truncated) *truncated = false;
+        return name;
+    }
+    char *slot = g_tab_label_ring[
+        g_tab_label_ring_cursor++ & (SOL_UI_TAB_LABEL_RING - 1u)];
+    size_t cut = SOL_UI_BUFFER_TAB_LABEL_CHARS;
+    while (cut > 0u && ((unsigned char)name[cut] & 0xC0u) == 0x80u) cut--;
+    memcpy(slot, name, cut);
+    memcpy(slot + cut, "...", 4u);
+    if (truncated) *truncated = true;
+    return slot;
+}
 
 #define SOL_UI_LABEL_NEW_BUFFER  CA_ICON_NF_COD_NEW_FILE " New Buffer"
 #define SOL_UI_LABEL_OPEN_FILE   CA_ICON_NF_COD_FILE " Open File..."
@@ -87,7 +108,7 @@ typedef struct SolWorkspaceVisitorContext {
 
 /*
  * Compute the buffer area's bounding rectangle in logical pixels, accounting
- * for the title bar, status bar, global tab strip, and optional file-tree
+ * for the title bar, status bar, and optional file-tree
  * split panel.
  *
  * ui     The UI system providing window dimensions and tree visibility.
@@ -110,12 +131,11 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     const float ui_scale = ca_window_get_scale(ui->primary_window);
     const float title_h  = ca_window_get_title_bar_height(ui->primary_window);
     const float status_h = SOL_UI_STATUS_BAR_HEIGHT * (ui_scale > 0.0f ? ui_scale : 1.0f);
-    const float tabs_h   = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX;
 
     float root_x = 0.0f;
-    float root_y = title_h + tabs_h;
+    float root_y = title_h;
     float root_w = (float)ui->window_w;
-    float root_h = (float)ui->window_h - title_h - status_h - tabs_h;
+    float root_h = (float)ui->window_h - title_h - status_h;
 
     if (root_h < 0.0f) root_h = 0.0f;
 
@@ -155,7 +175,6 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
     const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
     const float title_h  = ca_window_get_title_bar_height(ui->primary_window) / window_h;
     const float status_h = (SOL_UI_STATUS_BAR_HEIGHT * scale) / window_h;
-    const float tabs_h   = SOL_UI_BUFFER_TAB_STRIP_HEIGHT_PX / window_h;
     const uint32_t strong_blur_passes = sol_bg_effect_blur_passes(ui->bg_effects);
     SolBgEffectBlurRegion regions[5];
     size_t count = 0;
@@ -179,21 +198,6 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
             .width = left_w,
             .height = 1.0f - title_h - status_h,
             .passes = strong_blur_passes,
-        };
-        regions[count++] = (SolBgEffectBlurRegion){
-            .x = left_w,
-            .y = title_h,
-            .width = 1.0f - left_w,
-            .height = tabs_h,
-            .passes = 3,
-        };
-    } else {
-        regions[count++] = (SolBgEffectBlurRegion){
-            .x = 0.0f,
-            .y = title_h,
-            .width = 1.0f,
-            .height = tabs_h,
-            .passes = 3,
         };
     }
 
@@ -482,7 +486,7 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
 }
 
 /*
- * Handle a click on a tab close button and remove the buffer from all leaves.
+ * Handle a click on a tab close button and remove it from this pane.
  *
  * button     The clicked button (unused).
  * user_data  A SolPaneClickCtx identifying the buffer to close.
@@ -493,34 +497,93 @@ static void sol_ui_on_tab_close(Ca_Button *button, void *user_data)
     SolPaneClickCtx *cb = (SolPaneClickCtx *)user_data;
     if (!cb || !cb->ui || !cb->ui->buffers) return;
     if (cb->tab_buffer_id != 0u) {
-        (void)sol_buffer_close(cb->ui->buffers, cb->tab_buffer_id);
+        (void)sol_buffer_close_leaf_tab(cb->ui->buffers, cb->leaf_id,
+                                        cb->tab_buffer_id);
     }
 }
 
+static void sol_ui_on_tab_strip_scroll(double dx, double dy, void *user_data)
+{
+    SolPaneClickCtx *ctx = (SolPaneClickCtx *)user_data;
+    if (!ctx || !ctx->ui || !ctx->ui->buffers ||
+        ctx->tab_visible_count == 0u) return;
+    const size_t count = sol_buffer_leaf_tab_count(
+        ctx->ui->buffers, ctx->leaf_id);
+    const size_t max_start = count > ctx->tab_visible_count
+        ? count - ctx->tab_visible_count : 0u;
+    size_t start = sol_buffer_leaf_tab_view_start(
+        ctx->ui->buffers, ctx->leaf_id);
+    const double motion = dx != 0.0 ? dx : -dy;
+    if (motion > 0.0 && start < max_start) start++;
+    else if (motion < 0.0 && start > 0u) start--;
+    else return;
+    (void)sol_buffer_set_leaf_tab_view_start(
+        ctx->ui->buffers, ctx->leaf_id, start);
+    sol_ui_system_invalidate_buffer_area(ctx->ui);
+}
+
 /*
- * Render the global buffer tab strip above the split-pane tree (Neovim tabline style).
+ * Render a compact buffer tab strip for one split-pane leaf.
  *
- * Each tab represents one live buffer. Clicking a tab focuses the active leaf
- * and switches it to display that buffer. The active tab highlights the buffer
- * currently shown by the active leaf.
+ * Each tab belongs to this leaf only. Clicking it focuses the leaf and switches
+ * its active buffer.
  *
  * ui  The UI system containing the buffers and pane context pool.
  */
-static void sol_ui_render_global_tab_strip(SolUISystem *ui)
+static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
+                                         SolBufferNodeId leaf_id,
+                                         const SolBufferRect *rect)
 {
     if (!ui || !ui->buffers) return;
-    const size_t tab_count = sol_buffer_count(ui->buffers);
+    const size_t tab_count = sol_buffer_leaf_tab_count(ui->buffers, leaf_id);
     if (tab_count == 0u) return;
 
-    const SolBufferNodeId active_leaf  = sol_buffer_active_leaf(ui->buffers);
-    const SolBufferId     active_bufid = sol_buffer_leaf_buffer(ui->buffers, active_leaf);
+    const SolBufferId active_bufid = sol_buffer_leaf_buffer(ui->buffers, leaf_id);
+    float pane_width = rect ? rect->w : 0.0f;
+    if (pane_width <= 0.0f) pane_width = SOL_UI_BUFFER_TAB_WIDTH_PX;
+    size_t visible_count = pane_width > 5.0f
+        ? (size_t)((pane_width - 5.0f) / (SOL_UI_BUFFER_TAB_WIDTH_PX + 1.0f))
+        : 1u;
+    if (visible_count < 1u) visible_count = 1u;
+    if (visible_count > tab_count) visible_count = tab_count;
+
+    size_t active_index = 0u;
+    for (size_t i = 0u; i < tab_count; i++) {
+        if (sol_buffer_leaf_tab_at(ui->buffers, leaf_id, i) == active_bufid) {
+            active_index = i;
+            break;
+        }
+    }
+    size_t start = sol_buffer_leaf_tab_view_start(ui->buffers, leaf_id);
+    const size_t max_start = tab_count > visible_count
+        ? tab_count - visible_count : 0u;
+    if (start > max_start) start = max_start;
+    if (active_bufid != sol_buffer_leaf_tab_last_active(ui->buffers, leaf_id)) {
+        if (active_index < start) start = active_index;
+        else if (active_index >= start + visible_count)
+            start = active_index - visible_count + 1u;
+        (void)sol_buffer_set_leaf_tab_view_start(ui->buffers, leaf_id, start);
+        sol_buffer_set_leaf_tab_last_active(ui->buffers, leaf_id, active_bufid);
+    }
+
+    SolPaneClickCtx *scroll_ctx = sol_ui_acquire_pane_click_ctx(ui);
+    if (scroll_ctx) {
+        scroll_ctx->ui = ui;
+        scroll_ctx->leaf_id = leaf_id;
+        scroll_ctx->tab_visible_count = visible_count;
+    }
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style     = "buffer-tabs-row",
+        .on_scroll = scroll_ctx ? sol_ui_on_tab_strip_scroll : NULL,
+        .scroll_data = scroll_ctx,
     });
-    for (size_t i = 0u; i < tab_count; ++i) {
-        const SolBufferId tab_id = sol_buffer_at(ui->buffers, i);
+    const size_t end = start + visible_count < tab_count
+        ? start + visible_count : tab_count;
+    for (size_t i = start; i < end; ++i) {
+        const SolBufferId tab_id = sol_buffer_leaf_tab_at(
+            ui->buffers, leaf_id, i);
         if (tab_id == 0u) continue;
         const SolBuffer *tab_buf = sol_buffer_get_const(ui->buffers, tab_id);
         if (!tab_buf) continue;
@@ -528,7 +591,7 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
         SolPaneClickCtx *cb = sol_ui_acquire_pane_click_ctx(ui);
         if (cb) {
             cb->ui            = ui;
-            cb->leaf_id       = active_leaf;
+            cb->leaf_id       = leaf_id;
             cb->tab_buffer_id = tab_id;
         }
         ca_btn_begin(&(Ca_BtnDesc){
@@ -539,8 +602,11 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
             .on_click   = cb ? sol_ui_on_tab_click : NULL,
             .click_data = cb,
         });
+        const char *full_name = sol_buffer_name(tab_buf);
+        bool truncated = false;
+        const char *display_name = sol_ui_tab_display_name(full_name, &truncated);
         ca_text(&(Ca_TextDesc){
-            .text  = sol_buffer_name(tab_buf),
+            .text  = display_name,
             .style = tab_active ? "buffer-tab-text buffer-tab-text-active"
                                 : "buffer-tab-text",
         });
@@ -548,7 +614,7 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
         SolPaneClickCtx *close_cb = sol_ui_acquire_pane_click_ctx(ui);
         if (close_cb) {
             close_cb->ui            = ui;
-            close_cb->leaf_id       = active_leaf;
+            close_cb->leaf_id       = leaf_id;
             close_cb->tab_buffer_id = tab_id;
         }
         ca_btn_begin(&(Ca_BtnDesc){
@@ -565,9 +631,13 @@ static void sol_ui_render_global_tab_strip(SolUISystem *ui)
         });
         ca_btn_end();  /* buffer-tab-close */
         ca_btn_end();  /* buffer-tab */
-        sol_ui_attach_buffer_tab_context_menu(ui, active_leaf, tab_id);
+        if (truncated)
+            ca_tooltip(&(Ca_TooltipDesc){ .text = full_name });
+        sol_ui_attach_buffer_tab_context_menu(ui, leaf_id, tab_id);
     }
     ca_div_end();   /* buffer-tabs-row */
+    /* Right-clicking unused space in the strip still exposes tab actions. */
+    sol_ui_attach_buffer_tab_context_menu(ui, leaf_id, active_bufid);
 }
 
 /*
@@ -593,6 +663,8 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
         .direction = CA_VERTICAL,
         .style     = is_active ? "buffer-pane buffer-pane-active" : "buffer-pane",
     });
+
+    sol_ui_render_pane_tab_strip(ui, leaf_id, rect);
 
     /* Pane body wrapped in a button so clicking anywhere inside the
        buffer area focuses this pane (without disturbing the buffer's
@@ -621,6 +693,9 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
         };
         if (rect) {
             args.rect = *rect;
+            args.rect.y += SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+            args.rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+            if (args.rect.h < 0.0f) args.rect.h = 0.0f;
         }
         sol_buffer_render(buffer, &args);
     }
@@ -764,8 +839,7 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
     /* Reset the per-frame split callback pool. Pointers handed out
        below stay valid until the next call to this function. */
     ui->split_callback_ctx_count = 0u;
-    /* Note: pane_click_ctx pool is reset by the buffer-area builder so
-       it spans both the global tab strip and the split-tree. */
+    /* pane_click_ctx is reset by the buffer-area builder. */
 
     SolBufferWorkspaceVisitor visitor;
     memset(&visitor, 0, sizeof(visitor));
@@ -844,7 +918,6 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
     if (!term_visible) {
         ui->term_panel_host    = NULL;
         ui->term_viewport_host = NULL;
-        sol_ui_render_global_tab_strip(ui);
         sol_ui_render_workspace_tree(ui);
         return;
     }
@@ -867,7 +940,6 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
 
     /* First pane: editor buffer area */
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL });
-    sol_ui_render_global_tab_strip(ui);
     sol_ui_render_workspace_tree(ui);
     ca_div_end();
     sol_ui_attach_workspace_context_menu(ui);
@@ -888,7 +960,7 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
  *
  * Subscribes to buffer revision, file tree revision, file tree visibility,
  * and window size signals to respond to changes. Emits the file-tree split
- * (if visible) and the global tab strip and split-pane tree.
+ * (if visible) and the pane-local tab strips and split-pane tree.
  *
  * div       The workspace content host div (unused).
  * user_data The SolUISystem containing the buffers and file tree.

@@ -197,6 +197,8 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
         sol_ui_system_buffer_area_rect(r->ui, &root_rect.x, &root_rect.y, &root_rect.w, &root_rect.h) &&
         sol_buffer_leaf_geometry(r->buffers, leaf_id, &root_rect,
                                  SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {
+        leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+        if (leaf_rect.h < 0.0f) leaf_rect.h = 0.0f;
         const int viewport_full =
             sol_text_view_visible_lines_for_height(leaf_rect.h, ui_scale);
         int viewport = viewport_full - 2;
@@ -626,6 +628,11 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     if (target_leaf != 0u &&
         sol_buffer_leaf_geometry(r->buffers, target_leaf, &root_rect,
                                  SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {
+        /* The pane-local tab strip owns wheel gestures in its top band. */
+        if ((float)r->mouse_y < leaf_rect.y + SOL_UI_BUFFER_TAB_STRIP_HEIGHT)
+            return;
+        leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+        if (leaf_rect.h < 0.0f) leaf_rect.h = 0.0f;
         const int rendered =
             sol_text_view_visible_lines_for_height(leaf_rect.h, scale);
         int viewport = rendered - 2;

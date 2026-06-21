@@ -115,8 +115,8 @@
     ".tree-name { color: " TNA "; }"\
     ".tree-name-dir { color: " TND "; }"\
     /* Buffer tabs */\
-    ".buffer-tabs-row { height: 30px; padding: 3px 6px; gap: 4px; align-items: center; background: " BT "; }"\
-    ".buffer-tab { height: 24px; padding: 0px 4px 0px 10px; background: transparent; corner-radius: 0px; }"\
+    ".buffer-tabs-row { height: 22px; padding: 1px 3px; gap: 1px; align-items: center; background: " BT "; }"\
+    ".buffer-tab { height: 20px; padding: 0px 2px 0px 7px; background: transparent; corner-radius: 0px; }"\
     ".buffer-tab:hover { background: " UA "; }"\
     ".buffer-tab-active { background: " BTAA "; }"\
     ".buffer-tab-text { color: " TAD "; }"\

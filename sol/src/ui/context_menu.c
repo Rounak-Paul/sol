@@ -430,12 +430,14 @@ void sol_ui_attach_buffer_tab_context_menu(SolUISystem *ui,
 {
     static const char *labels[] = {
         "Close Buffer",
+        "Close All Buffers",
         "New Buffer",
         "Split Vertical",
         "Split Horizontal",
     };
     static const SolUIContextAction actions[] = {
-        SOL_UI_CONTEXT_ACTION_CLOSE_BUFFER,
+        SOL_UI_CONTEXT_ACTION_CLOSE_TAB,
+        SOL_UI_CONTEXT_ACTION_CLOSE_ALL_BUFFERS,
         SOL_UI_CONTEXT_ACTION_NEW_BUFFER,
         SOL_UI_CONTEXT_ACTION_SPLIT_VERTICAL,
         SOL_UI_CONTEXT_ACTION_SPLIT_HORIZONTAL,

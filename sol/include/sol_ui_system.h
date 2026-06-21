@@ -12,6 +12,9 @@
 
 typedef struct SolUISystem SolUISystem;
 
+/* Height reserved by each buffer leaf for its pane-local tab strip. */
+#define SOL_UI_BUFFER_TAB_STRIP_HEIGHT 22.0f
+
 typedef uint32_t SolUISidePanelToken;
 #define SOL_UI_SIDE_PANEL_TOKEN_INVALID 0u
 typedef uint32_t SolUIMenuItemToken;
@@ -77,6 +80,8 @@ typedef enum SolUIContextAction {
     SOL_UI_CONTEXT_ACTION_OPEN_FOLDER_PICKER,
     SOL_UI_CONTEXT_ACTION_NEW_BUFFER,
     SOL_UI_CONTEXT_ACTION_CLOSE_BUFFER,
+    SOL_UI_CONTEXT_ACTION_CLOSE_TAB,
+    SOL_UI_CONTEXT_ACTION_CLOSE_ALL_BUFFERS,
     SOL_UI_CONTEXT_ACTION_SPLIT_VERTICAL,
     SOL_UI_CONTEXT_ACTION_SPLIT_HORIZONTAL,
     SOL_UI_CONTEXT_ACTION_NEW_FILE,
