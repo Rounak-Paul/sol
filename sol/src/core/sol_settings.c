@@ -429,8 +429,8 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         "/* sol appearance overlay */"
         /* Scrollbar geometry — wildcard wins by appending after theme. */
         "* { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx; }"
-        /* Panel shadow + corner-radius + opacity. */
-        ".cf-panel {"
+        /* Command panel + buffer panes: shadow + corner-radius + opacity. */
+        ".cf-panel, .buffer-pane {"
         "  corner-radius: %.1fpx;"
         "  shadow-offset-x: 0px; shadow-offset-y: %.1fpx;"
         "  shadow-blur: %.1fpx; shadow-color: rgba(0,0,0,0.46);"
