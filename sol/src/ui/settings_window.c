@@ -339,15 +339,14 @@ static void sw_on_scale_input_change(Ca_TextInput *inp, void *user_data)
     SolSettingsWindow *w = (SolSettingsWindow *)user_data;
     const char *text = ca_get_text(inp);
     if (!text) return;
+    snprintf(w->scale_input_text, sizeof(w->scale_input_text), "%s", text);
     char *end;
     float val = strtof(text, &end);
     if (end == text || *end != '\0') return;
     if (val < SOL_SETTINGS_UI_SCALE_MIN || val > SOL_SETTINGS_UI_SCALE_MAX) return;
-
     w->settings->ui_scale = val;
     ca_instance_set_scale(w->instance, val);
     sol_settings_save(w->settings);
-    snprintf(w->scale_input_text, sizeof(w->scale_input_text), "%s", text);
 }
 
 /*
@@ -361,28 +360,30 @@ static void sw_on_opacity_input_change(Ca_TextInput *inp, void *user_data)
     SolSettingsWindow *w = (SolSettingsWindow *)user_data;
     const char *text = ca_get_text(inp);
     if (!text) return;
+    snprintf(w->opacity_input_text, sizeof(w->opacity_input_text), "%s", text);
     char *end;
     float val = strtof(text, &end);
     if (end == text || *end != '\0') return;
     if (val < SOL_SETTINGS_BG_OPACITY_MIN || val > SOL_SETTINGS_BG_OPACITY_MAX) return;
-
     w->settings->bg_opacity = val;
     if (w->bg_effects) sol_bg_effect_set_opacity(w->bg_effects, val);
     sol_settings_save(w->settings);
-    snprintf(w->opacity_input_text, sizeof(w->opacity_input_text), "%s", text);
 }
 
 /* ------------------------------------------------------------------ */
 /* Appearance overlay callbacks                                        */
 /* ------------------------------------------------------------------ */
 
-/* Macro to generate a float-input callback for an appearance field. */
+/* Macro to generate a float-input callback for an appearance field.
+ * Mirrors the raw text back into the C buffer first so WIDGET_SET_TEXT sees
+ * no diff on the next reactive rebuild and does not overwrite user edits. */
 #define SW_MAKE_APPEARANCE_CB(fn_name, field, text_buf, mn, mx)             \
 static void fn_name(Ca_TextInput *inp, void *user_data)                     \
 {                                                                           \
     SolSettingsWindow *w = (SolSettingsWindow *)user_data;                  \
     const char *text = ca_get_text(inp);                                    \
     if (!text) return;                                                      \
+    snprintf(w->text_buf, sizeof(w->text_buf), "%s", text);                 \
     char *end;                                                              \
     float val = strtof(text, &end);                                         \
     if (end == text || *end != '\0') return;                                \
@@ -390,7 +391,6 @@ static void fn_name(Ca_TextInput *inp, void *user_data)                     \
     w->settings->field = val;                                               \
     sol_ui_system_apply_appearance(w->ui);                                  \
     sol_settings_save(w->settings);                                         \
-    snprintf(w->text_buf, sizeof(w->text_buf), "%s", text);                 \
 }
 
 SW_MAKE_APPEARANCE_CB(sw_on_corner_radius_change,    corner_radius,    corner_radius_text,
