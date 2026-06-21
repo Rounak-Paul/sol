@@ -107,7 +107,12 @@ static bool bfx_on_load(SolPluginCtx *ctx)
     }
 
     static const SolBgEffectDesc effects[] = {
-        { .id = "com.sol.bfx.lava", .display_name = "Lava", .fragment_glsl = k_lava_frag },
+        {
+            .id = "com.sol.bfx.lava",
+            .display_name = "Lava",
+            .fragment_glsl = k_lava_frag,
+            .animation_fps = 30u,
+        },
     };
 
     for (size_t i = 0; i < sizeof(effects) / sizeof(effects[0]); ++i) {

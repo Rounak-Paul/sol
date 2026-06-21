@@ -126,6 +126,7 @@ typedef struct {
     char                  id[SOL_BG_EFFECT_ID_MAX + 1];
     char                  display_name[SOL_BG_EFFECT_NAME_MAX + 1];
     char                 *fragment_glsl;    /* heap-allocated; NULL = raw mode */
+    uint32_t              animation_fps;
     SolBgEffectInitFn     init;
     SolBgEffectDestroyFn  destroy;
     SolBgEffectRenderFn   render;
@@ -825,6 +826,7 @@ bool sol_bg_effect_register(SolBgEffectRegistry *reg, const SolBgEffectDesc *des
         strlen(desc->display_name) > SOL_BG_EFFECT_NAME_MAX)
         return false;
     if (!desc->fragment_glsl && !desc->render) return false;
+    if (desc->animation_fps > SOL_BG_EFFECT_MAX_ANIMATION_FPS) return false;
     if (reg->count >= SOL_BG_EFFECT_MAX) return false;
     if (find_entry(reg, desc->id)) return false;  /* duplicate */
 
@@ -845,6 +847,7 @@ bool sol_bg_effect_register(SolBgEffectRegistry *reg, const SolBgEffectDesc *des
     e->render     = desc->render;
     e->resize     = desc->resize;
     e->user_data  = desc->user_data;
+    e->animation_fps = desc->animation_fps;
     e->in_use     = true;
     ++reg->count;
     fire_change(reg);
@@ -931,6 +934,19 @@ const char *sol_bg_effect_active_id(const SolBgEffectRegistry *reg)
 {
     if (!reg || reg->active_idx < 0) return NULL;
     return reg->entries[reg->active_idx].id;
+}
+
+/**
+ * Return the plugin-selected interval for the active animated effect.
+ *
+ * @param reg Background effect registry.
+ * @return Seconds between frames, or zero when no timed animation is active.
+ */
+double sol_bg_effect_active_frame_interval(const SolBgEffectRegistry *reg)
+{
+    if (!reg || reg->active_idx < 0) return 0.0;
+    const uint32_t fps = reg->entries[reg->active_idx].animation_fps;
+    return fps > 0u ? 1.0 / (double)fps : 0.0;
 }
 
 /* ------------------------------------------------------------------ */

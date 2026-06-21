@@ -1076,11 +1076,13 @@ static void sol_ui_on_frame(void *user_data)
         if (panel->in_use && panel->tick) panel->tick(panel->user_data);
     }
 
-    /* Background effects are Sol-owned time-based rendering. Request the next
-       application frame explicitly while an effect is active; Causality stays
-       event-driven and does not infer animation from the callback itself. */
-    if (ui->bg_effects && sol_bg_effect_active_id(ui->bg_effects))
-        ca_instance_wake();
+    /* The active plugin selects its animation rate. Schedule a timed frame
+       without turning Causality into a continuous polling renderer. */
+    const double bg_frame_interval = ui->bg_effects
+        ? sol_bg_effect_active_frame_interval(ui->bg_effects)
+        : 0.0;
+    if (bg_frame_interval > 0.0)
+        ca_instance_request_frame_after(ui->instance, bg_frame_interval);
 
     /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
      * so the workspace-content builder re-runs every tick and evaluates
@@ -1092,7 +1094,8 @@ static void sol_ui_on_frame(void *user_data)
      * sol_ui_bump_u32 without overflowing the widget stack. */
     if (ui->buffers && sol_buffer_active_buffer(ui->buffers) != 0) {
         sol_ui_bump_u32(ui->sig_buffer_rev);
-        ca_instance_wake();
+        if (bg_frame_interval <= 0.0)
+            ca_instance_wake();
     }
 
     /* Drain PTY output and rebuild on actual cell changes.
@@ -1118,7 +1121,8 @@ static void sol_ui_on_frame(void *user_data)
                 needs_rebuild            = true;
             }
             /* Keep event loop alive so next blink fires on schedule. */
-            ca_instance_wake();
+            if (bg_frame_interval <= 0.0)
+                ca_instance_wake();
         } else {
             /* Cursor always shown when terminal is not focused. */
             ui->term_cursor_blink_on = true;

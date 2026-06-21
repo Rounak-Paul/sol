@@ -50,6 +50,7 @@ typedef struct Ca_Window    Ca_Window;
 typedef struct SolBgEffectRegistry SolBgEffectRegistry;
 
 #define SOL_BG_EFFECT_MAX_BLUR_REGIONS 8
+#define SOL_BG_EFFECT_MAX_ANIMATION_FPS 240u
 
 /* Normalized swapchain rectangle receiving the frosted backdrop blur. */
 typedef struct SolBgEffectBlurRegion {
@@ -134,6 +135,7 @@ typedef void (*SolBgEffectResizeFn)(const SolBgEffectCtx *ctx, void *user_data,
  * display_name   Human-readable name shown in Settings > Theme.
  * fragment_glsl  Shader mode: null-terminated GLSL fragment shader source.
  *                NULL to use raw-mode callbacks instead.
+ * animation_fps  Plugin-selected animation rate. Zero means event-driven only.
  * init/destroy/render/resize  Raw-mode callbacks (ignored in shader mode).
  * user_data      Passed unchanged to every raw-mode callback.
  */
@@ -141,6 +143,7 @@ typedef struct SolBgEffectDesc {
     const char          *id;
     const char          *display_name;
     const char          *fragment_glsl;
+    uint32_t             animation_fps;
     SolBgEffectInitFn    init;
     SolBgEffectDestroyFn destroy;
     SolBgEffectRenderFn  render;
@@ -210,6 +213,14 @@ bool sol_bg_effect_set_active(SolBgEffectRegistry *reg, const char *id);
  * reg  The registry.
  */
 const char *sol_bg_effect_active_id(const SolBgEffectRegistry *reg);
+
+/**
+ * Return the active effect's requested animation interval.
+ *
+ * @param reg Background effect registry.
+ * @return Seconds between frames, or zero for event-driven-only effects.
+ */
+double sol_bg_effect_active_frame_interval(const SolBgEffectRegistry *reg);
 
 /* ================================================================== */
 /* Enumeration                                                         */

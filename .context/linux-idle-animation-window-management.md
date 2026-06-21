@@ -28,6 +28,10 @@
 - Maximize and restore explicitly request another platform turn after issuing
   the compositor/window-manager operation. This flushes Wayland requests and
   lets the resulting configure/maximize callback update custom chrome.
+- Borderless Cocoa windows are the platform exception: AppKit's normal zoom
+  operation is not reliable without native title-bar chrome. Causality saves
+  and restores window geometry and applies the target screen's work area on
+  macOS, while Linux continues using its compositor/window-manager protocol.
 - A GLFW maximize callback synchronizes Causality's custom title-bar icon/state with compositor-driven changes.
 
 ## Verification

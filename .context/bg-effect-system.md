@@ -7,6 +7,7 @@
 - Push constant layout extended to 8 floats: `{time, width, height, opacity, r, g, b, _pad}`.
 - Theme color is extracted from `.buffer-caret` CSS rule and forwarded via `sol_bg_effect_set_theme_color()`.
 - Settings UI uses `ca_select` dropdown (not buttons) with live hover preview and revert-on-dismiss.
+- The BFX plugin declares Lava's animation rate as 30 FPS; static effects can remain event-driven with a zero rate.
 
 ## Architecture Overview
 
@@ -103,6 +104,13 @@ void sol_bg_effect_on_render(VkCommandBuffer cmd,
 - Blur scratch images and descriptor sets are isolated per in-flight frame slot, preventing cross-frame GPU read/write races
 - Animation timing stores the monotonic epoch as double precision and only converts the elapsed delta to float, preserving smooth sub-second motion during long sessions
 - The render callback reports whether it produced content so Causality clears normally when no effect is active or shader setup fails
+
+## Frame Pacing
+
+- Causality presents UI swapchains with `VK_PRESENT_MODE_FIFO_KHR`, which is guaranteed by Vulkan and paced by the display compositor.
+- Each plugin declares `animation_fps` in `SolBgEffectDesc`; Lava currently requests 30 FPS.
+- Sol converts the active effect's rate into a timed Causality frame request. Causality sleeps with `glfwWaitEventsTimeout`, preserving event-driven input while avoiding continuous rendering.
+- FIFO presentation remains the final compositor pacing boundary and prevents discarded frames if other UI activity temporarily exceeds the effect rate.
 
 ## BgShaderGPU struct
 
