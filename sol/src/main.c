@@ -1564,6 +1564,10 @@ int main(int argc, char **argv)
                  SOL_SETTINGS_THEME_ID_DEFAULT);
         (void)sol_ui_system_set_active_theme(app.ui, app.settings.theme_id);
     }
+    /* Always apply appearance overlay after themes load — set_active_theme
+     * skips the callback when the theme index hasn't changed, so the overlay
+     * would otherwise be missing on startup. */
+    sol_ui_system_apply_appearance(app.ui);
 
     /* Restore the saved background effect now that plugins have registered theirs. */
     if (app.bg_effects && app.settings.bg_effect_id[0] != '\0')
