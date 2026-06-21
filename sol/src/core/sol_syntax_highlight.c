@@ -428,7 +428,61 @@ static int span_cmp(const void *a, const void *b)
     /* Longer span first so the outer capture wins for overlaps. */
     if (x->end_byte != y->end_byte)
         return (x->end_byte > y->end_byte) ? -1 : 1;
+    /* Rainbow brackets override a query capture of the same token. */
+    const bool x_rainbow = strncmp(x->css_class, "hl-bracket-", 11u) == 0;
+    const bool y_rainbow = strncmp(y->css_class, "hl-bracket-", 11u) == 0;
+    if (x_rainbow != y_rainbow) return x_rainbow ? -1 : 1;
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Language-independent rainbow brackets                              */
+/* ------------------------------------------------------------------ */
+
+static const char *const rainbow_bracket_css[] = {
+    "hl-bracket-1", "hl-bracket-2", "hl-bracket-3",
+    "hl-bracket-4", "hl-bracket-5", "hl-bracket-6",
+};
+
+/* Walk parser-recognized punctuation leaves so brackets inside strings and
+ * comments are not colored. This works for every registered Tree-sitter
+ * language without requiring language-specific highlight queries. */
+static void collect_rainbow_brackets(TSNode node, const char *src,
+                                     uint32_t src_len, size_t *depth,
+                                     struct SolSyntaxHighlighter *h)
+{
+    const uint32_t child_count = ts_node_child_count(node);
+    if (child_count != 0u) {
+        for (uint32_t i = 0u; i < child_count; i++)
+            collect_rainbow_brackets(ts_node_child(node, i), src, src_len,
+                                     depth, h);
+        return;
+    }
+
+    /* Structural delimiters are anonymous one-byte leaves in Tree-sitter
+     * grammars. Requiring anonymity excludes bracket characters contained in
+     * named string/comment leaf nodes. */
+    if (ts_node_is_named(node)) return;
+    const uint32_t start = ts_node_start_byte(node);
+    const uint32_t end = ts_node_end_byte(node);
+    if (end != start + 1u || end > src_len) return;
+
+    const char ch = src[start];
+    size_t color_depth;
+    if (ch == '(' || ch == '[' || ch == '{') {
+        color_depth = *depth;
+        (*depth)++;
+    } else if (ch == ')' || ch == ']' || ch == '}') {
+        if (*depth > 0u) (*depth)--;
+        color_depth = *depth;
+    } else {
+        return;
+    }
+
+    push_span(h, start, end,
+              rainbow_bracket_css[color_depth %
+                  (sizeof(rainbow_bracket_css) /
+                   sizeof(rainbow_bracket_css[0]))]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -754,6 +808,12 @@ void sol_syntax_highlight_reparse(SolSyntaxHighlighter *h,
         collect_spans_legacy(ts_tree_root_node(h->tree), NULL, h);
     }
 
+    size_t bracket_depth = 0u;
+    collect_rainbow_brackets(ts_tree_root_node(h->tree), buf,
+                             (uint32_t)byte_len, &bracket_depth, h);
+    if (h->span_count > 1u)
+        qsort(h->spans, h->span_count, sizeof(SolSyntaxSpan), span_cmp);
+
     free(buf);
     h->valid = true;
 }
@@ -813,4 +873,3 @@ const void *sol_syntax_highlight_get_language(const SolSyntaxHighlighter *h)
 {
     return h ? h->language : NULL;
 }
-

@@ -52,6 +52,9 @@
 #define SOL_TEXT_SCROLLBAR_WIDTH_PX 14
 #define SOL_TEXT_HSCROLLBAR_HEIGHT_PX 14
 
+/* Built-in rulers shared by every text buffer. */
+static const size_t SOL_TEXT_RULER_COLUMNS[] = { 80u, 100u };
+
 /* Maximum bytes we'll read for a single visible line. Lines longer
    than this are truncated for display; the buffer content is
    untouched. 4 KiB is more than enough for typical source code while
@@ -823,6 +826,24 @@ void sol_text_view_render(const SolBuffer *buffer,
         .on_drag       = ui ? on_text_col_drag_move  : NULL,
         .drag_data     = cb,
     });
+
+    /* Pane-height column rulers are background overlays, independent of line
+     * nodes and text content. Horizontal scrolling moves them with columns. */
+    for (size_t ruler = 0u;
+         ruler < sizeof(SOL_TEXT_RULER_COLUMNS) /
+                     sizeof(SOL_TEXT_RULER_COLUMNS[0]);
+         ruler++) {
+        ca_div_begin(&(Ca_DivDesc){
+            .position = CA_POSITION_ABSOLUTE,
+            .pos_x    = (float)SOL_TEXT_RULER_COLUMNS[ruler] * adv_css
+                        - scroll_x,
+            .pos_y    = 0.0f,
+            .width    = 1.0f,
+            .height   = (float)rendered * SOL_TEXT_LINE_HEIGHT_PX,
+            .style    = "buffer-column-ruler",
+        });
+        ca_div_end();
+    }
 
     /* Pre-compute selection range (byte offsets) once per frame.
        Shown on any pane that holds a selection, regardless of focus. */
