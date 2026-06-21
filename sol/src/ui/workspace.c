@@ -1076,6 +1076,12 @@ static void sol_ui_on_frame(void *user_data)
         if (panel->in_use && panel->tick) panel->tick(panel->user_data);
     }
 
+    /* Background effects are Sol-owned time-based rendering. Request the next
+       application frame explicitly while an effect is active; Causality stays
+       event-driven and does not infer animation from the callback itself. */
+    if (ui->bg_effects && sol_bg_effect_active_id(ui->bg_effects))
+        ca_instance_wake();
+
     /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
      * so the workspace-content builder re-runs every tick and evaluates
      * the current blink phase.  Then wake the instance so the next tick
@@ -1220,7 +1226,7 @@ static void sol_ui_on_bg_effect_change(void *user_data)
     if (!ui) return;
     sol_ui_bump_u32(ui->sig_bg_effect_rev);
     bool active = ui->bg_effects && sol_bg_effect_active_id(ui->bg_effects);
-    ca_instance_set_continuous(ui->instance, active);
+    if (active) ca_instance_wake();
 }
 
 /*
@@ -2548,13 +2554,11 @@ void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg)
         sol_bg_effect_set_change_callback(reg, sol_ui_on_bg_effect_change, ui);
         ca_instance_set_bg_render(ui->instance, sol_bg_effect_on_render_aux, reg);
         ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
-        bool active = sol_bg_effect_active_id(reg) != NULL;
-        ca_instance_set_continuous(ui->instance, active);
+        if (sol_bg_effect_active_id(reg)) ca_instance_wake();
         sol_ui_sync_bg_blur_regions(ui);
     } else {
         ca_window_set_bg_render(ui->primary_window, NULL, NULL);
         ca_instance_set_bg_render(ui->instance, NULL, NULL);
-        ca_instance_set_continuous(ui->instance, false);
     }
 }
 
