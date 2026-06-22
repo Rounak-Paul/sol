@@ -16,8 +16,8 @@
  *     },
  *     "appearance": {
  *       "corner_radius": 0.0,
- *       "shadow_blur": 18.0,
- *       "shadow_offset": 6.0,
+ *       "panel_blur": 0.0,
+ *       "titlebar_blur": 0.0,
  *       "panel_opacity": 1.0,
  *       "scrollbar_width": 8.0,
  *       "scrollbar_radius": 0.0
@@ -53,13 +53,24 @@
 #define SOL_SETTINGS_CORNER_RADIUS_MAX     20.0f
 #define SOL_SETTINGS_CORNER_RADIUS_DEFAULT 0.0f
 
-#define SOL_SETTINGS_SHADOW_BLUR_MIN     0.0f
-#define SOL_SETTINGS_SHADOW_BLUR_MAX     40.0f
-#define SOL_SETTINGS_SHADOW_BLUR_DEFAULT 18.0f
+#define SOL_SETTINGS_PANEL_BLUR_MIN     0.0f
+#define SOL_SETTINGS_PANEL_BLUR_MAX     40.0f
+#define SOL_SETTINGS_PANEL_BLUR_DEFAULT 0.0f
 
-#define SOL_SETTINGS_SHADOW_OFFSET_MIN     0.0f
-#define SOL_SETTINGS_SHADOW_OFFSET_MAX     20.0f
-#define SOL_SETTINGS_SHADOW_OFFSET_DEFAULT 6.0f
+#define SOL_SETTINGS_TITLEBAR_BLUR_MIN     0.0f
+#define SOL_SETTINGS_TITLEBAR_BLUR_MAX     40.0f
+#define SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT 0.0f
+
+/* Background-effect blur passes for chrome regions (titlebar/statusbar/sidebar).
+ * Integer 0–8; stored as float for slider compatibility. */
+#define SOL_SETTINGS_BG_BLUR_MIN     0.0f
+#define SOL_SETTINGS_BG_BLUR_MAX     8.0f
+#define SOL_SETTINGS_BG_BLUR_DEFAULT 4.0f
+
+/* Background-effect blur passes for the centre buffer area. */
+#define SOL_SETTINGS_BUFFER_BLUR_MIN     0.0f
+#define SOL_SETTINGS_BUFFER_BLUR_MAX     8.0f
+#define SOL_SETTINGS_BUFFER_BLUR_DEFAULT 2.0f
 
 #define SOL_SETTINGS_PANEL_OPACITY_MIN     0.0f
 #define SOL_SETTINGS_PANEL_OPACITY_MAX     1.0f
@@ -100,18 +111,26 @@ typedef struct SolSettings {
      * Applied as the alpha/intensity of the rendered effect. */
     float bg_opacity;
 
+    /* Background-effect blur passes for chrome (titlebar/statusbar/sidebar).
+     * Range: [SOL_SETTINGS_BG_BLUR_MIN, SOL_SETTINGS_BG_BLUR_MAX]. */
+    float bg_blur;
+
+    /* Background-effect blur passes for the centre buffer area.
+     * Range: [SOL_SETTINGS_BUFFER_BLUR_MIN, SOL_SETTINGS_BUFFER_BLUR_MAX]. */
+    float buffer_blur;
+
     /* ---- Appearance overlay ---- */
     /* Corner radius (px) applied to panels, cards, buttons, inputs, etc.
      * Range: [SOL_SETTINGS_CORNER_RADIUS_MIN, SOL_SETTINGS_CORNER_RADIUS_MAX]. */
     float corner_radius;
 
-    /* Panel drop-shadow blur radius (px).
-     * Range: [SOL_SETTINGS_SHADOW_BLUR_MIN, SOL_SETTINGS_SHADOW_BLUR_MAX]. */
-    float shadow_blur;
+    /* Backdrop blur for buffer + side panels (px).
+     * Range: [SOL_SETTINGS_PANEL_BLUR_MIN, SOL_SETTINGS_PANEL_BLUR_MAX]. */
+    float panel_blur;
 
-    /* Panel drop-shadow vertical offset (px).
-     * Range: [SOL_SETTINGS_SHADOW_OFFSET_MIN, SOL_SETTINGS_SHADOW_OFFSET_MAX]. */
-    float shadow_offset;
+    /* Backdrop blur for the titlebar (px).
+     * Range: [SOL_SETTINGS_TITLEBAR_BLUR_MIN, SOL_SETTINGS_TITLEBAR_BLUR_MAX]. */
+    float titlebar_blur;
 
     /* Overall UI panel opacity multiplier.  Applied by scaling all panel
      * background alpha values uniformly via a CSS override.

@@ -34,9 +34,11 @@ SolSettings sol_settings_defaults(void)
     SolSettings s = {
         .ui_scale         = SOL_SETTINGS_UI_SCALE_DEFAULT,
         .bg_opacity       = SOL_SETTINGS_BG_OPACITY_DEFAULT,
+        .bg_blur          = SOL_SETTINGS_BG_BLUR_DEFAULT,
+        .buffer_blur      = SOL_SETTINGS_BUFFER_BLUR_DEFAULT,
         .corner_radius    = SOL_SETTINGS_CORNER_RADIUS_DEFAULT,
-        .shadow_blur      = SOL_SETTINGS_SHADOW_BLUR_DEFAULT,
-        .shadow_offset    = SOL_SETTINGS_SHADOW_OFFSET_DEFAULT,
+        .panel_blur       = SOL_SETTINGS_PANEL_BLUR_DEFAULT,
+        .titlebar_blur    = SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT,
         .panel_opacity    = SOL_SETTINGS_PANEL_OPACITY_DEFAULT,
         .scrollbar_width  = SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT,
         .scrollbar_radius = SOL_SETTINGS_SCROLLBAR_RADIUS_DEFAULT,
@@ -208,6 +210,18 @@ static void jp_parse_theme(JP *j, SolSettings *s)
                 v >= SOL_SETTINGS_BG_OPACITY_MIN &&
                 v <= SOL_SETTINGS_BG_OPACITY_MAX)
                 s->bg_opacity = v;
+        } else if (strcmp(key, "bg_blur") == 0) {
+            float v = jp_float(j);
+            if (!isnan(v) &&
+                v >= SOL_SETTINGS_BG_BLUR_MIN &&
+                v <= SOL_SETTINGS_BG_BLUR_MAX)
+                s->bg_blur = v;
+        } else if (strcmp(key, "buffer_blur") == 0) {
+            float v = jp_float(j);
+            if (!isnan(v) &&
+                v >= SOL_SETTINGS_BUFFER_BLUR_MIN &&
+                v <= SOL_SETTINGS_BUFFER_BLUR_MAX)
+                s->buffer_blur = v;
         } else {
             jp_skip_value(j);
         }
@@ -240,8 +254,8 @@ static void jp_parse_appearance(JP *j, SolSettings *s)
         } else
 
         PARSE_FLOAT_FIELD("corner_radius",    corner_radius,    SOL_SETTINGS_CORNER_RADIUS_MIN,    SOL_SETTINGS_CORNER_RADIUS_MAX)
-        PARSE_FLOAT_FIELD("shadow_blur",      shadow_blur,      SOL_SETTINGS_SHADOW_BLUR_MIN,      SOL_SETTINGS_SHADOW_BLUR_MAX)
-        PARSE_FLOAT_FIELD("shadow_offset",    shadow_offset,    SOL_SETTINGS_SHADOW_OFFSET_MIN,    SOL_SETTINGS_SHADOW_OFFSET_MAX)
+        PARSE_FLOAT_FIELD("panel_blur",       panel_blur,       SOL_SETTINGS_PANEL_BLUR_MIN,       SOL_SETTINGS_PANEL_BLUR_MAX)
+        PARSE_FLOAT_FIELD("titlebar_blur",    titlebar_blur,    SOL_SETTINGS_TITLEBAR_BLUR_MIN,    SOL_SETTINGS_TITLEBAR_BLUR_MAX)
         PARSE_FLOAT_FIELD("panel_opacity",    panel_opacity,    SOL_SETTINGS_PANEL_OPACITY_MIN,    SOL_SETTINGS_PANEL_OPACITY_MAX)
         PARSE_FLOAT_FIELD("scrollbar_width",  scrollbar_width,  SOL_SETTINGS_SCROLLBAR_WIDTH_MIN,  SOL_SETTINGS_SCROLLBAR_WIDTH_MAX)
         PARSE_FLOAT_FIELD("scrollbar_radius", scrollbar_radius, SOL_SETTINGS_SCROLLBAR_RADIUS_MIN, SOL_SETTINGS_SCROLLBAR_RADIUS_MAX)
@@ -373,12 +387,14 @@ bool sol_settings_save(const SolSettings *settings)
         "    \"scale\": %.2f,\n"
         "    \"style\": \"%s\",\n"
         "    \"effect\": \"%s\",\n"
-        "    \"opacity\": %.2f\n"
+        "    \"opacity\": %.2f,\n"
+        "    \"bg_blur\": %.2f,\n"
+        "    \"buffer_blur\": %.2f\n"
         "  },\n"
         "  \"appearance\": {\n"
         "    \"corner_radius\": %.2f,\n"
-        "    \"shadow_blur\": %.2f,\n"
-        "    \"shadow_offset\": %.2f,\n"
+        "    \"panel_blur\": %.2f,\n"
+        "    \"titlebar_blur\": %.2f,\n"
         "    \"panel_opacity\": %.2f,\n"
         "    \"scrollbar_width\": %.2f,\n"
         "    \"scrollbar_radius\": %.2f\n"
@@ -388,9 +404,11 @@ bool sol_settings_save(const SolSettings *settings)
         esc_theme,
         esc_id,
         (double)settings->bg_opacity,
+        (double)settings->bg_blur,
+        (double)settings->buffer_blur,
         (double)settings->corner_radius,
-        (double)settings->shadow_blur,
-        (double)settings->shadow_offset,
+        (double)settings->panel_blur,
+        (double)settings->titlebar_blur,
         (double)settings->panel_opacity,
         (double)settings->scrollbar_width,
         (double)settings->scrollbar_radius);
@@ -421,24 +439,25 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
     float cr      = settings->corner_radius;
     float sw      = settings->scrollbar_width;
     float sr      = settings->scrollbar_radius;
-    float sblur   = settings->shadow_blur;
-    float soffset = settings->shadow_offset;
+    float pblur   = settings->panel_blur;
+    float tblur   = settings->titlebar_blur;
     float op      = settings->panel_opacity;
 
     int written = snprintf(buf, (size_t)bufsz,
         "/* sol appearance overlay */"
         /* Scrollbar geometry — wildcard wins by appending after theme. */
         "* { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx; }"
-        /* Shadow geometry on wildcard: applies wherever theme sets shadow-color. */
-        "* { shadow-offset-x: 0px; shadow-offset-y: %.1fpx; shadow-blur: %.1fpx; }"
-        /* Command panel + buffer panes: corner-radius, explicit shadow color, opacity. */
+        /* Buffer panes + side panel: corner-radius, backdrop blur, opacity. */
         ".cf-panel, .buffer-pane {"
         "  corner-radius: %.1fpx;"
-        "  shadow-color: rgba(0,0,0,0.46);"
+        "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
         "}"
-        /* Titlebar opacity */
-        ".ca-titlebar { opacity: %.3f; }"
+        /* Titlebar: independent backdrop blur (opacity shared) */
+        ".ca-titlebar {"
+        "  backdrop-filter: blur(%.1fpx);"
+        "  opacity: %.3f;"
+        "}"
         /* Corner-radius on every interactive / card element. */
         ".ca-popup-card,"
         ".ca-popup-btn,"
@@ -479,9 +498,8 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".welcome-btn-primary"
         " { corner-radius: %.1fpx; }",
         (double)sw, (double)sr,
-        (double)soffset, (double)sblur,
-        (double)cr, (double)op,
-        (double)op,
+        (double)cr, (double)pblur, (double)op,
+        (double)tblur, (double)op,
         (double)cr);
 
     if (written < 0 || written >= bufsz) return 0;

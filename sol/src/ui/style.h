@@ -1492,6 +1492,11 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  font-size: 13px;"
     "  corner-radius: 0px;"
     "}"
+    /* Appearance sliders — fill remaining row width */
+    ".sw-slider {"
+    "  flex-grow: 1;"
+    "  height: 20px;"
+    "}"
     ".sw-select {"
     "  width: 200px;"
     "  height: 28px;"

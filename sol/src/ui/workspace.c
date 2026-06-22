@@ -176,17 +176,21 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
     const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
     const float title_h  = ca_window_get_title_bar_height(ui->primary_window) / window_h;
     const float status_h = (SOL_UI_STATUS_BAR_HEIGHT * scale) / window_h;
-    const uint32_t strong_blur_passes = sol_bg_effect_blur_passes(ui->bg_effects);
+    const uint32_t max_passes    = sol_bg_effect_blur_passes(ui->bg_effects);
+    const uint32_t chrome_passes = ui->settings
+        ? (uint32_t)(ui->settings->bg_blur    + 0.5f) : max_passes;
+    const uint32_t buffer_passes = ui->settings
+        ? (uint32_t)(ui->settings->buffer_blur + 0.5f) : max_passes;
     SolBgEffectBlurRegion regions[5];
     size_t count = 0;
 
     regions[count++] = (SolBgEffectBlurRegion){
         .x = 0.0f, .y = 0.0f, .width = 1.0f, .height = title_h,
-        .passes = strong_blur_passes,
+        .passes = chrome_passes,
     };
     regions[count++] = (SolBgEffectBlurRegion){
         .x = 0.0f, .y = 1.0f - status_h, .width = 1.0f, .height = status_h,
-        .passes = strong_blur_passes,
+        .passes = chrome_passes,
     };
 
     float buffer_x = 0.0f;
@@ -198,7 +202,7 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
             .y = title_h,
             .width = left_w,
             .height = 1.0f - title_h - status_h,
-            .passes = strong_blur_passes,
+            .passes = chrome_passes,
         };
     }
 
@@ -211,7 +215,7 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
             .y = editor_y / window_h,
             .width = editor_w / window_w,
             .height = editor_h / window_h,
-            .passes = strong_blur_passes,
+            .passes = buffer_passes,
         };
     }
 
@@ -2592,12 +2596,17 @@ void sol_ui_system_open_plugin_window(SolUISystem *ui)
  * ui       The UI system to update.
  * settings The settings object, or NULL to detach.
  */
+void sol_ui_system_sync_blur(SolUISystem *ui)
+{
+    sol_ui_sync_bg_blur_regions(ui);
+}
+
 void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
 {
     if (!ui) return;
     ui->settings = settings;
-    /* Apply appearance overlay now that settings are attached. */
     sol_ui_system_apply_appearance(ui);
+    sol_ui_sync_bg_blur_regions(ui);
 }
 
 /*
