@@ -1142,18 +1142,7 @@ static bool bg_effect_render(VkCommandBuffer cmd,
         if (apply_blur && frame_slot < CA_FRAMES_IN_FLIGHT) {
             blur = &reg->blur[frame_slot];
         } else if (!apply_blur && window) {
-            const float pixel_ratio = ca_window_get_pixel_ratio(window);
-            float title_height = ca_window_get_title_bar_height(window) * pixel_ratio;
-            if (title_height > (float)height) title_height = (float)height;
-            aux_region = (SolBgEffectBlurRegion){
-                .x = 0.0f,
-                .y = 0.0f,
-                .width = 1.0f,
-                .height = title_height / (float)height,
-                .passes = (uint32_t)reg->blur_passes,
-            };
-            blur_regions = &aux_region;
-            blur_region_count = 1;
+            blur_region_count = 0;
             blur = aux_blur_for_window(reg, window, frame_slot);
         }
         if (blur && reg->blur_passes > 0 && blur_region_count > 0 &&

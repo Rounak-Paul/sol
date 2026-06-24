@@ -2,12 +2,16 @@
 
 ## Current Status
 
-- Only `com.sol.bfx.lava` effect is active (other effects removed).
-- The lava shader uses theme accent color (r/g/b push constants) to tint the hot palette.
-- Push constant layout extended to 8 floats: `{time, width, height, opacity, r, g, b, _pad}`.
-- Theme color is extracted from `.buffer-caret` CSS rule and forwarded via `sol_bg_effect_set_theme_color()`.
-- Settings UI uses `ca_select` dropdown (not buttons) with live hover preview and revert-on-dismiss.
-- The BFX plugin declares Lava's animation rate as 30 FPS; static effects can remain event-driven with a zero rate.
+- Four effects: `com.sol.bfx.lava`, `com.sol.bfx.nebula`, `com.sol.bfx.wave`, `com.sol.bfx.aurora`.
+- Removed: `blackhole` (too heavy), `embers` (bad at non-Retina).
+- All shaders: Reinhard tone map + gamma 2.2 output, alias-free at 1080p.
+- Lava/Nebula: 4/3-octave FBM cap — no aliasing on low-DPI displays.
+- Nebula: very dark void, distinct palette from Lava, resolution-independent star density.
+- Wave: dark ocean palette, minimal specular (no caustics/foam blowout).
+- Aurora: pure sin/cos ribbons — no noise sampling, resolution-independent by construction.
+- Push constant layout: `{time, width, height, opacity, r, g, b, _pad}` (8 floats).
+- Theme accent color via `sol_bg_effect_set_theme_color()` from `.buffer-caret` CSS.
+- All effects at 30 FPS.
 
 ## Architecture Overview
 
@@ -129,11 +133,10 @@ typedef struct {
 
 | ID | Name |
 |----|------|
-| `com.sol.bfx.aurora` | Aurora |
-| `com.sol.bfx.nebula` | Nebula |
-| `com.sol.bfx.hyperspace` | Hyperspace |
 | `com.sol.bfx.lava` | Lava |
-| `com.sol.bfx.matrix` | Matrix |
+| `com.sol.bfx.nebula` | Nebula |
+| `com.sol.bfx.wave` | Wave |
+| `com.sol.bfx.aurora` | Aurora |
 
 All shaders: dark-themed, subtle, suitable as editor backgrounds.
 
