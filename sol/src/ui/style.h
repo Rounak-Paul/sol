@@ -79,9 +79,8 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "}"
     ".ca-overlay-hover { background: rgba(91, 151, 218, 0.18); corner-radius: 0px; }"
     ".ca-overlay-selected { background: rgba(75, 137, 205, 0.28); color: #f2f5f8; }"
-    ".ca-app-menubar { background: rgba(2, 4, 7, 0.97); }"
-    ".ca-app-menubar-item { color: #aeb8c7; font-size: 11px; }"
-    ".ca-app-menubar-item:hover { background: rgba(117, 151, 193, 0.14); color: #f0f3f7; }"
+    ".ca-titlebar-menu-item { color: #aeb8c7; font-size: 11px; }"
+    ".ca-titlebar-menu-item:hover { background: rgba(117, 151, 193, 0.14); color: #f0f3f7; }"
 
     /* ===== Root + workspace shell ===== */
     ".app-root {"
