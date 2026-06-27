@@ -387,10 +387,9 @@ static void on_key(const Ca_Event *ev, void *user_data)
                 return;
             }
 
-            /* Everything else (Ctrl+C, Ctrl+Z, ESC, arrows, etc.) → PTY.
-               Unmodified printable chars are handled by on_char; send via
-               sol_terminal_send_key only for non-printable keys or
-               Ctrl/Alt chords that need VT encoding. */
+            /* Everything else (Ctrl+C, Ctrl+Z, ESC, arrows, etc.) -> PTY.
+               Unmodified printable chars are handled by on_char so Sol's
+               app-level text path stays the single source of normal typing. */
             const bool has_ctrl_alt =
                 (ie.data.key.modifiers &
                  (SOL_MOD_CTRL | SOL_MOD_ALT | SOL_MOD_SUPER)) != 0u;

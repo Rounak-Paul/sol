@@ -86,6 +86,15 @@ typedef enum SolVtState {
     VT_SOS_PM_APC,
 } SolVtState;
 
+/* UTF-8 multi-byte accumulation state for the VT processor.  This lives on the
+   terminal, not the stack, because output can be drained in frame-sized chunks
+   and a multi-byte sequence may be split across drains. */
+typedef struct VtUtf8 {
+    uint8_t buf[4];
+    int     remaining;
+    uint32_t codepoint;
+} VtUtf8;
+
 /* ================================================================== */
 /* SolTerminal                                                         */
 /* ================================================================== */
@@ -149,6 +158,7 @@ struct SolTerminal {
     /* OSC accumulation. */
     char         osc_buf[SOL_TERM_OSC_MAX];
     int          osc_len;
+    VtUtf8       utf8_state;
 
     /* PTY file descriptor / process (platform-specific). */
 #if defined(_WIN32)
@@ -1220,15 +1230,6 @@ static void vt_process_byte(SolTerminal *term, uint8_t byte)
     }
 }
 
-/* UTF-8 multi-byte accumulation state for the VT processor.
-   Bytes that form a multi-byte sequence are assembled here before
-   calling term_put_char with the full codepoint. */
-typedef struct VtUtf8 {
-    uint8_t buf[4];
-    int     remaining;
-    uint32_t codepoint;
-} VtUtf8;
-
 static void vt_utf8_reset(VtUtf8 *u)
 {
     u->remaining = 0;
@@ -1305,6 +1306,10 @@ static void *sol_terminal_reader_thread(void *arg)
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n <= 0) {
             if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                usleep(1000);
+                continue;
+            }
             break; /* EIO (slave closed), EBADF (fd closed), or EOF */
         }
 
@@ -1369,15 +1374,11 @@ static bool sol_terminal_start_pty(SolTerminal *term, const char *cwd)
 
     term->child_pid = pid;
 
-    /* Set master fd to non-blocking to avoid reader stalls. */
+    /* Keep the PTY master in blocking mode.  The reader thread owns blocking
+       reads; transient non-blocking EAGAIN would otherwise look like EOF and
+       leave the terminal with only a cursor and no shell output. */
     int flags = fcntl(term->master_fd, F_GETFL, 0);
-    if (flags >= 0)
-        fcntl(term->master_fd, F_SETFL, flags | O_NONBLOCK);
-
-    /* Re-enable blocking for the reader thread via select-based wait.
-       Actually, keep non-blocking and use blocking read by clearing O_NONBLOCK
-       in the reader thread — simpler: just use blocking reads (remove flag). */
-    if (flags >= 0)
+    if (flags >= 0 && (flags & O_NONBLOCK))
         fcntl(term->master_fd, F_SETFL, flags & ~O_NONBLOCK);
 
     atomic_store_explicit(&term->stop_reader, false, memory_order_relaxed);
@@ -1396,35 +1397,43 @@ static void sol_terminal_stop_pty(SolTerminal *term)
 {
     atomic_store_explicit(&term->stop_reader, true, memory_order_relaxed);
 
-    /* Kill child first so the slave PTY side closes, which makes the
-       blocking read() on the master return with EIO.  If we close the
-       master fd first instead, the read() may not return on macOS. */
     if (term->child_pid > 0) {
-        kill(term->child_pid, SIGKILL);
+        kill(term->child_pid, SIGHUP);
+        kill(term->child_pid, SIGTERM);
+
+        int status = 0;
+        bool reaped = false;
+        for (int i = 0; i < 20; ++i) {
+            pid_t r = waitpid(term->child_pid, &status, WNOHANG);
+            if (r == term->child_pid || (r < 0 && errno == ECHILD)) {
+                reaped = true;
+                break;
+            }
+            usleep(10000);
+        }
+        if (!reaped) {
+            kill(term->child_pid, SIGKILL);
+            while (waitpid(term->child_pid, &status, 0) < 0 && errno == EINTR) {}
+        }
+        term->child_pid = 0;
     }
 
-    /* Close master fd after the child is killed. */
-    if (term->master_fd >= 0) {
+    /* Reaping the child should close the slave side and wake read(). Closing
+       the master before join is only a fallback for already-dead children
+       where no process is left to close the slave. */
+    if (term->reader_started && term->child_pid == 0 && term->master_fd >= 0) {
         int fd = term->master_fd;
-        term->master_fd = -1;   /* clear before close so reader sees -1 */
+        term->master_fd = -1;
         close(fd);
     }
-
-    /* Now safe to join — the read() will have returned. */
     if (term->reader_started) {
         pthread_join(term->reader_thread, NULL);
         term->reader_started = false;
     }
 
-    /* Reap the child; WNOHANG first in case the drain already reaped it. */
-    if (term->child_pid > 0) {
-        int status;
-        if (waitpid(term->child_pid, &status, WNOHANG) == 0) {
-            /* Child not yet reaped; wait with timeout via blocking call.
-               Should return immediately since we sent SIGKILL above. */
-            waitpid(term->child_pid, &status, 0);
-        }
-        term->child_pid = 0;
+    if (term->master_fd >= 0) {
+        close(term->master_fd);
+        term->master_fd = -1;
     }
 }
 
@@ -1847,9 +1856,8 @@ bool sol_terminal_manager_drain(SolTerminalManager *mgr)
 
         if (n > 0) {
             term->dirty = false;
-            VtUtf8 u; vt_utf8_reset(&u);
             for (size_t j = 0; j < n; ++j)
-                vt_utf8_feed(term, &u, (uint8_t)local[j]);
+                vt_utf8_feed(term, &term->utf8_state, (uint8_t)local[j]);
             any_dirty = true;
         }
 
@@ -1972,7 +1980,13 @@ void sol_terminal_send_text(SolTerminal *term, const char *data, size_t len)
     size_t off = 0;
     while (off < len) {
         ssize_t n = write(term->master_fd, data + off, len - off);
-        if (n <= 0) { if (errno == EINTR) continue; break; }
+        if (n <= 0) {
+            if (errno == EINTR) continue;
+            if (errno == EIO || errno == EBADF || errno == EPIPE) {
+                term->is_alive = false;
+            }
+            break;
+        }
         off += (size_t)n;
     }
 #else
@@ -2006,6 +2020,72 @@ static int term_modifier_number(uint8_t mods)
     return m;
 }
 
+static bool term_ctrl_code(uint32_t key, uint8_t mods, char *out)
+{
+    if (!(mods & SOL_MOD_CTRL) || !out) return false;
+
+    if (key >= 'a' && key <= 'z') key = (uint32_t)(key - ('a' - 'A'));
+    if (key >= 'A' && key <= 'Z') {
+        *out = (char)(key & 0x1Fu);
+        return true;
+    }
+
+    switch (key) {
+    case ' ':
+    case '2': *out = 0x00; return true;
+    case '[':
+    case '3': *out = 0x1B; return true;
+    case '\\':
+    case '4': *out = 0x1C; return true;
+    case ']':
+    case '5': *out = 0x1D; return true;
+    case '^':
+    case '6': *out = 0x1E; return true;
+    case '_':
+    case '7': *out = 0x1F; return true;
+    case '?':
+    case '/':
+    case '8':
+    case SOL_KEY_BACKSPACE:
+        *out = 0x7F;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static char term_ascii_for_key(uint32_t key, uint8_t mods)
+{
+    const bool shift = (mods & SOL_MOD_SHIFT) != 0u;
+
+    if (key >= 'a' && key <= 'z') key = (uint32_t)(key - ('a' - 'A'));
+    if (key >= 'A' && key <= 'Z') {
+        return (char)(shift ? key : (key + ('a' - 'A')));
+    }
+    if (key >= '0' && key <= '9') {
+        static const char shifted_digits[] = ")!@#$%^&*(";
+        return shift ? shifted_digits[key - '0'] : (char)key;
+    }
+
+    switch (key) {
+    case '`': return shift ? '~' : '`';
+    case '-': return shift ? '_' : '-';
+    case '=': return shift ? '+' : '=';
+    case '[': return shift ? '{' : '[';
+    case ']': return shift ? '}' : ']';
+    case '\\': return shift ? '|' : '\\';
+    case ';': return shift ? ':' : ';';
+    case '\'': return shift ? '"' : '\'';
+    case ',': return shift ? '<' : ',';
+    case '.': return shift ? '>' : '.';
+    case '/': return shift ? '?' : '/';
+    case ' ': return ' ';
+    default:
+        if (key >= 32u && key <= 126u) return (char)key;
+        return '\0';
+    }
+}
+
 void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods)
 {
     if (!term || !term->is_alive) return;
@@ -2013,34 +2093,27 @@ void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods)
     char buf[32];
     int  len = 0;
 
-    /* Ctrl+key: map to C0 control codes (0x01-0x1A for A-Z). */
-    if ((mods & SOL_MOD_CTRL) && !(mods & SOL_MOD_ALT) &&
-        key >= 'A' && key <= 'Z') {
-        buf[0] = (char)(key & 0x1Fu);
-        len = 1;
-        sol_terminal_send_text(term, buf, (size_t)len);
+    switch (key) {
+    case SOL_KEY_LEFT_SHIFT:
+    case SOL_KEY_RIGHT_SHIFT:
+    case SOL_KEY_LEFT_CTRL:
+    case SOL_KEY_RIGHT_CTRL:
+    case SOL_KEY_LEFT_ALT:
+    case SOL_KEY_RIGHT_ALT:
+    case SOL_KEY_LEFT_SUPER:
+    case SOL_KEY_RIGHT_SUPER:
         return;
+    default:
+        break;
     }
-    if ((mods & SOL_MOD_CTRL) && !(mods & SOL_MOD_ALT) &&
-        key >= 'a' && key <= 'z') {
-        buf[0] = (char)((key - 32) & 0x1Fu);
-        len = 1;
-        sol_terminal_send_text(term, buf, (size_t)len);
-        return;
-    }
-    /* Ctrl+[ = ESC, Ctrl+\ = 0x1C, Ctrl+] = 0x1D */
-    if ((mods & SOL_MOD_CTRL) && key == '[') {
-        buf[0] = '\033'; len = 1;
-        sol_terminal_send_text(term, buf, (size_t)len);
-        return;
-    }
-    if ((mods & SOL_MOD_CTRL) && key == '\\') {
-        buf[0] = 0x1C; len = 1;
-        sol_terminal_send_text(term, buf, (size_t)len);
-        return;
-    }
-    if ((mods & SOL_MOD_CTRL) && key == ']') {
-        buf[0] = 0x1D; len = 1;
+
+    /* Ctrl and Ctrl+Alt chords map to C0 controls.  Alt prefixes ESC. */
+    char ctrl = 0;
+    if (term_ctrl_code(key, mods, &ctrl)) {
+        if (mods & SOL_MOD_ALT) {
+            buf[len++] = '\033';
+        }
+        buf[len++] = ctrl;
         sol_terminal_send_text(term, buf, (size_t)len);
         return;
     }
@@ -2086,21 +2159,84 @@ void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods)
         }
     }
 
+    struct { uint32_t key; const char *normal; int vt_num; } funcs[] = {
+        { SOL_KEY_F1,  "\033OP", 11 },
+        { SOL_KEY_F2,  "\033OQ", 12 },
+        { SOL_KEY_F3,  "\033OR", 13 },
+        { SOL_KEY_F4,  "\033OS", 14 },
+        { SOL_KEY_F5,  "\033[15~", 15 },
+        { SOL_KEY_F6,  "\033[17~", 17 },
+        { SOL_KEY_F7,  "\033[18~", 18 },
+        { SOL_KEY_F8,  "\033[19~", 19 },
+        { SOL_KEY_F9,  "\033[20~", 20 },
+        { SOL_KEY_F10, "\033[21~", 21 },
+        { SOL_KEY_F11, "\033[23~", 23 },
+        { SOL_KEY_F12, "\033[24~", 24 },
+    };
+    for (size_t i = 0; i < sizeof(funcs)/sizeof(funcs[0]); ++i) {
+        if (key == funcs[i].key) {
+            if (modn > 1) {
+                if (key >= SOL_KEY_F1 && key <= SOL_KEY_F4) {
+                    const char final = (char)('P' + (key - SOL_KEY_F1));
+                    len = snprintf(buf, sizeof(buf), "\033[1;%d%c", modn, final);
+                } else {
+                    len = snprintf(buf, sizeof(buf), "\033[%d;%d~",
+                                   funcs[i].vt_num, modn);
+                }
+            } else {
+                len = snprintf(buf, sizeof(buf), "%s", funcs[i].normal);
+            }
+            sol_terminal_send_text(term, buf, (size_t)len);
+            return;
+        }
+    }
+
     switch (key) {
+    case SOL_KEY_ESCAPE:
+        if (mods & SOL_MOD_ALT) {
+            buf[0] = '\033'; buf[1] = '\033'; len = 2;
+        } else {
+            buf[0] = '\033'; len = 1;
+        }
+        break;
     case SOL_KEY_BACKSPACE:
-        buf[0] = 0x7F; len = 1;
+        if (mods & SOL_MOD_ALT) {
+            buf[0] = '\033'; buf[1] = 0x7F; len = 2;
+        } else {
+            buf[0] = 0x7F; len = 1;
+        }
         break;
     case SOL_KEY_ENTER:
-        buf[0] = '\r'; len = 1;
+        if (mods & SOL_MOD_ALT) {
+            buf[0] = '\033'; buf[1] = '\r'; len = 2;
+        } else {
+            buf[0] = '\r'; len = 1;
+        }
         break;
     case SOL_KEY_TAB:
         if (mods & SOL_MOD_SHIFT) {
             buf[0] = '\033'; buf[1] = '['; buf[2] = 'Z'; len = 3;
+        } else if (mods & SOL_MOD_ALT) {
+            buf[0] = '\033'; buf[1] = '\t'; len = 2;
         } else {
             buf[0] = '\t'; len = 1;
         }
         break;
     default: break;
+    }
+
+    if (len == 0 && !(mods & (SOL_MOD_CTRL | SOL_MOD_SUPER))) {
+        const char ch = term_ascii_for_key(key, mods);
+        if (ch != '\0') {
+            if (mods & SOL_MOD_ALT) {
+                buf[0] = '\033';
+                buf[1] = ch;
+                len = 2;
+            } else {
+                buf[0] = ch;
+                len = 1;
+            }
+        }
     }
 
     if (len > 0) {
@@ -2112,7 +2248,9 @@ void sol_terminal_kill(SolTerminal *term)
 {
     if (!term) return;
 #if !defined(_WIN32)
-    if (term->child_pid > 0) kill(term->child_pid, SIGKILL);
+    if (term->child_pid > 0) {
+        kill(term->child_pid, SIGKILL);
+    }
 #else
     if (term->hProcess) TerminateProcess(term->hProcess, 0);
 #endif

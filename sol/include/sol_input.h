@@ -48,6 +48,18 @@ enum {
     SOL_KEY_RIGHT_CTRL = 345,
     SOL_KEY_RIGHT_ALT = 346,
     SOL_KEY_RIGHT_SUPER = 347,
+    SOL_KEY_F1  = 290,
+    SOL_KEY_F2  = 291,
+    SOL_KEY_F3  = 292,
+    SOL_KEY_F4  = 293,
+    SOL_KEY_F5  = 294,
+    SOL_KEY_F6  = 295,
+    SOL_KEY_F7  = 296,
+    SOL_KEY_F8  = 297,
+    SOL_KEY_F9  = 298,
+    SOL_KEY_F10 = 299,
+    SOL_KEY_F11 = 300,
+    SOL_KEY_F12 = 301,
 };
 
 /* Discriminates the active union member in a SolInputEvent. */
