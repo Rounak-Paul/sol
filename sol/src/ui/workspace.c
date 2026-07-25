@@ -49,6 +49,7 @@
 #include "style.h"
 
 #include <assert.h>
+#include <ca_gpu.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

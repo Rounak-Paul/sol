@@ -6,6 +6,7 @@
 #include "sol_bg_effect.h"
 
 #include <causality.h>
+#include <ca_gpu.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -566,6 +567,27 @@ static void blur_destroy(BlurGPU *blur, VkDevice device)
     memset(blur, 0, sizeof(*blur));
 }
 
+/* Write the frame-local descriptor sets before recording any blur draw. */
+static void blur_update_descriptors(BlurGPU *blur, VkDevice device,
+                                    VkImageView swapchain_view)
+{
+    VkDescriptorImageInfo h_img = { .sampler = blur->sampler,
+                                    .imageView = swapchain_view,
+                                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkDescriptorImageInfo v_img = { .sampler = blur->sampler,
+                                    .imageView = blur->scratch_view,
+                                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+    VkWriteDescriptorSet writes[2] = {
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = blur->desc_set_h,
+          .dstBinding = 0, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &h_img },
+        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = blur->desc_set_v,
+          .dstBinding = 0, .descriptorCount = 1,
+          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &v_img },
+    };
+    vkUpdateDescriptorSets(device, 2, writes, 0, NULL);
+}
+
 /*
  * Execute one separable Gaussian blur iteration on the swapchain image.
  * On entry:  swapchain is COLOR_ATTACHMENT_OPTIMAL, scratch is any layout.
@@ -593,23 +615,6 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
         SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->width,
         SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->height,
     };
-
-    /* Update descriptors: H reads swapchain, V reads scratch */
-    VkDescriptorImageInfo h_img = { .sampler = blur->sampler,
-                                    .imageView = swapchain_view,
-                                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkDescriptorImageInfo v_img = { .sampler = blur->sampler,
-                                    .imageView = blur->scratch_view,
-                                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet writes[2] = {
-        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = blur->desc_set_h,
-          .dstBinding = 0, .descriptorCount = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &h_img },
-        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = blur->desc_set_v,
-          .dstBinding = 0, .descriptorCount = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &v_img },
-    };
-    vkUpdateDescriptorSets(device, 2, writes, 0, NULL);
 
     /* --- H-pass barriers --- */
     /* Swapchain: COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL */
@@ -1196,6 +1201,7 @@ static bool bg_effect_render(VkCommandBuffer cmd,
             blur_region_count > 0 &&
             (image_usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
             VkDevice dev = ca_gpu_device(reg->instance);
+            blur_update_descriptors(blur, dev, swapchain_view);
             for (int i = 0; i < reg->blur_passes; ++i)
                 blur_execute(blur, dev, cmd, swapchain_image, swapchain_view,
                              blur_regions, blur_region_count,
