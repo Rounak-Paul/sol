@@ -132,11 +132,12 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
 
     const float ui_scale = ca_window_get_scale(ui->primary_window);
     const float status_h = SOL_UI_STATUS_BAR_HEIGHT * (ui_scale > 0.0f ? ui_scale : 1.0f);
+    const float title_h = ca_window_get_title_bar_height(ui->primary_window);
 
     float root_x = 0.0f;
-    float root_y = 0.0f;
+    float root_y = title_h;
     float root_w = (float)ui->window_w;
-    float root_h = (float)ui->window_h - status_h;
+    float root_h = (float)ui->window_h - title_h - status_h;
 
     if (root_h < 0.0f) root_h = 0.0f;
 
@@ -174,6 +175,7 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
     const float window_h = (float)ui->window_h;
     const float ui_scale = ca_window_get_scale(ui->primary_window);
     const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
+    const float title_h  = ca_window_get_title_bar_height(ui->primary_window) / window_h;
     const float status_h = (SOL_UI_STATUS_BAR_HEIGHT * scale) / window_h;
     const uint32_t max_passes    = sol_bg_effect_blur_passes(ui->bg_effects);
     const uint32_t chrome_passes = ui->settings
@@ -194,9 +196,9 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
         const float left_w = buffer_x / window_w;
         regions[count++] = (SolBgEffectBlurRegion){
             .x = 0.0f,
-            .y = 0.0f,
+            .y = title_h,
             .width = left_w,
-            .height = 1.0f - status_h,
+            .height = 1.0f - title_h - status_h,
             .passes = chrome_passes,
         };
     }
@@ -2879,8 +2881,9 @@ bool sol_ui_system_buffer_area_rect(const SolUISystem *ui,
  */
 int sol_ui_system_title_bar_height(const SolUISystem *ui)
 {
-    (void)ui;
-    return 0;
+    return ui && ui->primary_window
+        ? (int)ca_window_get_title_bar_height(ui->primary_window)
+        : 0;
 }
 
 /*
