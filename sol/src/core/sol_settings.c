@@ -44,7 +44,8 @@ SolSettings sol_settings_defaults(void)
         .scrollbar_radius = SOL_SETTINGS_SCROLLBAR_RADIUS_DEFAULT,
     };
     snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
-    s.bg_effect_id[0] = '\0';
+    snprintf(s.bg_effect_id, sizeof(s.bg_effect_id), "%s",
+             SOL_SETTINGS_BG_EFFECT_ID_DEFAULT);
     return s;
 }
 

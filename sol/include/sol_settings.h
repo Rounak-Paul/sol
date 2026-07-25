@@ -47,6 +47,7 @@
 #define SOL_SETTINGS_BG_EFFECT_ID_MAX   63
 #define SOL_SETTINGS_THEME_ID_MAX       63
 #define SOL_SETTINGS_THEME_ID_DEFAULT   "com.sol.theme.glass"
+#define SOL_SETTINGS_BG_EFFECT_ID_DEFAULT "com.sol.bfx.aurora"
 
 /* Appearance overlay tunables */
 #define SOL_SETTINGS_CORNER_RADIUS_MIN     0.0f
@@ -65,12 +66,12 @@
  * Integer 0–8; stored as float for slider compatibility. */
 #define SOL_SETTINGS_BG_BLUR_MIN     0.0f
 #define SOL_SETTINGS_BG_BLUR_MAX     8.0f
-#define SOL_SETTINGS_BG_BLUR_DEFAULT 4.0f
+#define SOL_SETTINGS_BG_BLUR_DEFAULT 3.0f
 
 /* Background-effect blur passes for the centre buffer area. */
 #define SOL_SETTINGS_BUFFER_BLUR_MIN     0.0f
 #define SOL_SETTINGS_BUFFER_BLUR_MAX     8.0f
-#define SOL_SETTINGS_BUFFER_BLUR_DEFAULT 2.0f
+#define SOL_SETTINGS_BUFFER_BLUR_DEFAULT 1.0f
 
 #define SOL_SETTINGS_PANEL_OPACITY_MIN     0.0f
 #define SOL_SETTINGS_PANEL_OPACITY_MAX     1.0f
