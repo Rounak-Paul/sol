@@ -189,7 +189,7 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
 {
     if (!r || !tb) return;
     Ca_Window *win = sol_ui_system_primary_window(r->ui);
-    const float ui_scale = win ? ca_window_get_scale(win) : 1.0f;
+    const float ui_scale = sol_ui_system_scale(r->ui);
     SolBufferNodeId leaf_id = sol_buffer_active_leaf(r->buffers);
     SolBufferRect root_rect = {0};
     SolBufferRect leaf_rect = {0};
@@ -638,7 +638,7 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
 
     SolBufferRect leaf_rect = {0};
     Ca_Window *win = sol_ui_system_primary_window(r->ui);
-    const float scale = win ? ca_window_get_scale(win) : 1.0f;
+    const float scale = sol_ui_system_scale(r->ui);
     if (target_leaf != 0u &&
         sol_buffer_leaf_geometry(r->buffers, target_leaf, &root_rect,
                                  SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {

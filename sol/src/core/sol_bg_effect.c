@@ -154,7 +154,7 @@ struct SolBgEffectRegistry {
     float         theme_r, theme_g, theme_b;  /* accent color from active theme */
     int           blur_passes;  /* how many separable blur iterations (0 = off) */
     BlurGPU       blur[CA_FRAMES_IN_FLIGHT];
-    AuxWindowBlurGPU aux_blur[CA_MAX_WINDOWS_TOTAL];
+    Ca_DynArray   aux_blur;     /* AuxWindowBlurGPU, one entry per auxiliary window */
     SolBgEffectBlurRegion blur_regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
     size_t        blur_region_count;
     void        (*on_change)(void *user_data);
@@ -173,21 +173,33 @@ static double get_monotonic_sec(void)
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
-/* Return the frame-local blur resources reserved for an auxiliary window. */
+/*
+ * Return the frame-local blur resources reserved for an auxiliary window,
+ * allocating a new per-window entry the first time a window is seen.
+ *
+ * The returned pointer is only valid until the next call, because the entry
+ * array may reallocate when it grows. Callers use it within a single render
+ * callback, which never reserves a second window.
+ *
+ * reg         Owning registry.
+ * window      Auxiliary window requesting blur resources.
+ * frame_slot  In-flight frame index.
+ * Returns  Frame-local blur resources, or NULL on invalid input or OOM.
+ */
 static BlurGPU *aux_blur_for_window(SolBgEffectRegistry *reg,
                                     Ca_Window *window,
                                     uint32_t frame_slot)
 {
     if (!reg || !window || frame_slot >= CA_FRAMES_IN_FLIGHT) return NULL;
-    AuxWindowBlurGPU *available = NULL;
-    for (size_t i = 0; i < CA_MAX_WINDOWS_TOTAL; ++i) {
-        AuxWindowBlurGPU *entry = &reg->aux_blur[i];
+    for (size_t i = 0; i < reg->aux_blur.count; ++i) {
+        AuxWindowBlurGPU *entry = ca_dyn_array_at(&reg->aux_blur, i);
         if (entry->window == window) return &entry->frames[frame_slot];
-        if (!entry->window && !available) available = entry;
     }
-    if (!available) return NULL;
-    available->window = window;
-    return &available->frames[frame_slot];
+    if (!ca_dyn_array_insert_zeroed(&reg->aux_blur, reg->aux_blur.count, 1))
+        return NULL;
+    AuxWindowBlurGPU *entry = ca_dyn_array_back(&reg->aux_blur);
+    entry->window = window;
+    return &entry->frames[frame_slot];
 }
 
 /* Notify the registry observer after externally visible state changes. */
@@ -780,6 +792,10 @@ SolBgEffectRegistry *sol_bg_effect_registry_create(Ca_Instance *instance)
     if (!instance) return NULL;
     SolBgEffectRegistry *reg = (SolBgEffectRegistry *)calloc(1, sizeof(*reg));
     if (!reg) return NULL;
+    if (!ca_dyn_array_init(&reg->aux_blur, sizeof(AuxWindowBlurGPU))) {
+        free(reg);
+        return NULL;
+    }
     reg->instance   = instance;
     reg->active_idx = -1;
     reg->opacity    = 1.0f;
@@ -806,10 +822,12 @@ void sol_bg_effect_registry_destroy(SolBgEffectRegistry *reg)
             free(reg->entries[i].fragment_glsl);
     for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i)
         blur_destroy(&reg->blur[i], ca_gpu_device(reg->instance));
-    for (size_t w = 0; w < CA_MAX_WINDOWS_TOTAL; ++w)
+    for (size_t w = 0; w < reg->aux_blur.count; ++w) {
+        AuxWindowBlurGPU *entry = ca_dyn_array_at(&reg->aux_blur, w);
         for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i)
-            blur_destroy(&reg->aux_blur[w].frames[i],
-                         ca_gpu_device(reg->instance));
+            blur_destroy(&entry->frames[i], ca_gpu_device(reg->instance));
+    }
+    ca_dyn_array_destroy(&reg->aux_blur);
     free(reg);
 }
 

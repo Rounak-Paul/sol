@@ -130,7 +130,7 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
         return false;
     }
 
-    const float ui_scale = ca_window_get_scale(ui->primary_window);
+    const float ui_scale = sol_ui_system_scale(ui);
     const float status_h = SOL_UI_STATUS_BAR_HEIGHT * (ui_scale > 0.0f ? ui_scale : 1.0f);
     const float title_h = ca_window_get_title_bar_height(ui->primary_window);
 
@@ -173,7 +173,7 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
 
     const float window_w = (float)ui->window_w;
     const float window_h = (float)ui->window_h;
-    const float ui_scale = ca_window_get_scale(ui->primary_window);
+    const float ui_scale = sol_ui_system_scale(ui);
     const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
     const float title_h  = ca_window_get_title_bar_height(ui->primary_window) / window_h;
     const float status_h = (SOL_UI_STATUS_BAR_HEIGHT * scale) / window_h;
@@ -1255,7 +1255,7 @@ void sol_ui_system_pre_tick(SolUISystem *ui)
         sol_terminal_manager_visible(ui->terminal_mgr) &&
         sol_terminal_manager_count(ui->terminal_mgr) > 0u) {
 
-        const float ui_scale = ca_window_get_scale(ui->primary_window);
+        const float ui_scale = sol_ui_system_scale(ui);
         const float cell_h   = TERM_CELL_H_PX * ui_scale;
         const float cell_w   = TERM_CELL_W_PX * ui_scale;
 
@@ -1708,6 +1708,17 @@ void sol_ui_system_destroy(SolUISystem *ui)
 Ca_Window *sol_ui_system_primary_window(SolUISystem *ui)
 {
     return ui ? ui->primary_window : NULL;
+}
+
+/*
+ * Return the instance-wide UI scale factor.
+ *
+ * ui  The UI system.
+ * Returns  The scale factor, or 1.0 when ui or its instance is unavailable.
+ */
+float sol_ui_system_scale(const SolUISystem *ui)
+{
+    return (ui && ui->instance) ? ca_instance_get_scale(ui->instance) : 1.0f;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2895,7 +2906,7 @@ int sol_ui_system_title_bar_height(const SolUISystem *ui)
 int sol_ui_system_status_bar_height(const SolUISystem *ui)
 {
     if (!ui || !ui->primary_window) return (int)SOL_UI_STATUS_BAR_HEIGHT;
-    const float sc = ca_window_get_scale(ui->primary_window);
+    const float sc = sol_ui_system_scale(ui);
     return (int)(SOL_UI_STATUS_BAR_HEIGHT * (sc > 0.0f ? sc : 1.0f) + 0.5f);
 }
 

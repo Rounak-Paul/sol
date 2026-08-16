@@ -515,7 +515,7 @@ static bool tv_local_to_line_col_ex(SolUISystem *ui, SolTextBuffer *tb,
     }
 
     Ca_Window *win = sol_ui_system_primary_window(ui);
-    const float scale = ca_window_get_scale(win);
+    const float scale = sol_ui_system_scale(ui);
     const float pad_x = 8.0f * scale;
     const float pad_y = 8.0f * scale;
     float local_x = event_local_x - pad_x;
@@ -762,7 +762,7 @@ void sol_text_view_render(const SolBuffer *buffer,
 
     /* Get current scale so viewport count and geometry are correct. */
     Ca_Window *primary_win = ui ? sol_ui_system_primary_window(ui) : NULL;
-    const float ui_scale = primary_win ? ca_window_get_scale(primary_win) : 1.0f;
+    const float ui_scale = sol_ui_system_scale(ui);
     float pane_h = args ? args->rect.h : 0.0f;
     if (pane_h <= 0.0f) {
         int win_h = 0;

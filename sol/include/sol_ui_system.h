@@ -144,6 +144,16 @@ void sol_ui_system_pre_tick(SolUISystem *ui);
 
 Ca_Window *sol_ui_system_primary_window(SolUISystem *ui);
 
+/*
+ * Return the instance-wide UI scale factor.
+ *
+ * Causality owns one scale per instance, shared by every window.
+ *
+ * ui  The UI system.
+ * Returns  The scale factor, or 1.0 when ui is NULL.
+ */
+float sol_ui_system_scale(const SolUISystem *ui);
+
 bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDesc *desc);
 
 /* Unregister a previously-registered command flow by action string.

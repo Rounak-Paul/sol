@@ -178,8 +178,7 @@ static int sol_active_buffer_viewport_lines(SolAppContext *app, SolTextBuffer *t
         return 1;
     }
 
-    Ca_Window *win = sol_ui_system_primary_window(app->ui);
-    const float scale = win ? ca_window_get_scale(win) : 1.0f;
+    const float scale = sol_ui_system_scale(app->ui);
     SolBufferRect root_rect = {0};
     if (sol_ui_system_buffer_area_rect(app->ui, &root_rect.x, &root_rect.y,
                                        &root_rect.w, &root_rect.h)) {
