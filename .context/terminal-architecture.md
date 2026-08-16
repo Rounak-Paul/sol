@@ -21,6 +21,11 @@
 Paul Williams state machine implemented as switch-per-state dispatch in `vt_process_byte()`.
 UTF-8 multi-byte sequences accumulated in `VtUtf8` struct before calling `term_put_char()`.
 
+`vt_utf8_feed()` decodes **only in GROUND state**. Escape/CSI/OSC/DCS sequences are
+byte-oriented, so high bytes inside them (e.g. a non-ASCII path in an OSC title) are
+passed straight to `vt_process_byte()`; a pending accumulator is reset on state exit.
+Decoding in every state previously let the accumulator swallow sequence bytes.
+
 States: GROUND, ESCAPE, ESCAPE_INT, CSI_ENTRY, CSI_PARAM, CSI_INT, CSI_IGNORE,
         DCS_ENTRY, DCS_PARAM, DCS_INT, DCS_PASSTHROUGH, DCS_IGNORE,
         OSC_STRING, SOS_PM_APC
@@ -28,6 +33,21 @@ States: GROUND, ESCAPE, ESCAPE_INT, CSI_ENTRY, CSI_PARAM, CSI_INT, CSI_IGNORE,
 Handled sequences: cursor movement (A-H,f,G,d), erase (J,K,X), insert/delete (L,M,P,@),
 scroll (S,T), SGR (m), modes (h/l + DEC private ?), DECSTBM (r), save/restore (s/u, ESC 7/8),
 OSC title (0/1/2), C0 controls, alt screen (?1049h/l), DA, CPR.
+
+## Double-Width Characters
+
+`term_codepoint_is_wide()` classifies East Asian Wide/Fullwidth ranges and the emoji
+blocks per Unicode TR11. Wide codepoints occupy two cells:
+- Lead cell: the codepoint + `SOL_TERM_ATTR_WIDE`.
+- Trailing cell: `SOL_TERM_ATTR_WIDE_TAIL`, codepoint 0.
+
+`terminal_panel.c` skips WIDE_TAIL cells (unless the cursor is on one) so the run
+builder does not emit a spurious space and desync the row. A wide glyph never
+straddles the right margin: it wraps when autowrap is on, and is dropped otherwise.
+`blank_cell()` zeroes attrs, so all erase paths clear both flags.
+
+Note: the fonts embedded in Causality do not currently contain CJK glyphs, so those
+codepoints still rasterize as `?` — but the grid geometry is now correct.
 
 ## Cell Grid Model
 

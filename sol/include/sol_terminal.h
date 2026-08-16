@@ -55,6 +55,7 @@ typedef struct SolTermColor {
 #define SOL_TERM_ATTR_INVISIBLE (1u << 6)
 #define SOL_TERM_ATTR_STRIKE    (1u << 7)
 #define SOL_TERM_ATTR_WIDE      (1u << 8)   /* double-width CJK character */
+#define SOL_TERM_ATTR_WIDE_TAIL (1u << 9)   /* trailing cell of a wide pair; not rendered */
 
 /* Atomic unit of the terminal grid. */
 typedef struct SolTermCell {

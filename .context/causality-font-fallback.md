@@ -23,8 +23,25 @@ Fix:
 - The embedded font bytes remain internal renderer assets, not a public raw-font-data API.
 - Symbols Nerd Font Mono icon glyphs use full-em advances while Roboto Nerd Font Mono icons use about 0.60em. The renderer normalizes Symbols icons with a 0.78 scale and slight baseline raise, giving a middle-ground visual size that is smaller than raw Symbols but not as small as Roboto-patched icons.
 
+Unicode fallback layer (2026-08-16):
+- A Nerd Font patch injects icons into the private-use area only; it does not extend
+  the base font's coverage of ordinary Unicode text blocks. RobotoMono NF covers
+  Latin/Greek/Cyrillic/box-drawing/blocks; Symbols NF is private-use only. Neither
+  face had arrows (U+2190-21FF), Braille (U+2800-28FF), geometric shapes,
+  dingbats, or most math operators — all rendered as `?`.
+- Fixed by embedding DejaVu Sans 2.37 as a third face: `fallback_face` /
+  `fallback_data` in `Ca_Font`, blob at `src/renderer/embedded_fallback_font.c`
+  (757 KB), symbols `ca_embedded_fallback_font_{data,size}`.
+- Resolution order in `font_render_glyph`: styled face -> regular face ->
+  fallback face -> `?`. The fallback is consulted last so a codepoint present in
+  the chosen font always renders from that font; `is_icon_range` is cleared when
+  the fallback resolves so Symbols-layer scale/baseline tweaks are not applied.
+- Licensing: Bitstream Vera / Arev, permissive with notice. Recorded in
+  `vendors/causality/NOTICE`. Still self-contained — no OS font lookup.
+
 Boundary:
-- True "all possible Unicode" coverage cannot be achieved self-contained unless the project embeds a broad fallback font asset such as a Noto family font.
+- CJK and most emoji remain uncovered (DejaVu Sans has neither). Closing that
+  needs a Noto CJK asset, tens of MB — deliberately out of scope.
 - The renderer architecture can cache arbitrary codepoints, but it can only rasterize glyphs available in bundled faces.
 
 Verification:

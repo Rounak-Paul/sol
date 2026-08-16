@@ -217,6 +217,12 @@ static void render_term_row(const SolTerminal *term, int row,
         const SolTermCell *cell     = &line->cells[c];
         const bool         is_cursor = (c == cursor_col);
 
+        /* Trailing half of a double-width pair: the lead cell's glyph already
+           spans this column, so emitting anything here would desync the row.
+           The cursor still renders on it so it stays visible over wide text. */
+        if ((cell->attrs & SOL_TERM_ATTR_WIDE_TAIL) && !is_cursor)
+            continue;
+
         /* Determine visual fg/bg, accounting for REVERSE and cursor. */
         SolTermColor eff_fg = cell->fg;
         SolTermColor eff_bg = cell->bg;

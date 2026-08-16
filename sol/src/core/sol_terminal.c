@@ -453,13 +453,49 @@ static void term_new_line(SolTerminal *term)
 }
 
 /*
+ * Return true if a codepoint occupies two terminal columns.
+ *
+ * Covers the East Asian Wide and Fullwidth ranges plus the emoji blocks
+ * that terminals conventionally render double-width, per Unicode TR11.
+ *
+ * cp       Unicode codepoint.
+ * Returns  true for double-width codepoints, false otherwise.
+ */
+static bool term_codepoint_is_wide(uint32_t cp)
+{
+    return (cp >= 0x1100u  && cp <= 0x115Fu) ||  /* Hangul Jamo init.    */
+           (cp >= 0x2E80u  && cp <= 0x303Eu) ||  /* CJK radicals, Kangxi */
+           (cp >= 0x3041u  && cp <= 0x33FFu) ||  /* Kana, CJK compat     */
+           (cp >= 0x3400u  && cp <= 0x4DBFu) ||  /* CJK ext A            */
+           (cp >= 0x4E00u  && cp <= 0x9FFFu) ||  /* CJK unified          */
+           (cp >= 0xA000u  && cp <= 0xA4CFu) ||  /* Yi                   */
+           (cp >= 0xAC00u  && cp <= 0xD7A3u) ||  /* Hangul syllables     */
+           (cp >= 0xF900u  && cp <= 0xFAFFu) ||  /* CJK compat ideograph */
+           (cp >= 0xFE30u  && cp <= 0xFE6Fu) ||  /* CJK compat forms     */
+           (cp >= 0xFF00u  && cp <= 0xFF60u) ||  /* Fullwidth forms      */
+           (cp >= 0xFFE0u  && cp <= 0xFFE6u) ||  /* Fullwidth signs      */
+           (cp >= 0x1F300u && cp <= 0x1F64Fu) || /* Misc symbols, emoji  */
+           (cp >= 0x1F900u && cp <= 0x1F9FFu) || /* Supplemental symbols */
+           (cp >= 0x20000u && cp <= 0x3FFFDu);   /* CJK ext B and beyond */
+}
+
+/*
  * Write a codepoint into the current cursor cell and advance the cursor.
+ *
+ * Double-width codepoints occupy two cells: the lead cell carries the
+ * codepoint and SOL_TERM_ATTR_WIDE, the trailing cell is marked
+ * SOL_TERM_ATTR_WIDE_TAIL and is skipped by the renderer. A wide glyph
+ * that would straddle the right margin wraps to the next line instead of
+ * being split.
  *
  * term       Terminal.
  * codepoint  Unicode codepoint to write.
  */
 static void term_put_char(SolTerminal *term, uint32_t codepoint)
 {
+    const bool wide = term_codepoint_is_wide(codepoint);
+    const int  width = wide ? 2 : 1;
+
     if (term->pending_wrap && term->mode_autowrap) {
         term->screen[term->cur_row].cells[term->cols - 1].attrs &=
             (uint16_t)~SOL_TERM_ATTR_WIDE;
@@ -468,24 +504,42 @@ static void term_put_char(SolTerminal *term, uint32_t codepoint)
     }
     term->pending_wrap = false;
 
+    /* A wide glyph cannot straddle the right margin. */
+    if (width == 2 && term->cur_col == term->cols - 1) {
+        if (term->mode_autowrap) {
+            term_new_line(term);
+            term->cur_col = 0;
+        } else {
+            return;
+        }
+    }
+
     SolTermLine *line = &term->screen[term->cur_row];
     SolTermCell cell  = term->cur_attrs;
     cell.codepoint    = codepoint;
+    if (wide) cell.attrs |= SOL_TERM_ATTR_WIDE;
 
-    if (term->mode_insert && term->cur_col < term->cols - 1) {
-        memmove(&line->cells[term->cur_col + 1],
+    if (term->mode_insert && term->cur_col < term->cols - width) {
+        memmove(&line->cells[term->cur_col + width],
                 &line->cells[term->cur_col],
-                (size_t)(term->cols - term->cur_col - 1) * sizeof(SolTermCell));
+                (size_t)(term->cols - term->cur_col - width) * sizeof(SolTermCell));
     }
 
     line->cells[term->cur_col] = cell;
+    if (wide) {
+        SolTermCell tail = term->cur_attrs;
+        tail.codepoint   = 0u;
+        tail.attrs      |= SOL_TERM_ATTR_WIDE_TAIL;
+        line->cells[term->cur_col + 1] = tail;
+    }
     line->dirty = true;
     term->dirty = true;
 
-    if (term->cur_col >= term->cols - 1) {
+    if (term->cur_col >= term->cols - width) {
+        term->cur_col   = term->cols - 1;
         term->pending_wrap = true;
     } else {
-        term->cur_col++;
+        term->cur_col += width;
     }
 }
 
@@ -1242,12 +1296,23 @@ static void vt_utf8_reset(VtUtf8 *u)
  * assembled, write it to the terminal via term_put_char and reset the
  * accumulator. Falls back to Latin-1 on invalid sequences.
  *
+ * UTF-8 decoding applies only to GROUND state. Escape, CSI, OSC and DCS
+ * sequences are byte-oriented: a high byte inside an OSC string (such as a
+ * non-ASCII path in a title) must reach the sequence handler verbatim
+ * rather than being consumed by the multi-byte accumulator.
+ *
  * term  Terminal.
  * u     UTF-8 accumulator state.
  * byte  Incoming byte.
  */
 static void vt_utf8_feed(SolTerminal *term, VtUtf8 *u, uint8_t byte)
 {
+    if (term->vt_state != VT_GROUND) {
+        if (u->remaining > 0) vt_utf8_reset(u);
+        vt_process_byte(term, byte);
+        return;
+    }
+
     if (u->remaining > 0) {
         if ((byte & 0xC0u) == 0x80u) {
             u->codepoint = (u->codepoint << 6) | (byte & 0x3Fu);
@@ -1258,7 +1323,8 @@ static void vt_utf8_feed(SolTerminal *term, VtUtf8 *u, uint8_t byte)
             }
             return;
         }
-        /* Invalid continuation — discard accumulator, fall through. */
+        /* Invalid continuation — discard the partial codepoint and
+           reprocess this byte as a fresh lead byte or control. */
         vt_utf8_reset(u);
     }
 
