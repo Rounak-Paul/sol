@@ -17,6 +17,7 @@ target_include_directories(sol PRIVATE
 
 target_link_libraries(sol PRIVATE
     causality Threads::Threads ${CMAKE_DL_LIBS} tree_sitter_runtime
+    VulkanMemoryAllocator Vulkan::Vulkan
     ${CAUSALITY_LINUX_DEPS}
 )
 
