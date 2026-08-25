@@ -506,10 +506,12 @@ static void term_put_char(SolTerminal *term, uint32_t codepoint)
 
     /* A wide glyph cannot straddle the right margin. */
     if (width == 2 && term->cur_col == term->cols - 1) {
-        if (term->mode_autowrap) {
+        if (term->mode_autowrap && term->cols >= 2) {
             term_new_line(term);
             term->cur_col = 0;
         } else {
+            /* A single-column viewport has no room for a wide glyph even
+               after wrapping — drop it rather than write past the row. */
             return;
         }
     }
@@ -526,7 +528,7 @@ static void term_put_char(SolTerminal *term, uint32_t codepoint)
     }
 
     line->cells[term->cur_col] = cell;
-    if (wide) {
+    if (wide && term->cur_col + 1 < term->cols) {
         SolTermCell tail = term->cur_attrs;
         tail.codepoint   = 0u;
         tail.attrs      |= SOL_TERM_ATTR_WIDE_TAIL;

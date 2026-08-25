@@ -229,6 +229,27 @@ Child process isolation: `forkpty` scopes child signals (SIGSEGV etc.) to the ch
 process only.  The reader thread exits cleanly on EIO when the PTY slave closes.
 `sol_terminal_manager_drain` reaps dead children via `waitpid(WNOHANG)` each frame.
 
+## Crash Fix — wide-char write past row end at cols==1 (2026-08-25)
+
+`term_put_char()`'s right-margin guard only prevented a wide (2-cell) glyph from
+being *placed* at the last column; it did not account for a viewport narrowed to
+exactly 1 column (e.g. dragging the terminal/editor splitter to its minimum).
+With `cols == 1`, `cur_col` is always `0 == cols - 1`, so the guard's autowrap
+branch fired, reset `cur_col = 0`, and fell through unconditionally to write the
+WIDE_TAIL cell at `cells[cur_col + 1]` — one `SolTermCell` past the row's
+`calloc(cols, ...)` allocation. Any wide codepoint (CJK, emoji, many Nerd Font/
+Powerline glyphs — common in Claude Code's own TUI output) written while the
+panel was 1-column-wide corrupted the heap, surfacing as a delayed, seemingly
+unrelated crash later.
+
+Fix in `sol_terminal.c` `term_put_char()`:
+- Autowrap-and-retry branch now requires `term->cols >= 2` before treating the
+  wrap as a fix; otherwise (cols < 2, no room for any wide glyph) the char is
+  dropped, matching the existing no-autowrap `return`.
+- The WIDE_TAIL write itself is now additionally guarded by
+  `term->cur_col + 1 < term->cols` as defense-in-depth, independent of the
+  entry check.
+
 ## Performance (large terminals / cmatrix)
 
 Three bottlenecks fixed (2026-06-12):
