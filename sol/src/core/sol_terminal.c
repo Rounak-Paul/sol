@@ -475,7 +475,9 @@ static bool term_codepoint_is_wide(uint32_t cp)
            (cp >= 0xFF00u  && cp <= 0xFF60u) ||  /* Fullwidth forms      */
            (cp >= 0xFFE0u  && cp <= 0xFFE6u) ||  /* Fullwidth signs      */
            (cp >= 0x1F300u && cp <= 0x1F64Fu) || /* Misc symbols, emoji  */
+           (cp >= 0x1F680u && cp <= 0x1F6FFu) || /* Transport and map    */
            (cp >= 0x1F900u && cp <= 0x1F9FFu) || /* Supplemental symbols */
+           (cp >= 0x1FA00u && cp <= 0x1FAFFu) || /* Symbols/Pictographs Ext-A */
            (cp >= 0x20000u && cp <= 0x3FFFDu);   /* CJK ext B and beyond */
 }
 

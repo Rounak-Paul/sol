@@ -40,9 +40,51 @@ Unicode fallback layer (2026-08-16):
   `vendors/causality/NOTICE`. Still self-contained — no OS font lookup.
 
 Boundary:
-- CJK and most emoji remain uncovered (DejaVu Sans has neither). Closing that
-  needs a Noto CJK asset, tens of MB — deliberately out of scope.
+- CJK remains uncovered (needs a Noto CJK asset, tens of MB — deliberately out of scope).
 - The renderer architecture can cache arbitrary codepoints, but it can only rasterize glyphs available in bundled faces.
+
+## Emoji fallback layer (2026-08-25)
+
+Symptom: Claude Code's CLI running in Sol's terminal panel showed `??` for its
+status-indicator icon (e.g. the "auto mode" toggle glyph, in the 1F300+
+pictograph range) — DejaVu Sans covers text/symbol blocks (arrows, Braille,
+geometric shapes) but has almost no emoji pictograph coverage (Misc Symbols &
+Pictographs, Transport & Map, Supplemental Symbols & Pictographs were >90%
+missing across every embedded face). This was the known boundary noted above,
+now closed for emoji specifically.
+
+Fixed by embedding a 4th face: `emoji_face` / `emoji_data` in `Ca_Font`, blob
+at `src/renderer/embedded_emoji_font.c` (887 KB), symbols
+`ca_embedded_emoji_font_{data,size}`.
+
+- Source: Noto Emoji (monochrome outline variable font), static-instanced to
+  its Regular (wght=400) weight via `fonttools varLib.instancer` — a plain
+  outline font FreeType rasterizes like any other face, unlike Noto Color
+  Emoji's CBDT/COLR tables which would need different rendering code.
+- License: SIL Open Font License 1.1 — permissive, no royalty, attribution
+  via LICENSE text only. Recorded in `vendors/causality/NOTICE`. Chosen over
+  the color variant specifically so no new rendering path was needed and
+  size stayed small (~870 KB vs 10s of MB).
+- Resolution order in `font_render_glyph` (`font.c`): styled face -> regular
+  face -> DejaVu fallback face -> **emoji face** -> `?`. Consulted last so a
+  codepoint present in an earlier face always renders from that face.
+- Coverage after the fix: Emoticons 80/80, Misc Symbols & Pictographs
+  637/768, Transport & Map 105/128, Supplemental Symbols & Pictographs
+  242/256 (verified via FreeType `FT_Get_Char_Index` against the embedded
+  blob, not just fontTools cmap parsing).
+
+Related terminal-side fix: `term_codepoint_is_wide()` in `sol_terminal.c` was
+missing the `0x1F680-0x1F6FF` (Transport and Map) and `0x1FA00-0x1FAFF`
+(Symbols/Pictographs Ext-A) ranges, so those emoji were measured as
+single-width cells even though real terminals render them double-width —
+this desynced column position for any text following such an emoji. Added
+both ranges alongside the existing emoji entries. See
+`.context/terminal-architecture.md` for the terminal-side write-up.
+
+Verification: `cmake --build build -j 11` passes; full ctest suite (14/14)
+passes; standalone FreeType probes against the extracted embedded blobs
+confirmed glyph indices resolve for previously-`?` codepoints (e.g. U+1F501
+cycle arrows: gi 760, U+1F916 robot: gi 1103).
 
 Verification:
 - `cmake --build build -j 8` passes.
