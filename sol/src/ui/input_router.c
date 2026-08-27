@@ -303,9 +303,10 @@ static bool handle_text_buffer_key(SolInputRouter *r,
  * the active text buffer.  Latches a one-shot text-input suppression when
  * the UI consumes a printable key chord.
  *
- * When the terminal panel has keyboard focus, ALL key events (including the
- * leader modifier) are forwarded directly to the PTY. ESC defocuses the
- * terminal instead of being sent to the PTY.
+ * When the terminal panel has keyboard focus, ALL key events (including
+ * ESC) are forwarded directly to the PTY so the running program can handle
+ * them itself. The leader key is the only exception: it is intercepted to
+ * arm/drive Sol's which-key popup instead of reaching the shell.
  */
 static void on_key(const Ca_Event *ev, void *user_data)
 {

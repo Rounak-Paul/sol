@@ -107,9 +107,10 @@ if any output was processed. Also bumps + wakes if terminal is focused (cursor b
 ## Input Routing
 
 `on_key` in `input_router.c` checks `sol_ui_system_terminal_manager(r->ui)` first:
-- If terminal focused + ESC → defocus (`set_focused(false)`) + notify, return
+- If terminal focused + leader sequence active → routed through the chord system (which-key popup), not the PTY
+- If terminal focused + leader key tap → armed for chord detection, not sent to PTY
 - If terminal focused + Super+V or Ctrl+Shift+V → clipboard paste via `sol_terminal_paste()`, suppress next char, return
-- If terminal focused + other key → `sol_terminal_send_key(term, key, mods)`, return
+- If terminal focused + any other key (including ESC) → `sol_terminal_send_key(term, key, mods)`, return. ESC is NOT intercepted — it is forwarded to the PTY as `\033` so the running program (e.g. a TUI) can consume it itself.
 - Suppresses next CHAR event after a KEY_DOWN in terminal mode
 
 `on_char` in `input_router.c` checks terminal focus:
@@ -118,7 +119,7 @@ if any output was processed. Also bumps + wakes if terminal is focused (cursor b
 `on_mouse_scroll` routes vertical scroll to `sol_terminal_set_view_scroll` when terminal focused.
 
 Focus is set by clicking the terminal viewport (Ca_Button click handler) or via `L t t` command.
-Defocus happens on ESC keypress.
+There is no ESC-to-defocus binding; defocus only happens via explicit `terminal.toggle` (`L t t`) when already focused, or clicking outside the terminal viewport. (Prior to 2026-08-27 this doc incorrectly described ESC as a defocus key — verified against current `input_router.c` source, which forwards ESC to the PTY unconditionally.)
 
 ## Clipboard Paste
 
