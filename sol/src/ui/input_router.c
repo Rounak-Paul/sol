@@ -38,6 +38,7 @@ struct SolInputRouter {
     double           horizontal_scroll_remainder;
     bool             buffer_input_active;
     bool             suppress_next_text_input;
+    bool             terminal_mouse_down;  /* button held while reporting to a mouse-aware TUI */
 };
 
 #define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX 1.0f
@@ -165,6 +166,64 @@ static bool point_in_active_buffer_leaf(SolInputRouter *r,
         (float)x, (float)y);
     if (leaf == 0u) return false;
     if (out_leaf) *out_leaf = leaf;
+    return true;
+}
+
+/*
+ * Resolve a window-space point to a terminal grid cell, when the terminal
+ * panel is visible and the point falls inside its viewport (excluding the
+ * tab header strip).  Mirrors the rect math sol_ui_system_pre_tick uses to
+ * size the grid, so hit-testing always agrees with what is actually drawn.
+ *
+ * r          The input router.
+ * x, y       Window-space point to test.
+ * out_col    Set to the 0-based column when the point hits the grid.
+ * out_row    Set to the 0-based row when the point hits the grid.
+ * Returns    true if the point is inside the terminal viewport's cell grid.
+ */
+static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
+                                   int *out_col, int *out_row)
+{
+    if (!r || !r->ui) return false;
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+    if (!tmgr || !sol_terminal_manager_visible(tmgr)) return false;
+
+    float bx, by, bw, bh;
+    if (!sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) ||
+        bw <= 0.0f || bh <= 0.0f) {
+        return false;
+    }
+
+    const float ratio = sol_terminal_manager_ratio(tmgr);
+    const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
+    float vx, vy, vw, vh; /* terminal panel rect, header not yet excluded */
+    if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
+        vy = by + bh * (1.0f - ratio);
+        vx = bx;
+        vw = bw;
+        vh = by + bh - vy;
+    } else {
+        vx = bx + bw * (1.0f - ratio);
+        vy = by;
+        vw = bx + bw - vx;
+        vh = bh;
+    }
+    if (x < vx || x >= vx + vw || y < vy || y >= vy + vh) return false;
+
+    const float ui_scale = sol_ui_system_scale(r->ui);
+    const float header_h = SOL_UI_TERM_HEADER_PX * ui_scale;
+    const float pad_v    = SOL_UI_TERM_PAD_V_PX  * ui_scale;
+    const float pad_h    = SOL_UI_TERM_PAD_H_PX  * ui_scale;
+    const float local_x  = (float)x - vx - pad_h;
+    const float local_y  = (float)y - vy - header_h - pad_v;
+    if (local_x < 0.0f || local_y < 0.0f) return false;
+
+    const float cell_w = SOL_UI_TERM_CELL_W_PX * ui_scale;
+    const float cell_h = SOL_UI_TERM_CELL_H_PX * ui_scale;
+    if (cell_w <= 0.0f || cell_h <= 0.0f) return false;
+
+    if (out_col) *out_col = (int)(local_x / cell_w);
+    if (out_row) *out_row = (int)(local_y / cell_h);
     return true;
 }
 
@@ -531,6 +590,31 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
     ie.data.mouse_button.button    = (SolMouseButton)ev->mouse_button.button;
     ie.data.mouse_button.modifiers = modifiers_from_ca(ev->mouse_button.mods);
     ie.data.mouse_button.repeated  = (ev->mouse_button.action == CA_REPEAT);
+
+    /* Mouse-aware TUIs (e.g. an editor's mouse-driven selection, an Ink app
+       with clickable rows) get first refusal on clicks inside the terminal
+       grid. Falls through to normal Sol routing (scrollback, buffer focus)
+       when the app hasn't enabled mouse tracking. */
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+    SolTerminal *term = tmgr ? sol_terminal_manager_active(tmgr) : NULL;
+    int col = 0, row = 0;
+    if (term && sol_terminal_wants_mouse(term) &&
+        ev->mouse_button.button <= 2u &&
+        terminal_cell_at_point(r, r->mouse_x, r->mouse_y, &col, &row)) {
+        /* xterm mouse-report button order is left/middle/right; GLFW's is
+           left/right/middle — remap index 1 and 2. */
+        static const int k_btn_remap[3] = { 0, 2, 1 };
+        const int report_btn = k_btn_remap[ev->mouse_button.button];
+        const SolTermMouseAction action =
+            (ie.type == SOL_INPUT_EVENT_MOUSE_UP) ? SOL_TERM_MOUSE_RELEASE
+                                                   : SOL_TERM_MOUSE_PRESS;
+        sol_terminal_send_mouse(term, col, row, report_btn, action,
+                                (uint8_t)ie.data.mouse_button.modifiers);
+        r->terminal_mouse_down = (action == SOL_TERM_MOUSE_PRESS);
+        return;
+    }
+    r->terminal_mouse_down = false;
+
     sol_input_system_process_event(r->input, &ie);
 
     if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN) {
@@ -554,6 +638,18 @@ static void on_mouse_move(const Ca_Event *ev, void *user_data)
 
     r->mouse_x = ev->mouse_pos.x;
     r->mouse_y = ev->mouse_pos.y;
+
+    if (r->terminal_mouse_down) {
+        SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+        SolTerminal *term = tmgr ? sol_terminal_manager_active(tmgr) : NULL;
+        int col = 0, row = 0;
+        if (term && sol_terminal_wants_mouse(term) &&
+            terminal_cell_at_point(r, r->mouse_x, r->mouse_y, &col, &row)) {
+            sol_terminal_send_mouse(term, col, row, 0,
+                                    SOL_TERM_MOUSE_MOVE, SOL_MOD_NONE);
+        }
+        return;
+    }
 
     SolInputEvent ie = {0};
     ie.type = SOL_INPUT_EVENT_MOUSE_MOVE;
@@ -589,36 +685,32 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     sol_ui_system_window_size(r->ui, &win_w, &win_h);
     if (win_w <= 0 || win_h <= 0) return;
 
-    /* Route vertical scroll to the terminal scrollback when the mouse cursor is
-       over the terminal panel, regardless of keyboard focus.
-       Natural scroll: dy > 0 (finger swipe up) shows older scrollback content. */
+    /* Route vertical scroll to the terminal when the mouse cursor is over the
+       terminal panel, regardless of keyboard focus.  A mouse-aware app (one
+       that enabled DECSET 1000/1002 — almost always full-screen/alt-screen,
+       e.g. less, htop, an Ink list) gets wheel events reported as button
+       64/65 clicks instead of Sol's own scrollback, since such apps own
+       their own scroll position and Sol's scrollback is meaningless on the
+       alt screen.  Otherwise: natural scroll, dy > 0 shows older content. */
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (tmgr && sol_terminal_manager_visible(tmgr) && ev->mouse_scroll.dy != 0.0) {
-        float bx, by, bw, bh;
-        if (sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) &&
-            bw > 0.0f && bh > 0.0f) {
-            const float ratio = sol_terminal_manager_ratio(tmgr);
-            const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
-            const float mx = (float)r->mouse_x, my = (float)r->mouse_y;
-            bool over_terminal = false;
-            if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
-                const float term_top = by + bh * (1.0f - ratio);
-                over_terminal = my >= term_top && mx >= bx && mx < bx + bw;
-            } else {  /* SOL_TERMINAL_POSITION_RIGHT */
-                const float term_left = bx + bw * (1.0f - ratio);
-                over_terminal = mx >= term_left && my >= by && my < by + bh;
-            }
-            if (over_terminal) {
-                SolTerminal *term = sol_terminal_manager_active(tmgr);
-                if (term) {
-                    int delta = (int)(ev->mouse_scroll.dy * 3.0);
-                    if (delta == 0) delta = ev->mouse_scroll.dy > 0.0 ? 1 : -1;
-                    sol_terminal_set_view_scroll(term,
-                        sol_terminal_view_scroll(term) + delta);
-                    sol_ui_system_terminal_notify(r->ui);
-                    return;
-                }
-            }
+        SolTerminal *term = sol_terminal_manager_active(tmgr);
+        int col = 0, row = 0;
+        const bool over_terminal =
+            term && terminal_cell_at_point(r, r->mouse_x, r->mouse_y, &col, &row);
+        if (over_terminal && sol_terminal_wants_mouse(term)) {
+            const SolTermMouseAction action = ev->mouse_scroll.dy > 0.0
+                ? SOL_TERM_MOUSE_WHEEL_UP : SOL_TERM_MOUSE_WHEEL_DOWN;
+            sol_terminal_send_mouse(term, col, row, 0, action, SOL_MOD_NONE);
+            return;
+        }
+        if (over_terminal) {
+            int delta = (int)(ev->mouse_scroll.dy * 3.0);
+            if (delta == 0) delta = ev->mouse_scroll.dy > 0.0 ? 1 : -1;
+            sol_terminal_set_view_scroll(term,
+                sol_terminal_view_scroll(term) + delta);
+            sol_ui_system_terminal_notify(r->ui);
+            return;
         }
     }
 

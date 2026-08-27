@@ -855,6 +855,19 @@ static void sol_on_terminal_focus_gain(void *user_data)
     }
 }
 
+/*
+ * Forward an OSC 52 clipboard write from a terminal application to the
+ * OS clipboard. Wired via sol_terminal_manager_set_clipboard_write so tools
+ * running inside Sol's terminal (tmux, Neovim, Claude Code, etc.) can copy
+ * a selection out to the host clipboard the same way a native app would.
+ */
+static void sol_on_terminal_clipboard_write(const char *text, void *user_data)
+{
+    Ca_Window *window = (Ca_Window *)user_data;
+    if (!window || !text || text[0] == '\0') return;
+    ca_clipboard_set_text(window, text);
+}
+
 /* ------------------------------------------------------------------ */
 /* Startup event + warmup                                              */
 /* ------------------------------------------------------------------ */
@@ -1521,6 +1534,11 @@ int main(int argc, char **argv)
         ca_instance_destroy(instance);
         sol_system_manager_destroy(app.systems);
         return 1;
+    }
+
+    if (app.terminal_mgr) {
+        sol_terminal_manager_set_clipboard_write(
+            app.terminal_mgr, sol_on_terminal_clipboard_write, window);
     }
 
     if (!sol_system_register_service(app.systems, "ca.instance", instance, NULL, NULL)) {

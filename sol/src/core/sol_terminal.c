@@ -11,6 +11,7 @@
 
 #include "sol_terminal.h"
 #include "sol_input.h"      /* SOL_KEY_*, SOL_MOD_* constants */
+#include "sol_platform.h"   /* sol_platform_now_monotonic_ns */
 #include "sol_threading.h"
 
 #include <causality.h>
@@ -65,6 +66,13 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
    before any frames are dropped — far above any realistic interactive use. */
 #define SOL_TERM_DRAIN_BYTES_PER_FRAME 65536u
 
+/* Safety cap for synchronized-output mode (DECSET 2026): if an application
+   enables it and never sends the closing ?2026l (crash, bug, or hang), the
+   terminal must not withhold rendering forever. 200ms is far beyond any
+   legitimate single-frame paint and keeps a stuck app from freezing the
+   display indefinitely. */
+#define SOL_TERM_SYNC_OUTPUT_TIMEOUT_NS 200000000ull
+
 /* ================================================================== */
 /* VT parser states                                                    */
 /* ================================================================== */
@@ -100,7 +108,8 @@ typedef struct VtUtf8 {
 /* ================================================================== */
 
 struct SolTerminal {
-    Ca_Instance *instance;
+    Ca_Instance        *instance;
+    SolTerminalManager *manager;    /* owning manager; used to reach OSC 52 callback */
 
     /* Viewport (active screen). */
     SolTermLine  screen[SOL_TERM_DEFAULT_ROWS + 64]; /* max rows supported */
@@ -140,6 +149,19 @@ struct SolTerminal {
     bool         mode_origin;       /* DECOM: origin mode (cursor relative)  */
     bool         mode_linefeed;     /* LNM: automatic newline on LF          */
     bool         mode_bracketed_paste; /* XTerm bracketed paste              */
+    bool         mode_sync_output;  /* DECSET 2026: synchronized update      */
+    uint64_t     sync_output_start_ns; /* monotonic ns when 2026 was set     */
+    bool         sync_output_closed;   /* one-shot: 2026 turned off this drain */
+
+    /* Mouse reporting. */
+    bool         mode_mouse_btn;    /* 1000: button press/release events     */
+    bool         mode_mouse_any;    /* 1002: also report motion while button held */
+    bool         mode_mouse_sgr;    /* 1006: SGR extended coordinate encoding */
+
+    /* Kitty keyboard protocol (progressive enhancement). Stack per spec;
+       depth capped — real apps push 1-2 levels, never unbounded. */
+    uint8_t      kitty_flags_stack[8];
+    int          kitty_flags_depth;
 
     /* View scroll offset (0 = show viewport, k = k scrollback lines above). */
     int          view_scroll;
@@ -154,6 +176,7 @@ struct SolTerminal {
     int          vt_params[SOL_TERM_MAX_PARAMS];
     int          vt_n_params;
     bool         vt_dcs_private;    /* '?' prefix in DEC mode sets */
+    uint8_t      vt_csi_marker;     /* CSI private-marker byte seen: 0, '?', '<', '=', '>' */
 
     /* OSC accumulation. */
     char         osc_buf[SOL_TERM_OSC_MAX];
@@ -211,6 +234,9 @@ struct SolTerminalManager {
     bool                focused;
     SolTerminalPosition position;
     float               ratio;      /* fraction of the split for the terminal panel */
+
+    SolTermClipboardWriteFn clipboard_write_fn;
+    void                    *clipboard_write_user_data;
 };
 
 /* ================================================================== */
@@ -732,9 +758,15 @@ static void vt_set_dec_mode(SolTerminal *term, int param, bool set)
             term->in_alt_screen = false;
         }
         break;
-    case 1000: /* mouse button tracking — ignore */ break;
-    case 1002: /* mouse any-event tracking — ignore */ break;
-    case 1006: /* mouse SGR extended — ignore */ break;
+    case 1000: /* mouse button press/release tracking */
+        term->mode_mouse_btn = set;
+        break;
+    case 1002: /* mouse button + motion-while-pressed tracking */
+        term->mode_mouse_any = set;
+        break;
+    case 1006: /* SGR extended coordinate encoding */
+        term->mode_mouse_sgr = set;
+        break;
     case 1049: /* alternate screen with cursor save/restore */
         if (set && !term->in_alt_screen) {
             /* Save main cursor */
@@ -754,6 +786,15 @@ static void vt_set_dec_mode(SolTerminal *term, int param, bool set)
         break;
     case 2004: /* bracketed paste mode */
         term->mode_bracketed_paste = set;
+        break;
+    case 2026: /* synchronized output (mode 2026) */
+        if (set) {
+            term->mode_sync_output    = true;
+            term->sync_output_start_ns = sol_platform_now_monotonic_ns();
+        } else if (term->mode_sync_output) {
+            term->mode_sync_output   = false;
+            term->sync_output_closed = true;
+        }
         break;
     default: break;
     }
@@ -960,6 +1001,58 @@ static void vt_csi_dispatch(SolTerminal *term, uint8_t final)
         }
         break;
 
+    /* ---- Kitty keyboard protocol (progressive enhancement) ----
+       All four forms end in final byte 'u' with a marker byte ('?' query,
+       '>' push, '<' pop, '=' set) captured during CSI_PARAM. A bare "CSI u"
+       with no marker is the older SCORC (restore cursor) sequence, handled
+       by the other case 'u' above — merged into one case since C forbids
+       duplicate case labels. Only bit 0 (disambiguate escape codes) changes
+       actual key encoding; other requested bits are accepted in the
+       reported flags but do not change what Sol sends, since Sol does not
+       implement event-type/text-association reporting. */
+    case 'u':
+        if (term->vt_csi_marker == 0) {
+            term->cur_row   = term->saved_row;
+            term->cur_col   = term->saved_col;
+            term->cur_attrs = term->saved_attrs;
+            term->pending_wrap = false;
+        } else if (term->vt_csi_marker == '?') {
+            /* Query: report the top of the enhancement stack (0 if empty). */
+            const uint8_t flags = term->kitty_flags_depth > 0
+                ? term->kitty_flags_stack[term->kitty_flags_depth - 1] : 0u;
+            char buf[16];
+            int len = snprintf(buf, sizeof(buf), "\033[?%uu", (unsigned)flags);
+            if (len > 0) sol_terminal_send_text(term, buf, (size_t)len);
+        } else if (term->vt_csi_marker == '>') {
+            /* Push: new entry defaults to all-zero flags until a following
+               '=' sets them, matching a bare push observed in the wild. */
+            if (term->kitty_flags_depth <
+                (int)(sizeof(term->kitty_flags_stack) / sizeof(term->kitty_flags_stack[0]))) {
+                term->kitty_flags_stack[term->kitty_flags_depth++] = 0u;
+            }
+        } else if (term->vt_csi_marker == '<') {
+            /* Pop N entries (default 1). */
+            int n = vt_param(term, 0, 1);
+            while (n-- > 0 && term->kitty_flags_depth > 0)
+                term->kitty_flags_depth--;
+        } else if (term->vt_csi_marker == '=') {
+            /* Set: Pflags ; Pmode (mode 1=set/replace, 2=set all requested
+               bits, 3=reset requested bits; default 1). Applies to the top
+               of stack, pushing a base entry first if the stack is empty
+               so a set without a prior push still has somewhere to live. */
+            if (term->kitty_flags_depth == 0) {
+                term->kitty_flags_stack[term->kitty_flags_depth++] = 0u;
+            }
+            uint8_t *top = &term->kitty_flags_stack[term->kitty_flags_depth - 1];
+            const uint8_t requested = (uint8_t)(vt_param(term, 0, 0) & 0x1F);
+            switch (vt_param(term, 1, 1)) {
+            case 2:  *top |= requested;  break;   /* set all requested bits */
+            case 3:  *top &= (uint8_t)~requested; break; /* reset requested bits */
+            default: *top = requested;  break;    /* replace */
+            }
+        }
+        break;
+
     /* ---- Modes ---- */
     case 'h':
         if (priv) {
@@ -1004,13 +1097,6 @@ static void vt_csi_dispatch(SolTerminal *term, uint8_t final)
         term->saved_col   = term->cur_col;
         term->saved_attrs = term->cur_attrs;
         break;
-    case 'u':
-        term->cur_row   = term->saved_row;
-        term->cur_col   = term->saved_col;
-        term->cur_attrs = term->saved_attrs;
-        term->pending_wrap = false;
-        break;
-
     default: break;
     }
     term->dirty = true;
@@ -1048,6 +1134,7 @@ static void vt_esc_dispatch(SolTerminal *term, uint8_t final)
             term->mode_cursor_app = false;
             term->mode_insert = false;
             term->pending_wrap = false;
+            term->kitty_flags_depth = 0;
         }
         break;
     case 'D': /* IND: index (move down/scroll) */
@@ -1080,6 +1167,43 @@ static void vt_esc_dispatch(SolTerminal *term, uint8_t final)
 /* VT — OSC dispatch                                                   */
 /* ================================================================== */
 
+/* Decode a standard base64 payload of `len` bytes in place. Returns the
+   decoded byte count, or 0 on malformed input (odd padding, invalid
+   alphabet) — callers must treat 0 as "ignore this OSC 52 request" rather
+   than emit partial/garbage clipboard content. `out` may alias `in`. */
+static size_t vt_base64_decode(const char *in, size_t len, char *out, size_t out_cap)
+{
+    static const int8_t T[256] = {
+        ['A']=0,  ['B']=1,  ['C']=2,  ['D']=3,  ['E']=4,  ['F']=5,  ['G']=6,  ['H']=7,
+        ['I']=8,  ['J']=9,  ['K']=10, ['L']=11, ['M']=12, ['N']=13, ['O']=14, ['P']=15,
+        ['Q']=16, ['R']=17, ['S']=18, ['T']=19, ['U']=20, ['V']=21, ['W']=22, ['X']=23,
+        ['Y']=24, ['Z']=25, ['a']=26, ['b']=27, ['c']=28, ['d']=29, ['e']=30, ['f']=31,
+        ['g']=32, ['h']=33, ['i']=34, ['j']=35, ['k']=36, ['l']=37, ['m']=38, ['n']=39,
+        ['o']=40, ['p']=41, ['q']=42, ['r']=43, ['s']=44, ['t']=45, ['u']=46, ['v']=47,
+        ['w']=48, ['x']=49, ['y']=50, ['z']=51, ['0']=52, ['1']=53, ['2']=54, ['3']=55,
+        ['4']=56, ['5']=57, ['6']=58, ['7']=59, ['8']=60, ['9']=61, ['+']=62, ['/']=63,
+        [0 ... '+'-1]=-1, ['+'+1 ... '/'-1]=-1, ['9'+1 ... 'A'-1]=-1,
+        ['Z'+1 ... 'a'-1]=-1, ['z'+1 ... 255]=-1,
+    };
+    size_t out_len = 0;
+    uint32_t acc = 0;
+    int bits = 0;
+    for (size_t i = 0; i < len; ++i) {
+        const unsigned char c = (unsigned char)in[i];
+        if (c == '=') break;              /* padding: stop */
+        const int8_t v = T[c];
+        if (v < 0) continue;              /* skip whitespace/newlines per RFC leniency */
+        acc = (acc << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (out_len >= out_cap) return 0;
+            out[out_len++] = (char)((acc >> bits) & 0xFFu);
+        }
+    }
+    return out_len;
+}
+
 static void vt_osc_dispatch(SolTerminal *term)
 {
     /* Format: "Pn;text" where Pn is the OSC command number. */
@@ -1087,17 +1211,42 @@ static void vt_osc_dispatch(SolTerminal *term)
     if (!semi) return;
     int cmd = (int)strtol(term->osc_buf, NULL, 10);
     const char *text = semi + 1;
+    size_t text_len = (size_t)term->osc_len - (size_t)(text - term->osc_buf);
 
     switch (cmd) {
     case 0: /* Set icon name and window title */
     case 1: /* Set icon name (treat same as title) */
     case 2: /* Set window title */
         {
-            size_t len = (size_t)term->osc_len - (size_t)(text - term->osc_buf);
+            size_t len = text_len;
             if (len >= SOL_TERM_TITLE_MAX) len = SOL_TERM_TITLE_MAX - 1;
             memcpy(term->title, text, len);
             term->title[len] = '\0';
             term->dirty = true;
+        }
+        break;
+    case 52: /* Clipboard write: OSC 52 ; Pc ; base64(Pd) */
+        {
+            /* Pc (selection target) is accepted but not distinguished —
+               Sol has one system clipboard. Only a write is supported;
+               a query payload ("?") is silently ignored rather than
+               answered, matching common conservative terminal behavior
+               (no read-back channel for arbitrary TUI programs). */
+            char *inner_semi = (char *)memchr(text, ';', text_len);
+            const char *payload = inner_semi ? inner_semi + 1 : text;
+            size_t payload_len = inner_semi
+                ? text_len - (size_t)(inner_semi + 1 - text)
+                : text_len;
+            if (payload_len == 0 || (payload_len == 1 && payload[0] == '?')) break;
+
+            SolTerminalManager *mgr = term->manager;
+            if (!mgr || !mgr->clipboard_write_fn) break;
+
+            char decoded[SOL_TERM_OSC_MAX];
+            size_t n = vt_base64_decode(payload, payload_len, decoded, sizeof(decoded) - 1u);
+            if (n == 0) break;
+            decoded[n] = '\0';
+            mgr->clipboard_write_fn(decoded, mgr->clipboard_write_user_data);
         }
         break;
     default: break;
@@ -1195,12 +1344,14 @@ static void vt_process_byte(SolTerminal *term, uint8_t byte)
         memset(term->vt_params, 0, sizeof(term->vt_params));
         term->vt_n_intermediate = 0;
         term->vt_dcs_private    = false;
+        term->vt_csi_marker     = 0;
         term->vt_state          = VT_CSI_PARAM;
         /* Fall through to process `byte` in CSI_PARAM. */
         /* FALLTHROUGH */
     case VT_CSI_PARAM:
         if (byte == '?') {
             term->vt_dcs_private = true;
+            term->vt_csi_marker  = byte;
         } else if (byte >= '0' && byte <= '9') {
             if (term->vt_n_params == 0) term->vt_n_params = 1;
             int *last = &term->vt_params[term->vt_n_params - 1];
@@ -1213,8 +1364,11 @@ static void vt_process_byte(SolTerminal *term, uint8_t byte)
             term->vt_state = VT_GROUND;
         } else if (byte >= 0x20 && byte <= 0x2F) {
             term->vt_state = VT_CSI_INT;
-        } else if (byte == 0x3C || byte == 0x3D || byte == 0x3E || byte == 0x3F) {
-            /* Private parameter prefix already handled above (?); others ignored */
+        } else if (byte == 0x3C || byte == 0x3D || byte == 0x3E) {
+            /* '<' '=' '>' — Kitty keyboard protocol pop/set/push prefixes
+               (final byte 'u'); recorded so vt_csi_dispatch can tell them
+               apart. No other CSI sequence Sol implements uses these. */
+            term->vt_csi_marker = byte;
         } else if (byte < 0x20) {
             vt_execute(term, byte);
         }
@@ -1768,12 +1922,22 @@ void sol_terminal_manager_destroy(SolTerminalManager *mgr)
     free(mgr);
 }
 
+void sol_terminal_manager_set_clipboard_write(SolTerminalManager *mgr,
+                                              SolTermClipboardWriteFn fn,
+                                              void *user_data)
+{
+    if (!mgr) return;
+    mgr->clipboard_write_fn        = fn;
+    mgr->clipboard_write_user_data = user_data;
+}
+
 SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr,
                                           const char *cwd)
 {
     if (!mgr || mgr->tab_count >= SOL_TERM_MAX_TABS) return NULL;
     SolTerminal *term = sol_terminal_create(mgr->instance, cwd);
     if (!term) return NULL;
+    term->manager = mgr;
     mgr->tabs[mgr->tab_count++] = term;
     mgr->active_index = mgr->tab_count - 1;
     return term;
@@ -1926,9 +2090,23 @@ bool sol_terminal_manager_drain(SolTerminalManager *mgr)
 
         if (n > 0) {
             term->dirty = false;
+            term->sync_output_closed = false;
             for (size_t j = 0; j < n; ++j)
                 vt_utf8_feed(term, &term->utf8_state, (uint8_t)local[j]);
-            any_dirty = true;
+
+            /* Grid state is always kept current, but while synchronized
+               output (mode 2026) is active the UI is not told to repaint —
+               this is what lets a full-screen TUI redraw land atomically
+               instead of tearing mid-frame. A runaway app that never sends
+               the closing ?2026l is bounded by a timeout so output is never
+               permanently withheld. Closing the mode (or a fresh drain after
+               timeout) always flushes once. */
+            const bool sync_timed_out = term->mode_sync_output &&
+                (sol_platform_now_monotonic_ns() - term->sync_output_start_ns) >
+                    SOL_TERM_SYNC_OUTPUT_TIMEOUT_NS;
+            if (!term->mode_sync_output || sync_timed_out || term->sync_output_closed) {
+                any_dirty = true;
+            }
         }
 
         /* If we hit the per-frame cap and bytes remain, schedule another
@@ -2177,6 +2355,38 @@ void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods)
         break;
     }
 
+    /* Kitty keyboard protocol: disambiguate escape codes (bit 0). Legacy
+       encoding collapses distinct keys onto the same bytes an application
+       cannot tell apart — plain ESC vs Ctrl+[ vs Alt+Escape, Enter vs
+       Ctrl+M, Tab vs Ctrl+I, Backspace vs Ctrl+H/Ctrl+Backspace. An app
+       that opted into bit 0 gets each of these as a distinct CSI-u report
+       instead. Only keys with a real ambiguity are covered; unambiguous
+       keys (arrows, function keys, plain printable chars) keep their
+       normal encoding even with disambiguation active, matching the Kitty
+       spec's "only when necessary" guidance. */
+    if (term->kitty_flags_depth > 0 &&
+        (term->kitty_flags_stack[term->kitty_flags_depth - 1] & 0x1u)) {
+        int  csi_code = 0;
+        bool covered  = true;
+        switch (key) {
+        case SOL_KEY_ESCAPE:    csi_code = 27;  break;
+        case SOL_KEY_ENTER:     csi_code = 13;  break;
+        case SOL_KEY_TAB:       csi_code = 9;   break;
+        case SOL_KEY_BACKSPACE: csi_code = 127; break;
+        default: covered = false; break;
+        }
+        if (covered) {
+            const int modn = term_modifier_number(mods);
+            if (modn > 1) {
+                len = snprintf(buf, sizeof(buf), "\033[%d;%du", csi_code, modn);
+            } else {
+                len = snprintf(buf, sizeof(buf), "\033[%du", csi_code);
+            }
+            sol_terminal_send_text(term, buf, (size_t)len);
+            return;
+        }
+    }
+
     /* Ctrl and Ctrl+Alt chords map to C0 controls.  Alt prefixes ESC. */
     char ctrl = 0;
     if (term_ctrl_code(key, mods, &ctrl)) {
@@ -2309,6 +2519,49 @@ void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods)
         }
     }
 
+    if (len > 0) {
+        sol_terminal_send_text(term, buf, (size_t)len);
+    }
+}
+
+bool sol_terminal_wants_mouse(const SolTerminal *term)
+{
+    return term && (term->mode_mouse_btn || term->mode_mouse_any);
+}
+
+void sol_terminal_send_mouse(SolTerminal *term, int col, int row,
+                             int button, SolTermMouseAction action,
+                             uint8_t mods)
+{
+    if (!term || !term->is_alive) return;
+    if (!term->mode_mouse_btn && !term->mode_mouse_any) return;
+    if (action == SOL_TERM_MOUSE_MOVE && !term->mode_mouse_any) return;
+    if (col < 0 || row < 0) return;
+
+    /* SGR extended encoding (mode 1006) is what every modern full-screen
+       TUI expects; it is the only encoding sol_terminal implements since
+       the legacy X10/UTF-8 encodings cap coordinates at 223 and are not
+       what current applications request. If the app enabled tracking but
+       not SGR, coordinates still fit unmodified/most terminals treat SGR
+       as the safe universal choice — apps that need legacy encoding are
+       effectively unsupported here, matching many modern terminals. */
+    int cb;
+    switch (action) {
+    case SOL_TERM_MOUSE_WHEEL_UP:   cb = 64; break;
+    case SOL_TERM_MOUSE_WHEEL_DOWN: cb = 65; break;
+    default:
+        cb = button & 0x3;
+        if (action == SOL_TERM_MOUSE_MOVE) cb |= 32; /* motion flag */
+        break;
+    }
+    if (mods & SOL_MOD_SHIFT) cb |= 4;
+    if (mods & SOL_MOD_ALT)   cb |= 8;
+    if (mods & SOL_MOD_CTRL)  cb |= 16;
+
+    const char final = (action == SOL_TERM_MOUSE_RELEASE) ? 'm' : 'M';
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "\033[<%d;%d;%d%c",
+                        cb, col + 1, row + 1, final);
     if (len > 0) {
         sol_terminal_send_text(term, buf, (size_t)len);
     }

@@ -94,6 +94,17 @@ typedef struct SolTerminalManager SolTerminalManager;
 /* Causality instance pointer (forward-decl; terminal.c includes causality.h). */
 typedef struct Ca_Instance Ca_Instance;
 
+/*
+ * Callback invoked when a terminal application requests a clipboard write
+ * via OSC 52 (e.g. tmux, Neovim, or Claude Code copying a selection out to
+ * the host clipboard). `text` is UTF-8, NUL-terminated, valid only for the
+ * duration of the call.
+ *
+ * text       Decoded clipboard payload.
+ * user_data  Opaque pointer supplied to sol_terminal_manager_set_clipboard_write.
+ */
+typedef void (*SolTermClipboardWriteFn)(const char *text, void *user_data);
+
 /* ================================================================== */
 /* Manager lifecycle                                                   */
 /* ================================================================== */
@@ -112,6 +123,18 @@ SolTerminalManager *sol_terminal_manager_create(Ca_Instance *instance);
  * mgr  The manager to destroy (safe to call with NULL).
  */
 void sol_terminal_manager_destroy(SolTerminalManager *mgr);
+
+/*
+ * Register the callback invoked for OSC 52 clipboard-write requests from
+ * any terminal owned by this manager. Pass fn=NULL to disable.
+ *
+ * mgr        The manager.
+ * fn         Callback, or NULL to clear.
+ * user_data  Opaque pointer passed back to fn.
+ */
+void sol_terminal_manager_set_clipboard_write(SolTerminalManager *mgr,
+                                              SolTermClipboardWriteFn fn,
+                                              void *user_data);
 
 /* ================================================================== */
 /* Tab management                                                      */
@@ -236,6 +259,43 @@ void sol_terminal_resize(SolTerminal *term, int cols, int rows);
  * mods  Active modifier mask (SOL_MOD_*).
  */
 void sol_terminal_send_key(SolTerminal *term, uint32_t key, uint8_t mods);
+
+/* Mouse action kinds for sol_terminal_send_mouse. */
+typedef enum SolTermMouseAction {
+    SOL_TERM_MOUSE_PRESS = 0,
+    SOL_TERM_MOUSE_RELEASE,
+    SOL_TERM_MOUSE_MOVE,       /* motion while a button is held (mode 1002) */
+    SOL_TERM_MOUSE_WHEEL_UP,
+    SOL_TERM_MOUSE_WHEEL_DOWN,
+} SolTermMouseAction;
+
+/*
+ * Report a mouse event to the terminal's PTY using SGR extended mouse
+ * encoding (\033[<b;x;yM / m), the encoding virtually every modern
+ * terminal application expects. No-op unless the application has enabled
+ * mouse tracking (DECSET 1000/1002) — callers do not need to check this
+ * themselves, so normal Sol UI interactions (scrollback, selection) are
+ * unaffected when the running program never asked for mouse events.
+ *
+ * term    The terminal.
+ * col     0-based column the event occurred at.
+ * row     0-based row the event occurred at.
+ * button  0=left, 1=middle, 2=right (ignored for wheel actions).
+ * action  What happened.
+ * mods    Active modifier mask (SOL_MOD_*) — shift/alt/ctrl are encoded
+ *         into the report per xterm convention.
+ */
+void sol_terminal_send_mouse(SolTerminal *term, int col, int row,
+                             int button, SolTermMouseAction action,
+                             uint8_t mods);
+
+/*
+ * Returns true if the terminal application has enabled any mouse tracking
+ * mode (DECSET 1000 or 1002). Callers use this to decide whether to route
+ * clicks/drags/wheel events to sol_terminal_send_mouse instead of Sol's own
+ * scrollback/selection handling.
+ */
+bool sol_terminal_wants_mouse(const SolTerminal *term);
 
 /*
  * Write raw UTF-8 bytes to the terminal's PTY (e.g. for clipboard paste).
