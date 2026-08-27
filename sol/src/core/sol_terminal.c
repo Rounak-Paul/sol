@@ -487,6 +487,53 @@ static void term_new_line(SolTerminal *term)
  * cp       Unicode codepoint.
  * Returns  true for double-width codepoints, false otherwise.
  */
+/*
+ * BMP legacy symbols with default Emoji_Presentation=Yes (Unicode emoji-data.txt):
+ * these render as an emoji glyph without needing a VS16 selector, so terminals
+ * measure them as double-width. Deliberately narrower than the Misc Symbols
+ * (2600-26FF) / Dingbats (2700-27BF) / Misc Symbols and Arrows (2B00-2BFF)
+ * blocks that contain them — most codepoints in those blocks are
+ * Emoji_Presentation=No (text-default, e.g. suit symbols, plain arrows) and
+ * must stay single-width; only VS16 (U+FE0F) would widen those, which this
+ * terminal does not track as a separate combining step.
+ */
+static bool term_codepoint_is_bmp_wide_emoji(uint32_t cp)
+{
+    return (cp >= 0x231Au && cp <= 0x231Bu) ||  /* watch, hourglass done   */
+           (cp >= 0x23E9u && cp <= 0x23ECu) ||  /* fast-forward..fast down */
+           cp == 0x23F0u ||                     /* alarm clock             */
+           cp == 0x23F3u ||                     /* hourglass not done      */
+           (cp >= 0x25FDu && cp <= 0x25FEu) ||  /* medium-small squares    */
+           (cp >= 0x2614u && cp <= 0x2615u) ||  /* umbrella, hot beverage  */
+           (cp >= 0x2648u && cp <= 0x2653u) ||  /* zodiac (Aries..Pisces)  */
+           cp == 0x267Fu ||                     /* wheelchair symbol       */
+           cp == 0x2693u ||                     /* anchor                  */
+           cp == 0x26A1u ||                     /* high voltage            */
+           (cp >= 0x26AAu && cp <= 0x26ABu) ||  /* white/black circle      */
+           (cp >= 0x26BDu && cp <= 0x26BEu) ||  /* soccer ball, baseball   */
+           (cp >= 0x26C4u && cp <= 0x26C5u) ||  /* snowman, sun+cloud      */
+           cp == 0x26CEu ||                     /* Ophiuchus               */
+           cp == 0x26D4u ||                     /* no entry                */
+           cp == 0x26EAu ||                     /* church                  */
+           (cp >= 0x26F2u && cp <= 0x26F3u) ||  /* fountain, flag in hole  */
+           cp == 0x26F5u ||                     /* sailboat                */
+           cp == 0x26FAu ||                     /* tent                    */
+           cp == 0x26FDu ||                     /* fuel pump               */
+           cp == 0x2705u ||                     /* check mark button       */
+           (cp >= 0x270Au && cp <= 0x270Bu) ||  /* raised fist, raised hand*/
+           cp == 0x2728u ||                     /* sparkles                */
+           cp == 0x274Cu ||                     /* cross mark              */
+           cp == 0x274Eu ||                     /* cross mark button       */
+           (cp >= 0x2753u && cp <= 0x2755u) ||  /* red question..white excl*/
+           cp == 0x2757u ||                     /* red exclamation mark    */
+           (cp >= 0x2795u && cp <= 0x2797u) ||  /* plus, minus, divide     */
+           cp == 0x27B0u ||                     /* curly loop              */
+           cp == 0x27BFu ||                     /* double curly loop       */
+           (cp >= 0x2B1Bu && cp <= 0x2B1Cu) ||  /* black/white large square*/
+           cp == 0x2B50u ||                     /* star                    */
+           cp == 0x2B55u;                       /* hollow red circle       */
+}
+
 static bool term_codepoint_is_wide(uint32_t cp)
 {
     return (cp >= 0x1100u  && cp <= 0x115Fu) ||  /* Hangul Jamo init.    */
@@ -500,6 +547,7 @@ static bool term_codepoint_is_wide(uint32_t cp)
            (cp >= 0xFE30u  && cp <= 0xFE6Fu) ||  /* CJK compat forms     */
            (cp >= 0xFF00u  && cp <= 0xFF60u) ||  /* Fullwidth forms      */
            (cp >= 0xFFE0u  && cp <= 0xFFE6u) ||  /* Fullwidth signs      */
+           term_codepoint_is_bmp_wide_emoji(cp) ||
            (cp >= 0x1F300u && cp <= 0x1F64Fu) || /* Misc symbols, emoji  */
            (cp >= 0x1F680u && cp <= 0x1F6FFu) || /* Transport and map    */
            (cp >= 0x1F900u && cp <= 0x1F9FFu) || /* Supplemental symbols */

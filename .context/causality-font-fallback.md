@@ -92,3 +92,41 @@ Verification:
 - Focused Sol suites pass: file tree, buffer, text buffer, integration, command flow, and plugin tests.
 - Sol uses named icons for file tree entries, file picker entries/toolbar/sort/footer actions, buffer-tab close, welcome actions, plugin actions, Causality title-bar controls, tree disclosure, and menu submenu chevrons.
 - Additional event, fuzzy, and search tests pass. `sol_rope_tests` is blocked in this sandbox because its `tmpnam` path cannot be opened for writing.
+
+## BMP legacy-emoji column desync (2026-08-27)
+
+Symptom: Claude Code's `>>` auto-mode indicator (U+23E9 fast-forward) rendered
+as `??` in Sol's terminal panel, even though the embedded emoji face has the
+glyph (confirmed via a standalone FreeType probe against the extracted blob:
+`FT_Get_Char_Index` returns a valid glyph index for U+23E9 in
+`ca_embedded_emoji_font_data`).
+
+Root cause was terminal-side, not font-side: `term_codepoint_is_wide()` in
+`sol/src/core/sol_terminal.c` only classified the SMP emoji blocks
+(U+1F300+) as double-width. U+23E9 lives in Miscellaneous Technical
+(U+2300-23FF), a BMP block, so it was measured as a single-width cell. The
+renderer then drew one double-width emoji glyph into a cell budgeted for
+one column, desyncing the following cell — the classic wide-char-measured-
+narrow bug, same failure mode as the prior Transport & Map / Symbols Ext-A
+fix below, just in a different Unicode block.
+
+Fix: added `term_codepoint_is_bmp_wide_emoji()` — a precise, non-contiguous
+set of BMP codepoints with Unicode's `Emoji_Presentation=Yes` property
+(emoji-data.txt), the same property real terminals (Alacritty's
+unicode-width, kitty, wcwidth9) key off for BMP legacy emoji width.
+Deliberately **not** the whole 2600-26FF/2700-27BF/2B00-2BFF blocks —
+those are sparse; most codepoints in them (suit symbols, plain arrows,
+dingbat punctuation) are `Emoji_Presentation=No` and must stay
+single-width. Widening the whole block would have desynced columns for
+plain-text uses of those characters. Codepoints that are emoji-capable but
+default to text presentation (need explicit VS16/U+FE0F to become wide,
+e.g. U+2194 arrows, U+2764 heart, U+2934/2935, U+3030, U+303D, U+3297,
+U+3299) are intentionally excluded — Sol's VT parser does not track
+variation selectors as a separate combining step.
+
+Verification: standalone FreeType probe (compiled against the vendored
+FreeType `.o`s + all 5 embedded font blobs, linking real `hvf.c.o` +
+system `libhvf` to satisfy the optional HVF module FreeType's `ftinit.c`
+references unconditionally) confirmed glyph coverage for all newly-added
+ranges in the emoji face before writing the fix. `cmake --build` and full
+`ctest` (14/14) pass after the change.

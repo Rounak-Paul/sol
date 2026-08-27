@@ -41,6 +41,13 @@ blocks per Unicode TR11. Wide codepoints occupy two cells:
 - Lead cell: the codepoint + `SOL_TERM_ATTR_WIDE`.
 - Trailing cell: `SOL_TERM_ATTR_WIDE_TAIL`, codepoint 0.
 
+Emoji width is split across two pieces: the contiguous SMP blocks
+(U+1F300+) plus `term_codepoint_is_bmp_wide_emoji()` for the sparse set of
+BMP legacy codepoints with `Emoji_Presentation=Yes` (U+23E9 fast-forward,
+U+2705 check mark, U+2B50 star, etc. — see [[causality-font-fallback]]'s
+"BMP legacy-emoji column desync" entry for why this had to be a precise
+codepoint list rather than whole-block ranges).
+
 `terminal_panel.c` skips WIDE_TAIL cells (unless the cursor is on one) so the run
 builder does not emit a spurious space and desync the row. A wide glyph never
 straddles the right margin: it wraps when autowrap is on, and is dropped otherwise.
