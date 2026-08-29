@@ -75,7 +75,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "}"
     ".ca-popup-btn:hover, .ca-popup-btn-primary:hover { background: rgba(91, 151, 218, 0.25); }"
     ".ca-select-popup, .ca-tooltip, .ca-context-menu, .ca-menubar-popup {"
-    "  background: rgba(7, 11, 17, 0.97); color: #d7e0ea; corner-radius: 0px;"
+    "  background: rgb(13, 17, 23); color: #d7e0ea; corner-radius: 0px;"
     "}"
     ".ca-overlay-hover { background: rgba(91, 151, 218, 0.18); corner-radius: 0px; }"
     ".ca-overlay-selected { background: rgba(75, 137, 205, 0.28); color: #f2f5f8; }"

@@ -149,13 +149,14 @@ static uint32_t packed_color(const char *hex)
 static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacity)
 {
     if (!theme || !out || capacity == 0u) return false;
-    char chrome[32], panel[32], editor[32], raised[32], hover[32], selected[32];
+    char chrome[32], panel[32], editor[32], raised[32], popup_bg[32], hover[32], selected[32];
     const float surface_alpha = theme->light ? 0.74f : 0.64f;
     const float editor_alpha = theme->light ? 0.68f : 0.54f;
     if (!color_with_alpha(theme->background, theme->light ? 0.92f : 0.86f, chrome) ||
         !color_with_alpha(theme->surface, surface_alpha, panel) ||
         !color_with_alpha(theme->surface, editor_alpha, editor) ||
         !color_with_alpha(theme->elevated, theme->light ? 0.88f : 0.78f, raised) ||
+        !color_with_alpha(theme->elevated, 1.0f, popup_bg) ||
         !color_with_alpha(theme->primary, 0.15f, hover) ||
         !color_with_alpha(theme->primary, 0.32f, selected))
         return false;
@@ -233,7 +234,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".ca-overlay-hover{background:%s;}.ca-overlay-selected{background:%s;color:%s;}",
         editor, theme->text, theme->muted, theme->secondary, selected, hover,
         theme->secondary, selected, theme->text, hover, raised, panel, hover,
-        selected, editor, theme->text, theme->accent, chrome, raised,
+        selected, editor, theme->text, theme->accent, chrome, popup_bg,
         theme->text, hover, selected, theme->text);
 
     css_append(&css,
