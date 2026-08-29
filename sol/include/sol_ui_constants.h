@@ -9,8 +9,17 @@
 /* Floating workspace composition geometry in logical CSS pixels. */
 #define SOL_UI_PANEL_MARGIN_PX 8.0f
 #define SOL_UI_PANEL_GAP_PX 8.0f
-#define SOL_UI_PANEL_RADIUS_PX 12.0f
+#define SOL_UI_PANEL_RADIUS_PX 8.0f
 #define SOL_UI_PANEL_MARGIN_PX_CSS "8px"
-#define SOL_UI_PANEL_RADIUS_PX_CSS "12px"
+#define SOL_UI_PANEL_RADIUS_PX_CSS "8px"
+
+/* Rounding scale shared across the whole UI (see the "Floating rounded
+   glass composition" block in style.h and sol_settings_build_appearance_css):
+     control  — tabs, badges, buttons, inputs, popup rows, scrollbar thumbs
+     panel    — floating panels, popups/menus, cards
+     pill     — full-height rounded strips (status bar) */
+#define SOL_UI_CONTROL_RADIUS_PX 4.0f
+#define SOL_UI_CONTROL_RADIUS_PX_CSS "4px"
+#define SOL_UI_PILL_RADIUS_PX_CSS "10px"
 
 #endif
