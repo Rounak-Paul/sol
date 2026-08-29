@@ -22,4 +22,20 @@
 #define SOL_UI_CONTROL_RADIUS_PX_CSS "4px"
 #define SOL_UI_PILL_RADIUS_PX_CSS "10px"
 
+/* Surface elevation opacity scale shared by every window's Glass-theme
+   background (style.h "Minimal glass theme overrides") and mirrored by
+   each curated theme's generated CSS (sol-plugin-themes' build_theme_css).
+   Applies uniformly across the main workspace panels AND every auxiliary
+   dialog window (Settings, Plugin Manager, File Picker, Search) so no
+   surface reads as a visually distinct subsystem:
+     chrome — window/panel roots: main floating panels, dialog window
+              roots, popups, status bar, command-flow overlay
+     raised — headers/toolbars/strips sitting above a chrome floor:
+              tab rows, list/section headers, search bars
+     well   — recessed input fields and scroll wells: text inputs,
+              list/result containers */
+#define SOL_UI_SURFACE_CHROME_ALPHA_CSS "0.86"
+#define SOL_UI_SURFACE_RAISED_ALPHA_CSS "0.90"
+#define SOL_UI_SURFACE_WELL_ALPHA_CSS   "0.86"
+
 #endif

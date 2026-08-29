@@ -466,6 +466,15 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
         "}"
+        /* Auxiliary dialog windows (Settings, Plugin Manager, File Picker,
+           Search) are plain OS-decorated square windows, not borderless
+           floating panels — share blur/opacity but never corner-radius,
+           which would round their root div against nothing and expose
+           the window's default backdrop at the corners. */
+        ".fp-root, .search-root-window, .pm-root, .sw-root {"
+        "  backdrop-filter: blur(%.1fpx);"
+        "  opacity: %.3f;"
+        "}"
         /* Titlebar: independent backdrop blur (opacity shared) */
         ".ca-titlebar {"
         "  backdrop-filter: blur(%.1fpx);"
@@ -536,6 +545,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         (double)sw, (double)sw, (double)sr, (double)sr,
         (double)cr, (double)cr, (double)cr, (double)cr, (double)cr,
         (double)cr, (double)pblur, (double)op,
+        (double)pblur, (double)op,
         (double)tblur, (double)op,
         (double)control_radius);
 

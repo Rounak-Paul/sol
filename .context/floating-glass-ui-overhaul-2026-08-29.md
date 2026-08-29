@@ -371,6 +371,78 @@ overall, tone it down."
   stop requesting screenshots as a default, so wait for the user to bring
   the next one rather than asking).
 
+## Round 7 — cross-window opacity consistency pass (heavy UI/UX polish)
+
+User asked for a "heavy UI/UX pass and polish" covering every window and
+panel, not just the main workspace, with glass background styling kept —
+explicitly to make every window/panel "feel the same."
+
+- **Confirmed the active theme system (`sol-plugin-themes`'s
+  `build_theme_css`) already had a clean 4-tier semantic opacity model**
+  (`chrome`/`panel`/`editor`/`raised` tokens at fixed alpha per
+  light/dark) applied uniformly across every window including the four
+  auxiliary dialog windows. This is the path most users see day-to-day —
+  it was not the problem.
+- **Found two real, narrow gaps in the Glass fallback theme
+  (`style.h`, used pre-plugin-load or when explicitly selected):**
+  root/header background alpha values were ad-hoc per-window (0.72–0.92,
+  ~15 distinct values with no shared token) instead of following the same
+  tiered model the plugin themes use.
+- **Found one real gap in the live appearance overlay
+  (`sol_settings_build_appearance_css`, `sol_settings.c`):** the
+  Settings > Theme picker's panel-opacity/blur slider was applied to
+  `.tree-panel, .plugin-side-panel, .buffer-pane, .term-panel,
+  .welcome-pane, .cf-panel, .status-bar` but never to the four dialog
+  window roots (`fp-root`/`search-root-window`/`pm-root`/`sw-root`) —
+  dragging the slider visibly changed the main workspace but did nothing
+  to File Picker, Search, Plugin Manager, or Settings' own window.
+- **Ruled out `scm-root`:** dead selector, no producer anywhere in the
+  codebase (git plugin renders `scm-view` inside `plugin-side-panel`,
+  which already inherits blur/opacity from its ancestor). No change
+  needed.
+- **Ruled out adding `border-radius` to the four dialog-window roots:**
+  confirmed via `ca_window_create` call sites that Settings/Plugin
+  Manager/File Picker/Search are plain OS-decorated square windows (no
+  transparency/borderless flags), unlike in-canvas floating panels.
+  Rounding a root div that exactly fills a square window's client area
+  would expose the window's default backdrop at the corners, not clip
+  cleanly — opacity/blur only for these four.
+- **Ruled out `backdrop-filter` as risky:** cross-checked against
+  [[backdrop_blur_removed]] — that abandonment was specific to
+  menu-popup blur (`.ca-select-popup`/`.ca-tooltip`/`.ca-context-menu`/
+  `.ca-menubar-popup`, GPU `image_pipeline` producing zero pixels).
+  Panel-level `backdrop-filter` (the exact mechanism this round extends
+  to dialog roots) is the proven-working path this whole 6-round session
+  built and validated — safe to reuse.
+- **Fix 1:** added three CSS-string constants to `sol_ui_constants.h`
+  (`SOL_UI_SURFACE_CHROME_ALPHA_CSS "0.86"`, `..._RAISED_ALPHA_CSS
+  "0.90"`, `..._WELL_ALPHA_CSS "0.86"`) mirroring the plugin theme's
+  chrome/raised/well surface roles, and spliced them into every
+  background-alpha declaration in style.h's "Minimal glass theme
+  overrides" section (tree/plugin-side-panel, buffer-body, status-bar,
+  cf-panel, fp-root/search-root-window, fp-toolbar/search-header/footer,
+  fp-list/search-results, fp-new-folder-input/search-input, welcome-pane,
+  pm-root/sw-root, pm-left/sw-left, pm-search-row,
+  pm-search-input/sw-scale-input/sw-select, scm-root/scm-view,
+  scm-toolbar/repository/commit-box/section-header,
+  scm-commit-input/branch-input). Colors (rgb hue) were left untouched —
+  only the alpha channel was unified, preserving each window's
+  intentional tint.
+- **Fix 2:** added `.fp-root, .search-root-window, .pm-root, .sw-root {
+  backdrop-filter: blur(%.1fpx); opacity: %.3f; }` (no border-radius) to
+  `sol_settings_build_appearance_css`, reusing the same `pblur`/`op`
+  values as the main-panel rule, with an updated `snprintf` arg list.
+- Build + full CTest suite (14/14) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs.
+- Appearance-overlay buffer stays well under its 4096-byte cap (prior
+  measured baseline 2065 bytes + ~102-byte new selector block ≈ 2167).
+- **Not yet visually confirmed** — screencapture still unavailable this
+  session (see [[screencapture_unavailable]]). This round is lower-risk
+  than rounds 1–5 (pure alpha-value/selector-coverage edits, no new
+  rendering-engine code paths), but still needs the user's own screenshot
+  to close out.
+
 ## Validation
 
 - `cmake --build build --parallel 6`: passed.
