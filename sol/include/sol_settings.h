@@ -46,7 +46,8 @@
 #define SOL_SETTINGS_BG_OPACITY_DEFAULT 1.0f
 #define SOL_SETTINGS_BG_EFFECT_ID_MAX   63
 #define SOL_SETTINGS_THEME_ID_MAX       63
-#define SOL_SETTINGS_THEME_ID_DEFAULT   "com.sol.theme.glass"
+#define SOL_SETTINGS_THEME_ID_DEFAULT   "com.sol.theme.midnight"
+#define SOL_SETTINGS_THEME_ID_FALLBACK  "com.sol.theme.glass"
 #define SOL_SETTINGS_BG_EFFECT_ID_DEFAULT "com.sol.bfx.aurora"
 
 /* Appearance overlay tunables */

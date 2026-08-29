@@ -13,6 +13,7 @@ typedef struct SolThemeEntry {
     char *id;
     char *name;
     char *css;
+    SolThemeColors colors;
 } SolThemeEntry;
 
 struct SolThemeRegistry {
@@ -104,7 +105,12 @@ bool sol_theme_register(SolThemeRegistry *registry, const SolThemeDesc *desc)
         .id = sol_theme_strdup(desc->id),
         .name = sol_theme_strdup(desc->name),
         .css = composed_css,
+        .colors = desc->colors,
     };
+    if (base_css && !desc->has_colors) {
+        const size_t base_index = sol_theme_find(registry, desc->base_id);
+        entry.colors = registry->entries[base_index].colors;
+    }
     if (!entry.id || !entry.name || !entry.css) {
         free(entry.id);
         free(entry.name);
@@ -184,6 +190,14 @@ const char *sol_theme_active_css(const SolThemeRegistry *registry)
 {
     return registry && registry->count > 0u
         ? registry->entries[registry->active_index].css : NULL;
+}
+
+bool sol_theme_active_colors(const SolThemeRegistry *registry,
+                             SolThemeColors *out_colors)
+{
+    if (!registry || registry->count == 0u || !out_colors) return false;
+    *out_colors = registry->entries[registry->active_index].colors;
+    return true;
 }
 
 void sol_theme_set_change_callback(SolThemeRegistry *registry,

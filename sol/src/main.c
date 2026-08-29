@@ -1579,7 +1579,11 @@ int main(int argc, char **argv)
         !sol_ui_system_set_active_theme(app.ui, app.settings.theme_id)) {
         snprintf(app.settings.theme_id, sizeof(app.settings.theme_id), "%s",
                  SOL_SETTINGS_THEME_ID_DEFAULT);
-        (void)sol_ui_system_set_active_theme(app.ui, app.settings.theme_id);
+        if (!sol_ui_system_set_active_theme(app.ui, app.settings.theme_id)) {
+            snprintf(app.settings.theme_id, sizeof(app.settings.theme_id), "%s",
+                     SOL_SETTINGS_THEME_ID_FALLBACK);
+            (void)sol_ui_system_set_active_theme(app.ui, app.settings.theme_id);
+        }
     }
     /* Always apply appearance overlay after themes load — set_active_theme
      * skips the callback when the theme index hasn't changed, so the overlay
@@ -1587,8 +1591,13 @@ int main(int argc, char **argv)
     sol_ui_system_apply_appearance(app.ui);
 
     /* Restore the saved background effect now that plugins have registered theirs. */
-    if (app.bg_effects && app.settings.bg_effect_id[0] != '\0')
-        sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id);
+    if (app.bg_effects && app.settings.bg_effect_id[0] != '\0' &&
+        !sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id)) {
+        snprintf(app.settings.bg_effect_id, sizeof(app.settings.bg_effect_id), "%s",
+                 SOL_SETTINGS_BG_EFFECT_ID_DEFAULT);
+        if (!sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id))
+            app.settings.bg_effect_id[0] = '\0';
+    }
 
     const SolAppStartupPayload startup = {
         .worker_count = sol_job_system_worker_count(app.jobs),

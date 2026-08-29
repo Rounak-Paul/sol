@@ -50,7 +50,7 @@
 #define SOL_PLUGIN_CTX_MAX_STATUS_SEGS     8u
 #define SOL_PLUGIN_CTX_MAX_SIDE_PANELS     4u
 #define SOL_PLUGIN_CTX_MAX_LANGUAGES       8u
-#define SOL_PLUGIN_CTX_MAX_THEMES          8u
+#define SOL_PLUGIN_CTX_MAX_THEMES         SOL_THEME_MAX
 /* Keep in sync with SOL_UI_MAX_ACTION_LEN in sol_ui_internal.h */
 #define SOL_PLUGIN_CMD_ACTION_MAX_LEN     63u
 

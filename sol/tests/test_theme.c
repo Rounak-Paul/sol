@@ -23,6 +23,12 @@ static void test_registry_lifecycle(SolTestCtx *T)
     char css[] = ".root { background: #010203; }";
     SOL_CHECK(T, sol_theme_register(registry, &(SolThemeDesc){
         .id = "test.dark", .name = "Dark", .css = css,
+        .colors = {
+            .background_rgb = 0x010203,
+            .primary_rgb = 0x123456,
+            .accent_rgb = 0xabcdef,
+        },
+        .has_colors = true,
     }));
     memset(css, 'x', strlen(css));
 
@@ -30,6 +36,11 @@ static void test_registry_lifecycle(SolTestCtx *T)
     SOL_CHECK_STR(T, sol_theme_active_id(registry), "test.dark");
     SOL_CHECK_STR(T, sol_theme_active_css(registry),
                   ".root { background: #010203; }");
+    SolThemeColors colors = {0};
+    SOL_CHECK(T, sol_theme_active_colors(registry, &colors));
+    SOL_CHECK_EQ_INT(T, (int)colors.background_rgb, 0x010203);
+    SOL_CHECK_EQ_INT(T, (int)colors.primary_rgb, 0x123456);
+    SOL_CHECK_EQ_INT(T, (int)colors.accent_rgb, 0xabcdef);
     SOL_CHECK_EQ_SZ(T, changes, 1u);
     SOL_CHECK(T, !sol_theme_register(registry, &(SolThemeDesc){
         .id = "test.dark", .name = "Duplicate", .css = ".x{}",
@@ -45,6 +56,10 @@ static void test_registry_lifecycle(SolTestCtx *T)
                         "color: white") != NULL);
     SOL_CHECK(T, sol_theme_set_active(registry, "test.light"));
     SOL_CHECK_STR(T, sol_theme_active_id(registry), "test.light");
+    SOL_CHECK(T, sol_theme_active_colors(registry, &colors));
+    SOL_CHECK_EQ_INT(T, (int)colors.background_rgb, 0x010203);
+    SOL_CHECK_EQ_INT(T, (int)colors.primary_rgb, 0x123456);
+    SOL_CHECK_EQ_INT(T, (int)colors.accent_rgb, 0xabcdef);
     SOL_CHECK(T, !sol_theme_set_active(registry, "missing"));
     SOL_CHECK(T, sol_theme_unregister(registry, "test.light"));
     SOL_CHECK_STR(T, sol_theme_active_id(registry), "test.dark");
@@ -63,6 +78,7 @@ static void test_validation(SolTestCtx *T)
     SOL_CHECK(T, !sol_theme_register(registry, &(SolThemeDesc){
         .id = "", .name = "Empty", .css = ".x{}",
     }));
+    SOL_CHECK(T, !sol_theme_active_colors(registry, NULL));
     SOL_CHECK(T, !sol_theme_unregister(registry, "missing"));
     sol_theme_registry_destroy(registry);
 }

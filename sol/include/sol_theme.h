@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #define SOL_THEME_ID_MAX 63u
 #define SOL_THEME_NAME_MAX 63u
@@ -16,11 +17,21 @@
 typedef struct SolThemeRegistry SolThemeRegistry;
 typedef void (*SolThemeChangeFn)(void *user_data);
 
+/* Theme colors shared by UI styling and theme-aware visual effects. */
+typedef struct SolThemeColors {
+    uint32_t background_rgb;
+    uint32_t primary_rgb;
+    uint32_t accent_rgb;
+} SolThemeColors;
+
+/* Complete theme registration descriptor. */
 typedef struct SolThemeDesc {
     const char *id;
     const char *name;
     const char *base_id;
     const char *css;
+    SolThemeColors colors;
+    bool has_colors;
 } SolThemeDesc;
 
 /* Create an empty registry. */
@@ -53,6 +64,10 @@ const char *sol_theme_active_id(const SolThemeRegistry *registry);
 
 /* Return the active theme's complete CSS source or NULL. */
 const char *sol_theme_active_css(const SolThemeRegistry *registry);
+
+/* Return the active theme's semantic colors, or false when empty. */
+bool sol_theme_active_colors(const SolThemeRegistry *registry,
+                             SolThemeColors *out_colors);
 
 /* Install the single registry-change observer. */
 void sol_theme_set_change_callback(SolThemeRegistry *registry,

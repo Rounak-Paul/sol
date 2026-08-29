@@ -1,14 +1,17 @@
 # Visual composition
 
-Sol's background is a depth layer, not the primary surface. The curated Glass
-composition uses Aurora at 0.78 intensity, three blur passes for the chrome,
-and one pass beneath the editor.
+Sol follows the LocalDocsMD composition model: a theme-colored animated canvas
+under semantic frosted surfaces.
 
-- Title bar, explorer, status bar, and overlays use cool near-black translucent
-  materials so the effect remains visible but text retains contrast.
-- Editor and gutter materials are lighter than the chrome and allow enough of
-  the background through for blur to read without obscuring code.
-- Blur regions are localized to material surfaces and begin below the custom
-  title bar. Do not add blur to every layer; stacked blur reads as fog.
-- Defaults live in `sol_settings.h`; the current user profile is intentionally
-  aligned to the same Aurora preset.
+- The active theme owns its canvas background, primary and accent effect colors,
+  and surface, elevated, text, muted, success, warning, and danger roles.
+- Editor surfaces reveal more motion than navigation and floating chrome.
+  Localized Causality blur stays at three passes for chrome and one beneath the
+  buffer by default.
+- Animations provide transparent colored content rather than opaque scene
+  backgrounds. Theme surfaces supply depth and readability.
+- Midnight + Aurora is the fresh-install composition. Unknown removed theme or
+  effect IDs fall back to the current defaults without retaining compatibility
+  aliases.
+- Theme and effect selection remain independent, but every effect consumes the
+  active theme's semantic primary and accent colors.

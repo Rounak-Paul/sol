@@ -34,9 +34,12 @@ static const char k_fullscreen_vert[] =
     "    gl_Position = vec4(v_uv * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-/* Push constants layout shared by all shader-mode effects.
- * r,g,b carry the active theme accent color in [0,1] linear. */
-typedef struct { float time, width, height, opacity, r, g, b, _pad; } BgPushConst;
+/* Push constants shared by every shader-mode effect. */
+typedef struct {
+    float time, width, height, opacity;
+    float primary_r, primary_g, primary_b, _pad0;
+    float accent_r, accent_g, accent_b, _pad1;
+} BgPushConst;
 
 /* Push constants for the blur passes. */
 typedef struct { float inv_w, inv_h; } BlurPushConst;
@@ -151,7 +154,9 @@ struct SolBgEffectRegistry {
     int           active_idx;   /* -1 = none */
     double        start_sec;    /* CLOCK_MONOTONIC base */
     float         opacity;      /* [0.0, 1.0] */
-    float         theme_r, theme_g, theme_b;  /* accent color from active theme */
+    float         background_r, background_g, background_b;
+    float         primary_r, primary_g, primary_b;
+    float         accent_r, accent_g, accent_b;
     int           blur_passes;  /* how many separable blur iterations (0 = off) */
     BlurGPU       blur[CA_FRAMES_IN_FLIGHT];
     Ca_DynArray   aux_blur;     /* AuxWindowBlurGPU, one entry per auxiliary window */
@@ -799,9 +804,15 @@ SolBgEffectRegistry *sol_bg_effect_registry_create(Ca_Instance *instance)
     reg->instance   = instance;
     reg->active_idx = -1;
     reg->opacity    = 1.0f;
-    reg->theme_r    = 1.0f;
-    reg->theme_g    = 1.0f;
-    reg->theme_b    = 1.0f;
+    reg->background_r = 0.024f;
+    reg->background_g = 0.031f;
+    reg->background_b = 0.059f;
+    reg->primary_r  = 0.376f;
+    reg->primary_g  = 0.647f;
+    reg->primary_b  = 0.980f;
+    reg->accent_r   = 0.655f;
+    reg->accent_g   = 0.545f;
+    reg->accent_b   = 0.980f;
     reg->blur_passes = 4;
     reg->start_sec  = get_monotonic_sec();
     return reg;
@@ -1035,17 +1046,33 @@ float sol_bg_effect_opacity(const SolBgEffectRegistry *reg)
 }
 
 /*
- * Set the theme accent color forwarded to shader-mode effects as r/g/b push constants.
+ * Clamp one normalized color channel.
  *
- * reg      The registry.
- * r,g,b    Linear RGB channels, each clamped to [0.0, 1.0].
+ * value  Candidate channel value.
+ * Returns  The channel clamped to [0,1].
  */
-void sol_bg_effect_set_theme_color(SolBgEffectRegistry *reg, float r, float g, float b)
+static float clamp_color_channel(float value)
+{
+    return value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+}
+
+/* Set the semantic colors forwarded to shader-mode effects. */
+void sol_bg_effect_set_theme_colors(SolBgEffectRegistry *reg,
+                                    float background_r, float background_g,
+                                    float background_b,
+                                    float primary_r, float primary_g, float primary_b,
+                                    float accent_r, float accent_g, float accent_b)
 {
     if (!reg) return;
-    reg->theme_r = r < 0.0f ? 0.0f : (r > 1.0f ? 1.0f : r);
-    reg->theme_g = g < 0.0f ? 0.0f : (g > 1.0f ? 1.0f : g);
-    reg->theme_b = b < 0.0f ? 0.0f : (b > 1.0f ? 1.0f : b);
+    reg->background_r = clamp_color_channel(background_r);
+    reg->background_g = clamp_color_channel(background_g);
+    reg->background_b = clamp_color_channel(background_b);
+    reg->primary_r = clamp_color_channel(primary_r);
+    reg->primary_g = clamp_color_channel(primary_g);
+    reg->primary_b = clamp_color_channel(primary_b);
+    reg->accent_r = clamp_color_channel(accent_r);
+    reg->accent_g = clamp_color_channel(accent_g);
+    reg->accent_b = clamp_color_channel(accent_b);
 }
 
 /* Return the configured maximum number of localized blur iterations. */
@@ -1190,7 +1217,12 @@ static bool bg_effect_render(VkCommandBuffer cmd,
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue  = { .color = { .float32 = { 0.0f, 0.0f, 0.0f, 1.0f } } },
+            .clearValue  = { .color = { .float32 = {
+                powf(reg->background_r, 2.2f),
+                powf(reg->background_g, 2.2f),
+                powf(reg->background_b, 2.2f),
+                1.0f,
+            } } },
         };
         VkRenderingInfo ri = {
             .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
@@ -1207,8 +1239,11 @@ static bool bg_effect_render(VkCommandBuffer cmd,
         vkCmdSetViewport(cmd, 0, 1, &vk_vp);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        BgPushConst pc = { t, (float)width, (float)height, reg->opacity,
-                           reg->theme_r, reg->theme_g, reg->theme_b, 0.0f };
+        BgPushConst pc = {
+            t, (float)width, (float)height, reg->opacity,
+            reg->primary_r, reg->primary_g, reg->primary_b, 0.0f,
+            reg->accent_r, reg->accent_g, reg->accent_b, 0.0f,
+        };
         vkCmdPushConstants(cmd, e->gpu.pipeline_layout,
                            VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
         vkCmdDraw(cmd, 3, 1, 0, 0);

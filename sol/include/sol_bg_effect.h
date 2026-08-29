@@ -11,7 +11,8 @@
  *   SHADER mode  — supply fragment_glsl; the system builds the Vulkan
  *                  pipeline automatically using Vulkan 1.3 dynamic rendering.
  *                  The fragment shader receives push constants
- *                  {time, width, height, opacity} and a v_uv varying in [0,1]².
+ *                  {time, width, height, opacity, primary, accent} and a v_uv
+ *                  varying in [0,1]².
  *
  *   RAW mode     — fragment_glsl is NULL; supply init / render / destroy
  *                  callbacks for full Vulkan control.
@@ -21,6 +22,8 @@
  *   #version 450
  *   layout(push_constant) uniform PC {
  *       float time; float width; float height; float opacity;
+ *       vec3 primary; float _pad0;
+ *       vec3 accent;  float _pad1;
  *   } pc;
  *   layout(location = 0) in  vec2 v_uv;
  *   layout(location = 0) out vec4 out_color;
@@ -283,18 +286,23 @@ void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
                                     size_t count);
 
 /* ================================================================== */
-/* Theme accent color                                                  */
+/* Theme colors                                                        */
 /* ================================================================== */
 
 /*
- * Set the accent color pushed to shader-mode effects as r/g/b push constants.
- * Each channel is in [0.0, 1.0]. Effects use this to tint animation to match
- * the active theme. Default is (1.0, 1.0, 1.0) (white/neutral).
+ * Set the semantic theme colors pushed to shader-mode effects.
+ * Each channel is in [0.0, 1.0].
  *
- * reg  The registry.
- * r,g,b  Linear RGB accent color channels.
+ * reg                 The registry.
+ * background_r/g/b    Background RGB channels.
+ * primary_r/g/b       Primary RGB channels.
+ * accent_r/g/b        Accent RGB channels.
  */
-void sol_bg_effect_set_theme_color(SolBgEffectRegistry *reg, float r, float g, float b);
+void sol_bg_effect_set_theme_colors(SolBgEffectRegistry *reg,
+                                    float background_r, float background_g,
+                                    float background_b,
+                                    float primary_r, float primary_g, float primary_b,
+                                    float accent_r, float accent_g, float accent_b);
 
 /* ================================================================== */
 /* Change notification                                                 */

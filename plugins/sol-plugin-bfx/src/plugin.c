@@ -1,377 +1,197 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Sol contributors.
 
-/* sol-plugin-bfx — Built-in animated background shader effects. */
+/* LocalDocsMD-inspired animated backgrounds for Sol. */
 
 #include "sol_bg_effect.h"
 #include "sol_plugin.h"
 #include "sol_plugin_ctx.h"
 
-/* ------------------------------------------------------------------ */
-/* Shared vertex shader (fullscreen triangle)                          */
-/* Push constant layout for all effects:                               */
-/*   float time, width, height, opacity, r, g, b, _pad                */
-/* ------------------------------------------------------------------ */
+#define BFX_HEADER \
+    "#version 450\n" \
+    "layout(push_constant) uniform PC {\n" \
+    " float time,width,height,opacity; vec3 primary; float _pad0; vec3 accent; float _pad1;\n" \
+    "} pc;\n" \
+    "layout(location=0) in vec2 v_uv;\n" \
+    "layout(location=0) out vec4 out_color;\n" \
+    "float h11(float p){return fract(sin(p*127.1)*43758.5453);}\n" \
+    "float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}\n" \
+    "vec2 h22(vec2 p){return fract(sin(vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))))*43758.5453);}\n" \
+    "vec3 primary(){return pow(max(pc.primary,vec3(0.0)),vec3(2.2));}\n" \
+    "vec3 accent(){return pow(max(pc.accent,vec3(0.0)),vec3(2.2));}\n" \
+    "vec4 finish(vec3 c,float a){return vec4(max(c,vec3(0.0)),clamp(a*pc.opacity,0.0,1.0));}\n"
 
-/* ------------------------------------------------------------------ */
-/* Lava                                                                 */
-/* Low-frequency domain-warped FBM only — no aliasing on 1080p.        */
-/* ------------------------------------------------------------------ */
+#define BFX_NOISE \
+    "float noise(vec2 p){vec2 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);" \
+    "return mix(mix(h21(i),h21(i+vec2(1,0)),u.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),u.x),u.y);}\n" \
+    "float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<5;i++){v+=a*noise(p);p=p*2.03+vec2(1.7,2.9);a*=0.5;}return v;}\n"
 
-static const char k_lava_frag[] =
-    "#version 450\n"
-    "layout(push_constant) uniform PC {\n"
-    "    float time,width,height,opacity,r,g,b,_pad;\n"
-    "} pc;\n"
-    "layout(location=0) in  vec2 v_uv;\n"
-    "layout(location=0) out vec4 out_color;\n"
-
-    "float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}\n"
-    "float noise(vec2 p){\n"
-    "    vec2 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);\n"
-    "    return mix(mix(h21(i),h21(i+vec2(1,0)),u.x),\n"
-    "               mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),u.x),u.y);\n"
-    "}\n"
-    /* 4-octave FBM — stops before the octave that would alias at 1080p */
-    "float fbm(vec2 p){\n"
-    "    float v=0.0,a=0.5;\n"
-    "    mat2 m=mat2(0.8,-0.6,0.6,0.8);\n"
-    "    for(int i=0;i<4;i++){v+=a*noise(p);p=m*p*2.0+vec2(3.1,1.7);a*=0.5;}\n"
-    "    return v;\n"
-    "}\n"
+static const char k_particles_frag[] = BFX_HEADER
+    "vec2 point(vec2 cell){vec2 r=h22(cell);return cell+r+0.18*sin(vec2(1.1,1.4)*pc.time*0.18+r*6.283);}\n"
+    "float segment(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;float t=clamp(dot(pa,ba)/dot(ba,ba),0.0,1.0);return length(pa-ba*t);}\n"
     "void main(){\n"
-    "    float t  = pc.time*0.12;\n"
-    "    vec2  uv = v_uv*vec2(pc.width/pc.height,1.0)*1.4;\n"
-    "    vec2 q = vec2(fbm(uv+t*0.30), fbm(uv+vec2(5.2,1.3)+t*0.25));\n"
-    "    vec2 rr= vec2(fbm(uv+2.8*q+vec2(1.7,9.2)+t*0.14),\n"
-    "                  fbm(uv+2.8*q+vec2(8.3,2.8)-t*0.11));\n"
-    "    float f = fbm(uv+2.5*rr+t*0.07);\n"
-    "    vec3 accent = vec3(pc.r,pc.g,pc.b);\n"
-    "    float sat = length(accent-vec3(dot(accent,vec3(0.333))));\n"
-    "    vec3 hc = sat>0.08 ? accent : vec3(1.0,0.42,0.04);\n"
-    "    float fi = smoothstep(0.0,1.0,clamp(f*1.6-0.08,0.0,1.0));\n"
-    "    vec3 col = mix(hc*0.06, mix(hc*0.38, mix(hc*0.90,\n"
-    "               mix(hc,vec3(1.0,0.95,0.85),0.60), smoothstep(0.66,1.0,fi)),\n"
-    "               smoothstep(0.33,0.66,fi)), smoothstep(0.0,0.33,fi));\n"
-    /* Reinhard + gamma 2.2 */
-    "    col = col/(col+vec3(0.30));\n"
-    "    col = pow(max(col,vec3(0.0)),vec3(1.0/2.2));\n"
-    "    out_color = vec4(clamp(col,0.0,1.0),pc.opacity);\n"
+    " vec2 scale=vec2(pc.width,pc.height)/140.0;vec2 p=v_uv*scale;vec2 base=floor(p);\n"
+    " float dots=0.0,links=0.0;\n"
+    " for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 c=base+vec2(x,y);vec2 a=point(c);\n"
+    "  dots=max(dots,1.0-smoothstep(0.025,0.075,length(p-a)));\n"
+    "  vec2 b=point(c+vec2(1,0));float d=segment(p,a,b);float fade=1.0-smoothstep(0.65,1.35,length(a-b));links=max(links,(1.0-smoothstep(0.006,0.018,d))*fade);\n"
+    "  b=point(c+vec2(0,1));d=segment(p,a,b);fade=1.0-smoothstep(0.65,1.35,length(a-b));links=max(links,(1.0-smoothstep(0.006,0.018,d))*fade);\n"
+    " }\n"
+    " vec3 col=primary()*(dots*1.15+links*0.40)+accent()*dots*0.30;out_color=finish(col,dots*0.90+links*0.34);\n"
     "}\n";
 
-/* ------------------------------------------------------------------ */
-/* Nebula — deep-space gas cloud, clearly distinct from Lava.          */
-/* Uses radial falloff + dust lanes + stars. Very dark background.     */
-/* ------------------------------------------------------------------ */
-
-static const char k_nebula_frag[] =
-    "#version 450\n"
-    "layout(push_constant) uniform PC {\n"
-    "    float time,width,height,opacity,r,g,b,_pad;\n"
-    "} pc;\n"
-    "layout(location=0) in  vec2 v_uv;\n"
-    "layout(location=0) out vec4 out_color;\n"
-
-    "vec2 hash2(vec2 p){\n"
-    "    p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3)));\n"
-    "    return fract(sin(p)*43758.5);\n"
-    "}\n"
-    "float noise(vec2 p){\n"
-    "    vec2 i=floor(p),f=fract(p),u=f*f*(3.0-2.0*f);\n"
-    "    vec2 a=hash2(i),b=hash2(i+vec2(1,0)),\n"
-    "         c=hash2(i+vec2(0,1)),d=hash2(i+vec2(1,1));\n"
-    "    return mix(mix(a.x,b.x,u.x),mix(c.x,d.x,u.x),u.y);\n"
-    "}\n"
-    /* 3-octave FBM — fast and alias-free at any resolution */
-    "float fbm(vec2 p){\n"
-    "    float v=0.0,a=0.5;\n"
-    "    mat2 m=mat2(1.6,-1.2,1.2,1.6);\n"
-    "    for(int i=0;i<3;i++){v+=a*noise(p);p=m*p;a*=0.5;}\n"
-    "    return v;\n"
-    "}\n"
+static const char k_waves_frag[] = BFX_HEADER
     "void main(){\n"
-    "    float t  = pc.time*0.05;\n"
-    "    float ar = pc.width/pc.height;\n"
-    "    vec2  uv = (v_uv-0.5)*vec2(ar,1.0);\n"
-
-    "    vec3 accent = vec3(pc.r,pc.g,pc.b);\n"
-    "    float lum = dot(accent,vec3(0.299,0.587,0.114));\n"
-    "    float sat = length(accent-vec3(lum));\n"
-    /* Primary nebula hue from accent, fallback cool purple */
-    "    vec3 h1 = sat>0.07 ? accent : vec3(0.45,0.05,0.80);\n"
-    /* Complementary hue: rotate by shifting channels */
-    "    vec3 h2 = clamp(vec3(h1.b*0.7,h1.r*0.5,h1.g+0.25),0.0,1.0);\n"
-    /* Blue-white for bright emission cores */
-    "    vec3 h3 = mix(h1,vec3(0.15,0.55,1.0),0.45);\n"
-
-    "    vec2 q = vec2(fbm(uv*1.6+vec2(0.0,t*0.35)),\n"
-    "                  fbm(uv*1.6+vec2(4.8,t*0.30)));\n"
-    "    vec2 rr= vec2(fbm(uv*1.3+3.5*q+vec2(1.7,9.2)+t*0.18),\n"
-    "                  fbm(uv*1.3+3.5*q+vec2(8.3,2.8)-t*0.16));\n"
-    "    float f = fbm(uv*1.0+3.0*rr+t*0.09);\n"
-
-    /* Nebula blob: strong radial falloff keeps void dark */
-    "    float dist = length(uv*vec2(0.75,1.0));\n"
-    "    float veil = exp(-dist*dist*2.8)*1.4;\n"
-    "    float dens = clamp((f-0.30)*2.6,0.0,1.0)*veil;\n"
-
-    "    vec3 nebcol = mix(h1*0.12, h2*0.55, smoothstep(0.2,0.65,f));\n"
-    "    nebcol      = mix(nebcol,  h3*1.0,  smoothstep(0.60,0.90,f));\n"
-    "    nebcol     += h1*0.30*smoothstep(0.82,1.0,f);\n"
-
-    /* Very dark void — almost black */
-    "    vec3 bg  = vec3(0.002,0.003,0.010)+h1*0.018;\n"
-    "    vec3 col = mix(bg, nebcol, dens);\n"
-
-    /* Dust lane: darker streak, tightened threshold */
-    "    float lane = fbm(uv*3.5+vec2(t*0.25,0.0));\n"
-    "    col = mix(col, bg*0.25, smoothstep(0.52,0.46,lane)*dens*0.5);\n"
-
-    /* Stars: cell size = ~36 logical px so density is resolution-independent */
-    "    float sc0 = min(pc.width,pc.height)/36.0;\n"
-    "    for(int li=0;li<3;li++){\n"
-    "        float sc = sc0*(1.0+float(li)*1.5);\n"
-    "        vec2  sg = floor(uv*sc+float(li)*vec2(31.3,17.7));\n"
-    "        vec2  hh = hash2(sg);\n"
-    "        float br = step(0.930+float(li)*0.022,hh.x);\n"
-    "        float tw = 0.6+0.4*sin(t*25.0*(3.5+hh.y*5.0)+hh.y*6.28);\n"
-    /* Radius in UV: 1.2 logical pixels */
-    "        float sz = 1.2/pc.width;\n"
-    "        vec2  fc = fract(uv*sc+float(li)*vec2(31.3,17.7))-0.5;\n"
-    "        float sd = length(fc)/sc;\n"
-    "        float st = br*tw*exp(-sd*sd/(sz*sz)*9.0);\n"
-    "        vec3 sc2 = mix(vec3(0.75,0.87,1.0),vec3(1.0,0.92,0.65),hh.y);\n"
-    "        col += sc2*st*(0.85-dens*0.65);\n"
-    "    }\n"
-
-    /* Core glow */
-    "    col += h1*exp(-dist*dist*9.0)*0.40;\n"
-
-    "    col = col/(col+vec3(0.18));\n"
-    "    col = pow(max(col,vec3(0.0)),vec3(1.0/2.2));\n"
-    "    out_color = vec4(clamp(col,0.0,1.0),pc.opacity);\n"
+    " vec2 uv=v_uv;float t=pc.time;vec3 col=vec3(0.0);float alpha=0.0;\n"
+    " for(int i=0;i<4;i++){float fi=float(i);float center=0.48+fi*0.12;float amp=0.035-fi*0.003;\n"
+    "  float wave=center+sin(uv.x*(7.0+fi*3.1)+t*(0.18+fi*0.035))*amp+sin(uv.x*(13.0+fi*2.0)-t*0.11)*amp*0.42;\n"
+    "  float fill=smoothstep(wave-0.035,wave+0.01,uv.y);float edge=exp(-abs(uv.y-wave)*75.0);\n"
+    "  vec3 hue=(i==1||i==3)?accent():primary();float strength=(0.14-fi*0.018)*fill+0.20*edge;col+=hue*strength;alpha=max(alpha,fill*(0.28-fi*0.025)+edge*0.22);\n"
+    " }\n"
+    " out_color=finish(col,alpha);\n"
     "}\n";
 
-/* ------------------------------------------------------------------ */
-/* Wave — dark deep ocean, subtle Gerstner swell.                      */
-/* Minimal specular, no caustics, reads well at any resolution.        */
-/* ------------------------------------------------------------------ */
-
-static const char k_wave_frag[] =
-    "#version 450\n"
-    "layout(push_constant) uniform PC {\n"
-    "    float time,width,height,opacity,r,g,b,_pad;\n"
-    "} pc;\n"
-    "layout(location=0) in  vec2 v_uv;\n"
-    "layout(location=0) out vec4 out_color;\n"
-
-    "vec3 gerstner(vec2 p, vec2 dir, float wl, float steep, float t){\n"
-    "    float k=6.28318/wl, c=sqrt(9.8/k);\n"
-    "    float f=k*(dot(dir,p)-c*t), a=steep/k;\n"
-    "    return vec3(-dir*k*a*sin(f), a*cos(f));\n"
-    "}\n"
-    "vec4 ocean(vec2 p, float t){\n"
-    "    vec3 n=vec3(0.0);\n"
-    "    n+=gerstner(p,normalize(vec2( 1.0, 0.4)),1.80,0.22,t);\n"
-    "    n+=gerstner(p,normalize(vec2(-0.6, 1.0)),1.20,0.18,t*0.91);\n"
-    "    n+=gerstner(p,normalize(vec2( 0.3,-1.0)),0.80,0.14,t*1.07);\n"
-    "    n+=gerstner(p,normalize(vec2( 1.0, 1.0)),0.55,0.10,t*1.23);\n"
-    "    n+=gerstner(p,normalize(vec2(-1.0, 0.3)),0.38,0.07,t*0.85);\n"
-    "    return vec4(normalize(vec3(-n.x,-n.y,1.0)),n.z);\n"
-    "}\n"
+static const char k_matrix_frag[] = BFX_HEADER
     "void main(){\n"
-    "    float t  = pc.time*0.45;\n"
-    "    float ar = pc.width/pc.height;\n"
-    "    vec2  uv = (v_uv-0.5)*vec2(ar,1.0)*3.2;\n"
-
-    "    vec3 accent = vec3(pc.r,pc.g,pc.b);\n"
-    "    float lum = dot(accent,vec3(0.299,0.587,0.114));\n"
-    "    float sat = length(accent-vec3(lum));\n"
-    /* Very dark ocean floor, mid-tone swell, subtle crest highlight */
-    "    vec3 deep  = sat>0.07 ? accent*0.08 : vec3(0.003,0.018,0.060);\n"
-    "    vec3 mid   = sat>0.07 ? accent*0.22 : vec3(0.008,0.060,0.160);\n"
-    "    vec3 crest = sat>0.07 ? mix(accent,vec3(0.6,0.8,1.0),0.5)*0.55\n"
-    "                          : vec3(0.12,0.30,0.55);\n"
-
-    "    vec4 surf = ocean(uv,t);\n"
-    "    vec3 N    = surf.xyz;\n"
-    "    float wh  = surf.w;\n"
-
-    "    vec3 L = normalize(vec3(0.3,-0.7,1.0));\n"
-    "    vec3 V = vec3(0.0,0.0,1.0);\n"
-    "    vec3 H = normalize(L+V);\n"
-
-    /* Diffuse: wide range but stays dark */
-    "    float diff = max(0.0,dot(N,L))*0.55+0.45;\n"
-    /* Single tight specular highlight, intentionally dim */
-    "    float spec = pow(max(0.0,dot(N,H)),80.0)*0.35;\n"
-
-    "    float h01 = wh*0.5+0.5;\n"
-    "    vec3 water = mix(deep, mid,   smoothstep(0.0,0.55,h01));\n"
-    "    water      = mix(water,crest, smoothstep(0.60,0.90,h01));\n"
-
-    "    vec3 col = water*diff + crest*spec;\n"
-
-    /* Subtle edge vignette to anchor the scene */
-    "    float vig = 1.0-smoothstep(0.4,1.2,length(v_uv-0.5)*2.2);\n"
-    "    col *= 0.45+0.55*vig;\n"
-
-    "    col = col/(col+vec3(0.18));\n"
-    "    col = pow(max(col,vec3(0.0)),vec3(1.0/2.2));\n"
-    "    out_color = vec4(clamp(col,0.0,1.0),pc.opacity);\n"
+    " vec2 cells=vec2(pc.width,pc.height)/16.0;vec2 g=v_uv*cells;vec2 id=floor(g),f=fract(g);\n"
+    " float rows=cells.y;float seed=h11(id.x+17.0);float speed=2.2+seed*2.4;float head=mod(pc.time*speed+seed*rows*1.7,rows+28.0)-10.0;\n"
+    " float behind=head-id.y;behind=behind<0.0?behind+rows+28.0:behind;float trail=(1.0-smoothstep(0.0,22.0,behind))*step(0.0,behind);\n"
+    " vec2 pix=floor(f*vec2(5.0,7.0));float glyph=step(0.53,h21(id*19.7+pix))*step(0.10,f.x)*step(f.x,0.90)*step(0.08,f.y)*step(f.y,0.92);\n"
+    " float headGlow=exp(-behind*behind*1.8);vec3 col=mix(primary()*0.82,vec3(0.82,1.0,0.88),headGlow)*glyph*(trail+headGlow);\n"
+    " out_color=finish(col,glyph*clamp(trail*0.84+headGlow,0.0,0.96));\n"
     "}\n";
 
-/* ------------------------------------------------------------------ */
-/* Aurora — horizontal light ribbons drifting across dark sky.         */
-/* No noise aliasing: uses only smooth sin/cos curves.                 */
-/* ------------------------------------------------------------------ */
-
-static const char k_aurora_frag[] =
-    "#version 450\n"
-    "layout(push_constant) uniform PC {\n"
-    "    float time,width,height,opacity,r,g,b,_pad;\n"
-    "} pc;\n"
-    "layout(location=0) in  vec2 v_uv;\n"
-    "layout(location=0) out vec4 out_color;\n"
-
+static const char k_aurora_frag[] = BFX_HEADER BFX_NOISE
     "void main(){\n"
-    "    float t  = pc.time*0.18;\n"
-    "    float ar = pc.width/pc.height;\n"
-    "    vec2  uv = (v_uv-0.5)*vec2(ar,1.0);\n"
-
-    "    vec3 accent = vec3(pc.r,pc.g,pc.b);\n"
-    "    float lum = dot(accent,vec3(0.299,0.587,0.114));\n"
-    "    float sat = length(accent-vec3(lum));\n"
-    /* Three aurora band hues, derived from accent */
-    "    vec3 h1 = sat>0.07 ? accent            : vec3(0.05,0.90,0.55);\n"
-    "    vec3 h2 = sat>0.07 ? vec3(h1.b,h1.g*0.5,h1.r*0.8) : vec3(0.05,0.55,0.90);\n"
-    "    vec3 h3 = sat>0.07 ? vec3(h1.g,h1.b,h1.r)          : vec3(0.60,0.20,0.95);\n"
-
-    /* Very dark sky — almost black at the bottom, slightly less at top */
-    "    float sky = smoothstep(-0.5,0.5,uv.y)*0.03;\n"
-    "    vec3 col  = vec3(0.003,0.004,0.012)+vec3(sky*0.5,sky*0.6,sky);\n"
-
-    /* Five ribbon bands, each a thin sine-modulated horizontal strip */
-    "    for(int i=0;i<5;i++){\n"
-    "        float fi = float(i);\n"
-    /* Band centre Y: spread in upper half of screen */
-    "        float cy  = 0.05+fi*0.08;\n"
-    /* Slow horizontal drift and gentle vertical oscillation */
-    "        float wave = sin(uv.x*1.2+fi*1.7+t*(0.6+fi*0.15))*0.06\n"
-    "                   + sin(uv.x*2.5+fi*3.1+t*(0.4+fi*0.20))*0.03;\n"
-    "        float dy   = uv.y-cy-wave;\n"
-    /* Band thickness: ~0.06 UV units = not resolution dependent */
-    "        float thick = 0.028+fi*0.006;\n"
-    "        float band = exp(-dy*dy/(thick*thick));\n"
-    /* Brightness modulates along X — gives curtain-like columns */
-    "        float bri = 0.55+0.45*sin(uv.x*(3.0+fi*1.1)+t*(1.2+fi*0.3));\n"
-    "        bri *= 0.40+0.60*sin(uv.x*(0.8+fi*0.5)-t*(0.7+fi*0.2)+fi*2.1);\n"
-    "        bri  = max(bri,0.0);\n"
-    /* Mix band hue; alternate h1/h2/h3 across bands */
-    "        vec3 hue = (i==0||i==3) ? h1 : (i==1||i==4) ? h2 : h3;\n"
-    /* Upper bands slightly bluish-white at the top edge */
-    "        float top = smoothstep(0.0,-0.015,dy)*0.4;\n"
-    "        hue = mix(hue, mix(hue,vec3(0.7,0.9,1.0),0.6), top);\n"
-    "        col += hue*band*bri*(0.18-fi*0.015);\n"
-    "    }\n"
-
-    /* Faint star layer: purely hash-based point lookup, no loop over noise */
-    "    float sc = min(pc.width,pc.height)/32.0;\n"
-    "    vec2  sg  = floor(uv*sc);\n"
-    "    vec2  hh  = fract(sin(vec2(dot(sg,vec2(127.1,311.7)),\n"
-    "                              dot(sg,vec2(269.5,183.3))))*43758.5);\n"
-    "    float br  = step(0.94,hh.x);\n"
-    "    float tw  = 0.5+0.5*sin(t*20.0*(3.0+hh.y*4.0)+hh.y*6.28);\n"
-    "    float sz  = 1.0/pc.width;\n"
-    "    vec2  fc  = fract(uv*sc)-0.5;\n"
-    "    float sd  = length(fc)/sc;\n"
-    "    col += vec3(0.75,0.88,1.0)*br*tw*exp(-sd*sd/(sz*sz)*8.0)*0.7;\n"
-
-    "    col = col/(col+vec3(0.15));\n"
-    "    col = pow(max(col,vec3(0.0)),vec3(1.0/2.2));\n"
-    "    out_color = vec4(clamp(col,0.0,1.0),pc.opacity);\n"
+    " vec2 uv=v_uv;float t=pc.time*0.07;float n=fbm(uv*vec2(2.5,1.2)+vec2(t*0.4,t*0.2));\n"
+    " float n2=fbm(uv*vec2(1.8,2.0)+vec2(-t*0.3,t*0.5)+3.7);\n"
+    " float b1=smoothstep(0.0,1.0,1.0-abs(uv.y-0.38-n*0.28)*4.0);\n"
+    " float b2=smoothstep(0.0,1.0,1.0-abs(uv.y-0.62-n2*0.22)*5.0);\n"
+    " vec3 col=primary()*b1*0.72+accent()*b2*0.68;out_color=finish(col,clamp(b1*0.68+b2*0.62,0.0,0.84));\n"
     "}\n";
 
-/* ------------------------------------------------------------------ */
-/* Plugin callbacks                                                     */
-/* ------------------------------------------------------------------ */
+static const char k_starfield_frag[] = BFX_HEADER
+    "float segment(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;float t=clamp(dot(pa,ba)/max(dot(ba,ba),0.00001),0.0,1.0);return length(pa-ba*t);}\n"
+    "void main(){\n"
+    " float ar=pc.width/pc.height;vec2 p=(v_uv-0.5)*vec2(ar,1.0);float glow=0.0;\n"
+    " for(int i=0;i<52;i++){float fi=float(i);vec2 seed=h22(vec2(fi,fi*3.17))*2.0-1.0;seed.x*=ar;\n"
+    "  float z=0.08+0.92*fract(h11(fi*7.3)-pc.time*(0.028+h11(fi)*0.018));\n"
+    "  vec2 pos=seed*(0.14/z);vec2 prev=seed*(0.14/min(z+0.025,1.0));float d=segment(p,pos,prev);\n"
+    "  float fade=(1.0-z)*(1.0-z);glow=max(glow,(1.0-smoothstep(0.0008,0.0045,d))*fade);\n"
+    " }\n"
+    " vec3 col=mix(primary(),vec3(1.0),0.72)*glow;out_color=finish(col,glow*0.90);\n"
+    "}\n";
 
+static const char k_metaballs_frag[] = BFX_HEADER
+    "void main(){\n"
+    " float ar=pc.width/pc.height;vec2 uv=(v_uv*2.0-1.0)*vec2(ar,1.0);float t=pc.time*0.18,field=0.0;\n"
+    " for(int i=0;i<7;i++){float fi=float(i),spd=0.5+fi*0.13;vec2 c=vec2(0.7*sin(t*spd+fi*2.39996),0.7*cos(t*spd*0.7+fi*1.61803));float r=0.18+0.06*sin(t*1.1+fi);field+=r*r/max(dot(uv-c,uv-c),0.0001);}\n"
+    " float body=smoothstep(0.9,1.0,field);float edge=smoothstep(0.7,0.9,field)*(1.0-body);vec3 col=mix(primary(),accent(),clamp(field*0.3,0.0,1.0));\n"
+    " out_color=finish(col*(body+edge*0.72),body*0.78+edge*0.42);\n"
+    "}\n";
+
+static const char k_flowfield_frag[] = BFX_HEADER
+    "float segment(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;float t=clamp(dot(pa,ba)/max(dot(ba,ba),0.00001),0.0,1.0);return length(pa-ba*t);}\n"
+    "vec2 flow(vec2 p,float t){float a=sin(p.x*5.1+t*0.37)*cos(p.y*4.3-t*0.29)+sin((p.x+p.y)*3.2+t*0.21);return vec2(cos(a*3.1),sin(a*3.1));}\n"
+    "void main(){\n"
+    " float ar=pc.width/pc.height;vec2 p=v_uv*vec2(ar,1.0);float glow=0.0;\n"
+    " for(int i=0;i<56;i++){float fi=float(i);vec2 origin=h22(vec2(fi*2.7,fi*9.1))*vec2(ar,1.0);float phase=fract(h11(fi*4.7)+pc.time*(0.018+h11(fi)*0.014));\n"
+    "  vec2 dir=flow(origin,pc.time);vec2 a=fract(origin+dir*phase*0.24);a.x*=ar;vec2 b=a-dir*0.018;float d=segment(p,a,b);glow=max(glow,(1.0-smoothstep(0.001,0.004,d))*(0.35+0.65*sin(phase*3.14159)));\n"
+    " }\n"
+    " vec3 col=mix(primary(),accent(),0.42)*glow;out_color=finish(col,glow*0.58);\n"
+    "}\n";
+
+static const char k_fireflies_frag[] = BFX_HEADER
+    "void main(){\n"
+    " float ar=pc.width/pc.height;vec2 p=v_uv*vec2(ar,1.0);vec3 col=vec3(0.0);float alpha=0.0;\n"
+    " for(int i=0;i<44;i++){float fi=float(i);vec2 base=h22(vec2(fi*3.1,fi*7.9))*vec2(ar,1.0);vec2 drift=vec2(sin(pc.time*(0.09+h11(fi)*0.08)+fi),cos(pc.time*(0.07+h11(fi+5.0)*0.07)+fi*1.7))*0.045;vec2 q=base+drift;\n"
+    "  float d=length(p-q);float pulse=0.55+0.45*sin(pc.time*(0.8+h11(fi)*0.9)+fi*2.3);float g=exp(-d*d*24000.0)*pulse;float halo=exp(-d*d*1800.0)*pulse;vec3 hue=mix(primary(),accent(),h11(fi*11.0));col+=hue*(g+halo*0.32);alpha=max(alpha,g*0.94+halo*0.34);\n"
+    " }\n"
+    " out_color=finish(col,clamp(alpha,0.0,0.92));\n"
+    "}\n";
+
+static const char k_circuit_frag[] = BFX_HEADER
+    "void main(){\n"
+    " vec2 grid=vec2(pc.width,pc.height)/44.0;vec2 g=v_uv*grid,id=floor(g),f=fract(g);float choice=h21(id);\n"
+    " float horizontal=1.0-smoothstep(0.025,0.055,abs(f.y-0.5));float vertical=1.0-smoothstep(0.025,0.055,abs(f.x-0.5));\n"
+    " float trace=choice>0.5?horizontal:vertical;float node=1.0-smoothstep(0.055,0.105,length(f-0.5));\n"
+    " float phase=fract(pc.time*0.035+h21(id*3.7));float along=choice>0.5?f.x:f.y;float pulse=exp(-pow(abs(along-phase),2.0)*420.0)*trace;\n"
+    " vec3 col=primary()*(trace*0.18+node*0.42)+accent()*pulse*1.15;out_color=finish(col,trace*0.23+node*0.48+pulse*0.78);\n"
+    "}\n";
+
+static const char k_voronoi_frag[] = BFX_HEADER
+    "vec2 seed(int i,float t){float fi=float(i),spd=0.03+fi*0.007;return vec2(0.5+0.42*sin(t*spd+fi*2.3999),0.5+0.42*cos(t*spd*0.71+fi*1.6180));}\n"
+    "void main(){\n"
+    " vec2 uv=v_uv;float d1=9.0,d2=9.0;int ci=0;for(int i=0;i<14;i++){float d=distance(uv,seed(i,pc.time));if(d<d1){d2=d1;d1=d;ci=i;}else if(d<d2)d2=d;}\n"
+    " float edge=1.0-smoothstep(0.0,0.012,d2-d1);float interior=smoothstep(0.0,0.18,d2-d1)*(1.0-smoothstep(0.18,0.55,d1));float hue=fract(float(ci)*0.618);\n"
+    " vec3 cell=mix(primary(),accent(),hue);vec3 col=mix(cell*interior*0.55,accent(),edge);out_color=finish(col,edge*0.76+interior*0.25);\n"
+    "}\n";
+
+typedef struct BuiltinEffect {
+    const char *id;
+    const char *name;
+    const char *shader;
+    uint32_t fps;
+} BuiltinEffect;
+
+static const BuiltinEffect k_effects[] = {
+    { "com.sol.bfx.particles", "Particles", k_particles_frag, 30u },
+    { "com.sol.bfx.waves", "Waves", k_waves_frag, 30u },
+    { "com.sol.bfx.matrix", "Matrix Rain", k_matrix_frag, 24u },
+    { "com.sol.bfx.aurora", "Aurora", k_aurora_frag, 30u },
+    { "com.sol.bfx.starfield", "Starfield", k_starfield_frag, 30u },
+    { "com.sol.bfx.metaballs", "Metaballs", k_metaballs_frag, 30u },
+    { "com.sol.bfx.flowfield", "Flow Field", k_flowfield_frag, 24u },
+    { "com.sol.bfx.fireflies", "Fireflies", k_fireflies_frag, 30u },
+    { "com.sol.bfx.circuit", "Circuit", k_circuit_frag, 24u },
+    { "com.sol.bfx.voronoi", "Voronoi", k_voronoi_frag, 24u },
+};
+
+/* Register every built-in animated background. */
 static bool bfx_on_load(SolPluginCtx *ctx)
 {
-    SolBgEffectRegistry *reg = (SolBgEffectRegistry *)
+    SolBgEffectRegistry *registry = (SolBgEffectRegistry *)
         sol_plugin_get_service(ctx, "sol.bg_effect_registry", 0);
-    if (!reg) {
+    if (!registry) {
         sol_plugin_log(ctx, "sol.bg_effect_registry not available; skipping effect registration");
         return true;
     }
-
-    static const SolBgEffectDesc effects[] = {
-        {
-            .id            = "com.sol.bfx.lava",
-            .display_name  = "Lava",
-            .fragment_glsl = k_lava_frag,
-            .animation_fps = 30u,
-        },
-        {
-            .id            = "com.sol.bfx.nebula",
-            .display_name  = "Nebula",
-            .fragment_glsl = k_nebula_frag,
-            .animation_fps = 30u,
-        },
-        {
-            .id            = "com.sol.bfx.wave",
-            .display_name  = "Wave",
-            .fragment_glsl = k_wave_frag,
-            .animation_fps = 30u,
-        },
-        {
-            .id            = "com.sol.bfx.aurora",
-            .display_name  = "Aurora",
-            .fragment_glsl = k_aurora_frag,
-            .animation_fps = 30u,
-        },
-    };
-
-    for (size_t i = 0; i < sizeof(effects) / sizeof(effects[0]); ++i) {
-        if (!sol_bg_effect_register(reg, &effects[i]))
-            sol_plugin_log(ctx, "failed to register effect '%s'", effects[i].id);
+    for (size_t i = 0u; i < sizeof(k_effects) / sizeof(k_effects[0]); ++i) {
+        const BuiltinEffect *effect = &k_effects[i];
+        if (!sol_bg_effect_register(registry, &(SolBgEffectDesc){
+                .id = effect->id,
+                .display_name = effect->name,
+                .fragment_glsl = effect->shader,
+                .animation_fps = effect->fps,
+            })) {
+            sol_plugin_log(ctx, "failed to register effect '%s'", effect->id);
+        }
     }
-
     return true;
 }
 
+/* Unregister every effect owned by this plugin. */
 static void bfx_on_unload(SolPluginCtx *ctx)
 {
-    SolBgEffectRegistry *reg = (SolBgEffectRegistry *)
+    SolBgEffectRegistry *registry = (SolBgEffectRegistry *)
         sol_plugin_get_service(ctx, "sol.bg_effect_registry", 0);
-    if (!reg) return;
-
-    static const char *effect_ids[] = {
-        "com.sol.bfx.lava",
-        "com.sol.bfx.nebula",
-        "com.sol.bfx.wave",
-        "com.sol.bfx.aurora",
-    };
-    for (size_t i = 0; i < sizeof(effect_ids) / sizeof(effect_ids[0]); ++i)
-        sol_bg_effect_unregister(reg, effect_ids[i]);
+    if (!registry) return;
+    for (size_t i = 0u; i < sizeof(k_effects) / sizeof(k_effects[0]); ++i)
+        sol_bg_effect_unregister(registry, k_effects[i].id);
 }
 
-/* ------------------------------------------------------------------ */
-/* Plugin entry point                                                   */
-/* ------------------------------------------------------------------ */
-
+/* Publish the animated-background plugin descriptor. */
 bool sol_plugin_query(uint32_t requested_api_version, SolPluginAPI *out_api)
 {
-    if (requested_api_version != SOL_PLUGIN_API_VERSION) return false;
-
+    if (requested_api_version != SOL_PLUGIN_API_VERSION || !out_api) return false;
     *out_api = (SolPluginAPI){
-        .api_version  = SOL_PLUGIN_API_VERSION,
-        .id           = "com.sol.bfx",
+        .api_version = SOL_PLUGIN_API_VERSION,
+        .id = "com.sol.bfx",
         .display_name = "Sol Background Effects",
-        .version      = "1.0.0",
-        .after        = { NULL },
-        .on_load      = bfx_on_load,
-        .on_unload    = bfx_on_unload,
+        .version = "2.0.0",
+        .after = { NULL },
+        .on_load = bfx_on_load,
+        .on_unload = bfx_on_unload,
     };
     return true;
 }

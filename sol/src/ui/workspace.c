@@ -1308,51 +1308,23 @@ static void sol_ui_on_bg_effect_change(void *user_data)
     if (active) ca_instance_wake();
 }
 
-/*
- * Extract the caret accent color from the theme CSS and push it to the
- * background effect registry so shader-mode effects can tint themselves.
- * Scans for ".buffer-caret { background: #rrggbb" or "rgb(r,g,b)".
- *
- * css  Full theme CSS string.
- * reg  Background effect registry; receives the extracted color.
- */
-static void sol_ui_push_theme_color(const char *css, SolBgEffectRegistry *reg)
+/* Push the active theme's semantic colors to the effect registry. */
+static void sol_ui_push_theme_colors(const SolThemeRegistry *themes,
+                                     SolBgEffectRegistry *reg)
 {
-    if (!css || !reg) return;
-    const char *p = css;
-    /* Iterate over every .buffer-caret rule in the CSS; last one wins. */
-    float best_r = 1.0f, best_g = 1.0f, best_b = 1.0f;
-    bool found = false;
-    while ((p = strstr(p, ".buffer-caret")) != NULL) {
-        const char *bg = strstr(p, "background:");
-        const char *end_brace = strchr(p, '}');
-        if (!bg || (end_brace && bg > end_brace)) { ++p; continue; }
-        bg += 11; /* skip "background:" */
-        while (*bg == ' ' || *bg == '\t') ++bg;
-        if (*bg == '#' && strlen(bg) >= 7) {
-            unsigned int rv = 0, gv = 0, bv = 0;
-            if (sscanf(bg + 1, "%2x%2x%2x", &rv, &gv, &bv) == 3) {
-                best_r = rv / 255.0f;
-                best_g = gv / 255.0f;
-                best_b = bv / 255.0f;
-                found = true;
-            }
-        } else if (strncmp(bg, "rgb", 3) == 0) {
-            const char *paren = strchr(bg, '(');
-            if (paren) {
-                int rv = 0, gv = 0, bv = 0;
-                if (sscanf(paren + 1, "%d,%d,%d", &rv, &gv, &bv) == 3) {
-                    best_r = rv / 255.0f;
-                    best_g = gv / 255.0f;
-                    best_b = bv / 255.0f;
-                    found = true;
-                }
-            }
-        }
-        ++p;
-    }
-    if (found)
-        sol_bg_effect_set_theme_color(reg, best_r, best_g, best_b);
+    SolThemeColors colors;
+    if (!themes || !reg || !sol_theme_active_colors(themes, &colors)) return;
+    sol_bg_effect_set_theme_colors(
+        reg,
+        (float)((colors.background_rgb >> 16u) & 0xffu) / 255.0f,
+        (float)((colors.background_rgb >> 8u) & 0xffu) / 255.0f,
+        (float)(colors.background_rgb & 0xffu) / 255.0f,
+        (float)((colors.primary_rgb >> 16u) & 0xffu) / 255.0f,
+        (float)((colors.primary_rgb >> 8u) & 0xffu) / 255.0f,
+        (float)(colors.primary_rgb & 0xffu) / 255.0f,
+        (float)((colors.accent_rgb >> 16u) & 0xffu) / 255.0f,
+        (float)((colors.accent_rgb >> 8u) & 0xffu) / 255.0f,
+        (float)(colors.accent_rgb & 0xffu) / 255.0f);
 }
 
 /* Build and apply a stylesheet from theme CSS + appearance overlay.
@@ -1387,7 +1359,7 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
     ca_instance_set_stylesheet(ui->instance, stylesheet);
     ca_instance_refresh_styles(ui->instance);
     if (previous) ca_css_destroy(previous);
-    if (ui->bg_effects) sol_ui_push_theme_color(css, ui->bg_effects);
+    if (ui->bg_effects) sol_ui_push_theme_colors(ui->themes, ui->bg_effects);
     snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s", active_id);
     return true;
 }
@@ -1592,6 +1564,12 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
             .id = SOL_UI_DEFAULT_THEME_ID,
             .name = SOL_UI_DEFAULT_THEME_NAME,
             .css = SOL_UI_DEFAULT_THEME_CSS,
+            .colors = {
+                .background_rgb = 0x06080f,
+                .primary_rgb = 0x60a5fa,
+                .accent_rgb = 0xa78bfa,
+            },
+            .has_colors = true,
         })) {
         sol_theme_registry_destroy(ui->themes);
         sol_file_tree_destroy(ui->file_tree);
@@ -2683,6 +2661,7 @@ void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg)
     if (!ui) return;
     ui->bg_effects = reg;
     if (reg) {
+        sol_ui_push_theme_colors(ui->themes, reg);
         sol_bg_effect_set_change_callback(reg, sol_ui_on_bg_effect_change, ui);
         ca_instance_set_bg_render(ui->instance, sol_bg_effect_on_render_aux, reg);
         ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
