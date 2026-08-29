@@ -2118,6 +2118,22 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel, .welcome-pane {"
     "  border-radius: " SOL_UI_PANEL_RADIUS_PX_CSS "; overflow: hidden;"
     "}"
+    /* Focused-panel indicator: a thin inset accent border on whichever
+       top-level panel currently owns keyboard focus (tree/plugin
+       sidebar, the active buffer pane, or the terminal) — see
+       SolUIFocusedPanel. A real border (not a shadow/glow): this
+       engine's shadow SDF returns full opacity for every fragment
+       inside the shape (it only fades OUTSIDE the box), so a
+       zero-offset "glow" shadow paints as a solid rectangle, and the
+       soft fringe that should extend past the panel edge gets clipped
+       by the workspace's own overflow:hidden gutter anyway. The uniform
+       border render mode is a true inset ring — always contained within
+       the node's own bounds and immune to both problems. */
+    ".tree-panel-focused, .plugin-side-panel-focused,"
+    ".buffer-pane-focused, .term-panel-focused {"
+    "  border-width: " SOL_UI_FOCUS_BORDER_WIDTH_PX_CSS ";"
+    "  border-color: " SOL_UI_FOCUS_BORDER_COLOR_CSS ";"
+    "}"
     ".buffer-tabs-row {"
     "  padding: 2px 4px; gap: 3px; overflow: hidden;"
     "  border-top-left-radius: " SOL_UI_PANEL_RADIUS_PX_CSS ";"

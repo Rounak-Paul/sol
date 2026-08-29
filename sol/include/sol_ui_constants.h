@@ -38,4 +38,14 @@
 #define SOL_UI_SURFACE_RAISED_ALPHA_CSS "0.90"
 #define SOL_UI_SURFACE_WELL_ALPHA_CSS   "0.86"
 
+/* Focused-panel indicator: a thin inset bright-orange border applied to
+   whichever top-level panel currently owns keyboard focus. See
+   SolUIFocusedPanel / sol_ui_system_set_focused_panel. Uses a real
+   border, not a shadow-based glow: this engine's shadow SDF resolves to
+   full opacity for every fragment inside the shape (the Gaussian
+   falloff only applies outside it), so a centered "glow" shadow paints
+   as a solid rectangle rather than a soft ring. */
+#define SOL_UI_FOCUS_BORDER_WIDTH_PX_CSS "1.5px"
+#define SOL_UI_FOCUS_BORDER_COLOR_CSS "rgba(255, 140, 0, 0.95)"
+
 #endif

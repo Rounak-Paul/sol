@@ -59,6 +59,15 @@ typedef struct SolUIMenuItemDesc {
  * success — the UI ignores the value today but will surface it later. */
 typedef bool (*SolUIFileOpenFn)(const char *path, void *user_data);
 typedef void (*SolUIFocusRegionFn)(bool in_explorer, void *user_data);
+
+/* Which top-level workspace region currently owns keyboard focus. Drives
+ * the "-focused" style modifier on that region's panel root so the user
+ * can always tell where their keystrokes are going. */
+typedef enum SolUIFocusedPanel {
+    SOL_UI_FOCUSED_PANEL_BUFFER = 0,
+    SOL_UI_FOCUSED_PANEL_TREE,
+    SOL_UI_FOCUSED_PANEL_TERMINAL,
+} SolUIFocusedPanel;
 /* Fired just before terminal keyboard focus is granted so the app can
    snapshot whatever held focus beforehand and restore it on defocus. */
 typedef void (*SolUITerminalFocusGainFn)(void *user_data);
@@ -239,6 +248,15 @@ void sol_ui_system_wake(SolUISystem *ui);
  * handlers (e.g. clicking a line of text) so they don't have to reach
  * into the buffer system directly. */
 bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id);
+
+/* Record which top-level panel currently owns keyboard focus and bump the
+ * reactive signal so the workspace rebuilds with the corresponding
+ * "-focused" style applied. Idempotent — a no-op re-set does not force an
+ * extra rebuild. */
+void sol_ui_system_set_focused_panel(SolUISystem *ui, SolUIFocusedPanel panel);
+
+/* Return which top-level panel currently owns keyboard focus. */
+SolUIFocusedPanel sol_ui_system_focused_panel(const SolUISystem *ui);
 
 /* Last-known logical window size in CSS pixels. Either out param may be
  * NULL. Both are 0 until the first resize callback fires. */

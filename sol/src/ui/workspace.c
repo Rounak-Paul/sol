@@ -505,6 +505,7 @@ static void sol_ui_on_pane_click(Ca_Button *button, void *user_data)
     if (cb->ui->focus_region_callback) {
         cb->ui->focus_region_callback(false, cb->ui->focus_region_user_data);
     }
+    sol_ui_system_set_focused_panel(cb->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
     /* sol_buffer_set_active_leaf self-notifies via sig_buffer_rev when
        the leaf actually changes — no explicit invalidation needed. */
     (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
@@ -524,6 +525,7 @@ static void sol_ui_on_tab_click(Ca_Button *button, void *user_data)
     if (cb->ui->focus_region_callback) {
         cb->ui->focus_region_callback(false, cb->ui->focus_region_user_data);
     }
+    sol_ui_system_set_focused_panel(cb->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
     /* Both sol_buffer_set_active_leaf and sol_buffer_set_leaf_buffer
        self-notify on success. */
     (void)sol_buffer_set_active_leaf(cb->ui->buffers, cb->leaf_id);
@@ -710,9 +712,21 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
     }
     SolUISystem *ui = ctx->ui;
 
+    /* The active split leaf gets "buffer-pane-active" regardless of
+       keyboard focus (multi-pane split state); "-focused" is layered on
+       top only when the buffer panel category also owns keyboard focus,
+       distinguishing "the pane you'd type into if you clicked back in"
+       from "the pane your keystrokes go to right now". */
+    const bool panel_focused = is_active &&
+        sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_BUFFER;
+    const char *pane_style =
+        panel_focused  ? "buffer-pane buffer-pane-active buffer-pane-focused" :
+        is_active      ? "buffer-pane buffer-pane-active" :
+                         "buffer-pane";
+
     Ca_Div *pane_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style     = is_active ? "buffer-pane buffer-pane-active" : "buffer-pane",
+        .style     = pane_style,
     });
     if (pane_host && ui->glass_panel_count < SOL_UI_MAX_GLASS_PANELS) {
         ui->glass_panel_hosts[ui->glass_panel_count++] = pane_host;
@@ -1007,8 +1021,12 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
     sol_ui_attach_workspace_context_menu(ui);
 
     /* Second pane: terminal panel — retain handle for layout-height queries. */
-    ui->term_panel_host =
-        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "term-panel" });
+    const bool term_focused =
+        sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TERMINAL;
+    ui->term_panel_host = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style     = term_focused ? "term-panel term-panel-focused" : "term-panel",
+    });
     sol_ui_render_terminal_panel(ui);
     ca_div_end();   /* term-panel */
 
@@ -1042,13 +1060,15 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
          - sig_file_tree_rev   : the file tree contents
          - sig_file_tree_visible : explorer panel visibility
          - sig_window_rev      : window resize
-         - sig_terminal_rev    : terminal cell changes, focus, or visibility */
+         - sig_terminal_rev    : terminal cell changes, focus, or visibility
+         - sig_focused_panel   : which top-level panel owns keyboard focus */
     (void)ca_signal_get_u32(ui->sig_buffer_rev);
     (void)ca_signal_get_u32(ui->sig_file_tree_rev);
     (void)ca_signal_get_bool(ui->sig_file_tree_visible);
     (void)ca_signal_get_u32(ui->sig_window_rev);
     (void)ca_signal_get_u32(ui->sig_terminal_rev);
     (void)ca_signal_get_u32(ui->sig_side_panel_rev);
+    (void)ca_signal_get_u32(ui->sig_focused_panel);
     ui->glass_panel_count = 0u;
 
     /* Top region: optional left tree panel + buffer area (+ optional terminal).
@@ -1083,9 +1103,15 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         });
 
         /* Left pane — active plugin panel or file tree. */
+        const bool tree_focused =
+            sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TREE;
+        const char *tree_style = active_panel ?
+            (tree_focused ? "plugin-side-panel plugin-side-panel-focused"
+                          : "plugin-side-panel") :
+            (tree_focused ? "tree-panel tree-panel-focused" : "tree-panel");
         ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
-            .style     = active_panel ? "plugin-side-panel" : "tree-panel",
+            .style     = tree_style,
         });
         if (active_panel) {
             active_panel->render(active_panel->user_data);
@@ -1590,13 +1616,14 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
     ui->sig_side_panel_rev    = ca_signal_u32  (instance, 0u);
     ui->sig_bg_effect_rev     = ca_signal_u32  (instance, 0u);
     ui->sig_theme_rev         = ca_signal_u32  (instance, 0u);
+    ui->sig_focused_panel     = ca_signal_u32  (instance, (uint32_t)SOL_UI_FOCUSED_PANEL_BUFFER);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_file_tree_visible ||
         !ui->sig_leader_active || !ui->sig_leader_prefix_rev ||
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
         !ui->sig_tree_scroll || !ui->sig_terminal_rev ||
         !ui->sig_side_panel_rev || !ui->sig_bg_effect_rev ||
-        !ui->sig_theme_rev) {
+        !ui->sig_theme_rev || !ui->sig_focused_panel) {
         free(ui);
         return NULL;
     }
@@ -2991,8 +3018,39 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
     if (ui->focus_region_callback) {
         ui->focus_region_callback(false, ui->focus_region_user_data);
     }
+    sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_BUFFER);
     /* sol_buffer_set_active_leaf self-notifies. */
     return sol_buffer_set_active_leaf(ui->buffers, leaf_id);
+}
+
+/*
+ * Record which top-level panel currently owns keyboard focus and bump the
+ * reactive signal so the workspace rebuilds with the corresponding
+ * "-focused" style applied.  No-op when the panel is already current.
+ *
+ * ui     The UI system to update.
+ * panel  The panel that just gained keyboard focus.
+ */
+void sol_ui_system_set_focused_panel(SolUISystem *ui, SolUIFocusedPanel panel)
+{
+    if (!ui) return;
+    if (ui->focused_panel == panel) return;
+    ui->focused_panel = panel;
+    if (ui->sig_focused_panel) {
+        ca_signal_set_u32(ui->sig_focused_panel, (uint32_t)panel);
+    }
+}
+
+/*
+ * Return which top-level panel currently owns keyboard focus.
+ *
+ * ui  The UI system to query.
+ * Returns the last panel set via sol_ui_system_set_focused_panel, or
+ *         SOL_UI_FOCUSED_PANEL_BUFFER before any focus transfer occurs.
+ */
+SolUIFocusedPanel sol_ui_system_focused_panel(const SolUISystem *ui)
+{
+    return ui ? ui->focused_panel : SOL_UI_FOCUSED_PANEL_BUFFER;
 }
 
 /*
@@ -3035,6 +3093,9 @@ void sol_ui_system_terminal_set_focused(SolUISystem *ui, bool focused)
     if (!ui || !ui->terminal_mgr) return;
     if (focused && ui->terminal_focus_gain_callback) {
         ui->terminal_focus_gain_callback(ui->terminal_focus_gain_user_data);
+    }
+    if (focused) {
+        sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_TERMINAL);
     }
     sol_terminal_manager_set_focused(ui->terminal_mgr, focused);
 }

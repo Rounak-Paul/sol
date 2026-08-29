@@ -975,6 +975,7 @@ static bool sol_toggle_explorer_focus(SolAppContext *app)
        focused before entering explorer. */
     app->focus_before_explorer = sol_buffer_active_leaf(app->buffers);
     app->explorer_focused = true;
+    sol_ui_system_set_focused_panel(app->ui, SOL_UI_FOCUSED_PANEL_TREE);
     return true;
 }
 

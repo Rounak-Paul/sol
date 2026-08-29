@@ -178,6 +178,7 @@ static void on_row_click(Ca_Button *button, void *user_data)
     if (ctx->ui->focus_region_callback) {
         ctx->ui->focus_region_callback(true, ctx->ui->focus_region_user_data);
     }
+    sol_ui_system_set_focused_panel(ctx->ui, SOL_UI_FOCUSED_PANEL_TREE);
 
     const SolFileEntry *entry =
         sol_file_tree_visible(ctx->ui->file_tree, ctx->row_index);

@@ -258,6 +258,10 @@ struct SolUISystem {
      *   sig_window_rev        — u32 revision counter bumped on window
      *                           resize (so layout-sensitive builders
      *                           re-flow).
+     *   sig_focused_panel     — u32 holding a SolUIFocusedPanel value.
+     *                           Bumped by sol_ui_system_set_focused_panel;
+     *                           drives the "-focused" style modifier on
+     *                           the tree/buffer/terminal panel root.
      */
     Ca_Signal        *sig_buffer_rev;
     Ca_Signal        *sig_file_tree_rev;
@@ -266,6 +270,10 @@ struct SolUISystem {
     Ca_Signal        *sig_leader_prefix_rev;
     Ca_Signal        *sig_flow_registry_rev;
     Ca_Signal        *sig_window_rev;
+    Ca_Signal        *sig_focused_panel;
+    /* Plain mirror of sig_focused_panel for non-reactive readers (matches
+       the file_tree_visible / sig_file_tree_visible pattern). */
+    SolUIFocusedPanel focused_panel;
     /* Float mirror of the tree-scroll-area's scroll_y, polled each frame
        by sol_ui_system_pre_tick. Builders subscribe via ca_signal_get_float
        to rebuild sticky ancestor headers without rebuilding the buffer area. */

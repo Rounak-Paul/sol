@@ -443,6 +443,307 @@ explicitly to make every window/panel "feel the same."
   rendering-engine code paths), but still needs the user's own screenshot
   to close out.
 
+## Round 8 — focused-panel visual indicator
+
+User: "the currently focused panel needs some visual indicator." Before
+this round there was zero cross-panel visual distinction for keyboard
+focus: `.buffer-pane-active` differed from `.buffer-pane` only in an
+alpha the "Minimal glass theme overrides" block had already zeroed to
+`transparent`, and the tree panel / terminal had no focus concept at all
+in the CSS layer (tree-panel click routing existed via
+`focus_region_callback`'s `in_explorer` bool and `main.c`'s
+`app->explorer_focused`, but neither drove anything visible).
+
+- **Confirmed all three keyboard-focus transfer points already existed**
+  as separate, uncoordinated mechanisms: `app->explorer_focused`
+  (main.c, tree-panel), `sol_terminal_manager_focused()` (terminal), and
+  `active_leaf_id` + `buffer_input_active` (buffer leaves). No unified
+  concept lived in `SolUISystem` for "which top-level panel has focus" —
+  that's the actual gap; the individual signals were all fine.
+- **Fix:** added `SolUIFocusedPanel` enum (`sol_ui_system.h`:
+  BUFFER/TREE/TERMINAL) plus `sig_focused_panel` (u32 signal, mirrors the
+  existing `sig_file_tree_visible` value-signal pattern — not a revision
+  counter) and a plain `focused_panel` field on `SolUISystem`, with
+  `sol_ui_system_set_focused_panel()` (change-guarded, matches
+  `sol_ui_system_set_file_tree_visible`'s idiom) /
+  `sol_ui_system_focused_panel()` getter pair.
+- **Wired at every real focus-transfer site**, not a new poll: pane
+  click, tab click, `sol_ui_system_focus_leaf` → BUFFER; file-tree
+  `on_row_click` (file_tree_panel.c) and the keyboard-driven
+  `explorer.focus.toggle` path (`sol_toggle_explorer_focus` in main.c,
+  entering-explorer branch only — the leaving-explorer branch already
+  calls `sol_ui_system_focus_leaf` internally, covered for free) → TREE;
+  `sol_ui_system_terminal_set_focused(ui, true)` → TERMINAL. Did NOT add
+  a blind reset in main.c's "all non-explorer actions dismiss explorer
+  focus" block — that fires on every command dispatch regardless of
+  whether a buffer is actually touched, so it would have produced false
+  BUFFER flashes for unrelated commands (e.g. opening Settings).
+- **Style layering, not a replacement:** the active split leaf still
+  gets `.buffer-pane-active` regardless of keyboard focus (that's
+  "which pane you'd type into if you clicked back into the buffer
+  area", a split-tree concept); `.buffer-pane-focused` is layered on
+  top only when `is_active && focused_panel == BUFFER`, which is the
+  narrower "your keystrokes go here right now" claim. Tree/plugin-panel
+  and terminal roots get a plain `-focused` modifier class with no
+  competing "-active" concept to layer against.
+- **Visual: soft accent-blue glow via `shadow-*`, not a border.**
+  Checked `style.h` first — zero border usage anywhere in this design
+  system; every existing affordance is background-alpha or shadow-based
+  (`.cf-panel`'s drop shadow is the only prior `shadow-*` user). A hard
+  border would have broken the established "glass, no borders" language.
+  **Checked the engine before relying on `box-shadow` spread** (echoing
+  the `corner-radius` trap from Round 5): `causality/src/ui/css.c`'s
+  box-shadow shorthand parser explicitly discards spread
+  (`nums_seen < 3` only captures offset-x/offset-y/blur; a 4th number
+  falls into the catch-all `parser_next` and is dropped) — so a crisp
+  ring is not achievable, only offset+blur+color. Used the longhand
+  `shadow-offset-x/y: 0px`, `shadow-blur`, `shadow-color` properties
+  directly (matching `.cf-panel`'s existing style) for a centered glow.
+- **Checked shadow clip risk before picking the blur radius.**
+  `paint_node_content` (causality's paint.c) clips the shadow draw
+  command to the *incoming* parent clip, not the node's own
+  `overflow:hidden` bound — but `.workspace-main-content` (the direct
+  ancestor of every panel root) is itself `overflow:hidden` with only
+  `SOL_UI_PANEL_MARGIN_PX` (8px) padding. A wider glow would be clipped
+  asymmetrically at the window/split edges. Capped blur at 7px (under
+  the 8px gutter) and raised alpha to 0.65 to keep the glow legible at
+  that radius. New constants: `SOL_UI_FOCUS_GLOW_COLOR_CSS`,
+  `SOL_UI_FOCUS_GLOW_BLUR_PX_CSS` (`sol_ui_constants.h`).
+- **CSS rule added to style.h's "Floating rounded glass composition"
+  section** (the block that wins by cascade order across every active
+  theme — confirmed neither `sol-plugin-themes`' `build_theme_css` nor
+  `sol_settings_build_appearance_css` ever declare `shadow-*` on these
+  selectors, so this rule is theme-independent and always wins):
+  `.tree-panel-focused, .plugin-side-panel-focused,
+  .buffer-pane-focused, .term-panel-focused { shadow-offset-x: 0px;
+  shadow-offset-y: 0px; shadow-blur: 7px; shadow-color:
+  rgba(91,151,218,0.65); }`.
+- Build + full CTest suite (14/14) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs.
+- **User feedback after trying it: "becomes blue colored all with a
+  sharp rectangle, very weird."** Root-caused via the fragment shader
+  (`causality/src/renderer/pipeline.c`'s embedded GLSL, `shadowAlpha`):
+  `exp(-max(d,0)²/2σ²)` only decays for `d > 0` (outside the rounded-box
+  SDF); for every fragment *inside* the shape `d < 0` so `max(d,0) = 0`
+  and the exponential is `1.0` — full solid opacity everywhere inside
+  the box. A zero-offset "glow" shadow is therefore not a glow at all,
+  it's a solid fill; the intended soft OUTER fringe was also being
+  clipped by `.workspace-main-content`'s `overflow:hidden` 8px gutter
+  (per Round 8's own risk note), so only the solid inner rectangle
+  survived — exactly the reported artifact. This shadow mode is built
+  for drop shadows sitting behind an opaque panel (which paints over the
+  solid inner fill), not a standalone ring on a translucent glass panel.
+  **Round 8's shadow-based approach is invalid for this use case** —
+  not a tuning issue, a wrong primitive.
+- **Fix: switched to a real border.** Checked the border render path in
+  the same shader first (`bm = aa_outer - aa_inner`, an inset annular
+  band using shrunk-by-border-width inner SDF radii) — correctly
+  contained within the node's own bounds, so immune to both the
+  inside-fill bug and the parent-gutter clip risk. `border-width` /
+  `border-color` are real recognized CSS properties (confirmed against
+  `causality/src/ui/css.c`'s property table, unlike the `corner-radius`
+  trap from Round 5) already used elsewhere in this engine (title-bar
+  buttons, editor's border list). Replaced the `SOL_UI_FOCUS_GLOW_*`
+  constants with `SOL_UI_FOCUS_BORDER_WIDTH_PX_CSS` ("1.5px") /
+  `SOL_UI_FOCUS_BORDER_COLOR_CSS` ("rgba(106,163,227,0.85)") in
+  `sol_ui_constants.h`, and the `.tree-panel-focused,
+  .plugin-side-panel-focused, .buffer-pane-focused, .term-panel-focused`
+  rule in style.h now sets `border-width`/`border-color` instead of
+  `shadow-*`. Border alpha is independent of the panel's `opacity` CSS
+  property (paint.c only multiplies fill alpha by node opacity, not
+  border alpha) — stays legible regardless of the user's panel-opacity
+  slider setting.
+- Build + full CTest suite (14/14) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs.
+- User confirmed via screenshot: border still rendered as "the panel
+  becomes blue colored all with a sharp rectangle" — a SOLID fill, not a
+  ring, at 1.5px. Round 8's border switch was directionally right but had
+  its own engine-level bug.
+
+## Round 9 — two real engine bugs found via user screenshots + numeric diagnostics
+
+Both root-caused in the shared Causality rect pipeline (`vendors/causality`),
+not Sol-only — found via targeted `fprintf` diagnostics on live runs plus a
+standalone C reimplementation of the fragment shader's SDF math to check it
+numerically, since screencapture is still unavailable this session (see
+[[screencapture_unavailable]]) and this needed more than eyeballing GLSL text.
+
+- **Bug 1 — border/fill composite wasn't premultiplied.**
+  `causality/src/renderer/pipeline.c`'s FRAG_GLSL border path computed
+  `out_color = fill + border * (1 - fill.a)` where `fill = vec4(fill_lin,
+  fill_color.a * aa_inner)` — i.e. `fill.rgb` was left as STRAIGHT
+  (non-premultiplied) `fill_lin`, never actually scaled by its own alpha,
+  while the composite formula itself is the premultiplied-alpha "over"
+  pattern. Combined with the pipeline's `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`
+  blend state (which expects straight-alpha shader output and does its
+  own alpha scaling during blending), the un-premultiplied `fill_lin`
+  got scaled by the OUTPUT alpha a second time, inflating RGB well past
+  1.0 after blending — visible as a solid, oversaturated tint instead of
+  a thin ring. Confirmed via CPU-side (`Ca_DrawCmd`) and GPU-SSBO
+  (`Ca_RectPushConst`) diagnostics that the INPUT data (border_width=1.5,
+  corner_radius=8, correct color) was correct at every stage up to the
+  shader — this was purely a shader-math bug, not a data-plumbing one.
+  **Fix:** replaced the premultiplied-style formula with a proper
+  coverage-weighted straight-alpha mix — `aa_inner` (interior coverage)
+  and `bm` (ring coverage) are complementary and sum to `aa_outer`, so
+  `out_a = fill.a*aa_inner + border.a*bm` and `out_rgb =
+  (fill_lin*fill.a*aa_inner + border_lin*border.a*bm) / out_a` (guarded
+  for `out_a≈0`). This is a real, general engine bug — affects ANY
+  future border-width use on a translucent fill, not just this feature;
+  never previously exercised since this focus indicator was the first
+  and only caller of `border-width`/`border-color` in the whole
+  Sol + Causality tree (checked: zero other selectors use it).
+- **Bug 2 — border painted pre-children, so children painted over its
+  corners.** After fixing Bug 1, user's next screenshot showed a clean
+  thin border on straight edges but SHARP SQUARE corners on a panel with
+  `border-radius: 8px`. Verified via a standalone C port of the exact
+  GLSL SDF math (`roundedBoxSDF`/`smoothstep` reimplemented and sampled
+  along the corner arc) that `bm` (border ring coverage) does NOT
+  collapse to zero at the corner — the shader math itself is correct
+  there. Root cause was paint ORDER, not math:
+  `paint_tree_cached` (causality/src/ui/paint.c) calls
+  `paint_node_content` (background + border, pre-children) BEFORE
+  recursing into children, then a separate post-children phase for
+  scrollbars only. `.buffer-pane`'s children (`.buffer-tabs-row`,
+  `.buffer-body`) are laid out flush against the parent's content
+  box edge-to-edge by design (the whole point of the "floating glass"
+  composition) and carry their OWN corner rounding — so they paint
+  directly over the parent's border ring wherever their edges coincide,
+  which is exactly at the corners (their own rounding consumes the same
+  pixels the parent's border arc occupies), while the short straight-edge
+  slivers between child and parent edge survive uncovered. This is not
+  standard CSS box-model behavior (a border should sit outside content,
+  immune to children) — it's a genuine paint-order gap in the engine.
+  **Fix:** extracted all border painting (uniform + per-side) out of
+  `paint_node_content` into a new `paint_border()` function, called from
+  `paint_tree_cached`'s POST-children phase alongside the existing
+  `paint_scrollbars()` (which already solved the identical problem for
+  scrollbar thumbs — same pattern, same cache-batching). Uses `own_clip`
+  (the node's own bounds re-intersected with its own `corner_radius`,
+  already computed for scrollbars) rather than the plain inherited
+  `clip`, so the border's clip push-constant correctly advertises this
+  node's own radius rather than inheriting the ancestor chain's
+  (typically 0, per a `[clip-dbg]` diagnostic that showed `clip.radius=0`
+  even though `node.corner_radius=8` — ruled out as the corner-squaring
+  cause itself, since a same-size rectangular scissor can never clip a
+  strictly-smaller rounded shape's corners, but still more correct to
+  fix). The border draw command now has a fully transparent fill
+  (`draw_mode=NORMAL`, r/g/b/a left at 0 from `memset`) so only the ring
+  paints — the node's real background already painted in the
+  pre-children pass underneath it.
+- Also changed the indicator color from blue to bright orange per user
+  request (`SOL_UI_FOCUS_BORDER_COLOR_CSS` → `rgba(255, 140, 0, 0.95)`
+  in `sol_ui_constants.h`); width stays 1.5px.
+- Build + full CTest suite (14/14) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs. All diagnostic
+  `fprintf` instrumentation added during investigation (in `paint.c` and
+  `swapchain.c`) was removed before the final build — `swapchain.c` kept
+  its added `#include <stdio.h>` since the file already used
+  `fprintf`/`printf` extensively elsewhere and the include was genuinely
+  missing.
+- Orange color confirmed working immediately. Corner rounding was NOT
+  fixed — see Round 10.
+
+## Round 10 — rounded border corner: three more root-cause attempts, all
+disproven; shipped a square-corner border instead
+
+User kept reporting the border corner as "weird"/"broken", with useful
+zoomed screenshots (native-resolution crops, not just full-window shots)
+letting this be checked far more precisely than in Round 9.
+
+- **Hypothesis A — stroke too thin to render a visible curve.** Wrote a
+  standalone C reimplementation of the exact GLSL `roundedBoxSDF`/
+  `smoothstep` formula and rendered the corner as ASCII art at 1.5px vs
+  thicker widths — 1.5px showed a sharp 1-2px transition, 2.0-2.5px
+  showed a much more gradual multi-row taper. Bumped border width
+  8→2px. **User's next screenshot: still broken, AND now "too thick."**
+  This hypothesis was wrong, or at best incomplete — width alone wasn't
+  the cause, since the defect persisted regardless of width.
+- **Hypothesis B — scissor truncation shaving the outer edge.** Found
+  that `swapchain.c`'s clip→scissor conversion truncates (not rounds)
+  both the origin AND the far edge to physical pixels
+  (`(int32_t)(clip_x * scale_x)`), which can end up up to ~1 physical
+  px short of the true right/bottom edge at fractional DPI scale — a
+  plausible corner-specific miss for a thin ring hugging that edge.
+  Changed it to floor the origin / ceil the far edge (`floorf`/`ceilf`)
+  so the scissor never under-clips. This is a renderer-wide change
+  (every clipped draw command, not just borders) — flagged the wider
+  blast radius to the user explicitly before considering it validated.
+  Reverted border back to 1.5px per the "too thick" feedback in the
+  same round. **User's next screenshot (a much more precise, near-native-
+  resolution crop): still shows the defect**, now visible with total
+  clarity as a small diagonal CHAMFER/bevel where the vertical and
+  horizontal border segments meet — not a smooth arc, not a total gap,
+  a literal cut corner — while the panel's own filled background shows
+  a proper, generously-rounded curve right behind it. This ruled out
+  Hypothesis B too (or at least proved it wasn't sufficient).
+- **Hypothesis C — re-verified the SDF formula a third, most rigorous
+  time**, specifically to check whether the "smooth" ASCII renders from
+  Round 9/10A were actually smooth or whether ASCII-art coarseness was
+  hiding the same chamfer: traced the OUTER edge boundary explicitly
+  (scanned every pixel, printed coordinates where `|d_outer| < 0.5`) at
+  the same 8px radius / 1.5px width as the failing screenshot. The
+  traced boundary is a genuinely smooth, gradually-stepping arc
+  (`(0,54)→(1,55)→(1,56)→(2,57)→(2,58)→(3,58)→(4,59)...`), not a jump
+  from vertical straight to horizontal straight. **The formula is
+  provably correct in isolation, a third independent way** — yet the
+  live GPU output still shows a chamfer. Checked and ruled out: stale
+  standalone `/Users/duke/Code/causality` repo shadowing the submodule
+  (confirmed `vendors/causality` is a real directory, not a symlink, and
+  CMake's `add_subdirectory(vendors/causality)` is a relative path that
+  can only resolve inside Sol's own tree); the border accidentally
+  triggering `CA_DRAW_MODE_SHADOW` instead of `NORMAL` (explicitly zero
+  both via memset and an explicit assignment); the per-side border-rect
+  fallback also firing (confirmed no per-side `border-{side}-{width,
+  color}` CSS exists anywhere in Sol, so `border_top_w` etc. all stay
+  zero and that loop's `continue` guard always fires); corner_radius or
+  border_width silently differing between the pre-children fill's paint
+  call and the post-children border's paint call (both read the same
+  `node->desc` fields, same node, same frame — provably identical); the
+  background-blur mask (a separate, C-driven, normalized-0..1-radius
+  system) using a different effective radius than the CSS value (traced
+  its call site — same `SOL_UI_PANEL_RADIUS_PX`-derived value, same DPI
+  scale applied).
+- **Concluded: this is a GPU-execution-level discrepancy that doesn't
+  reproduce in a from-scratch CPU reimplementation of the same math** —
+  the same category of dead-end as [[backdrop_blur_removed]]'s menu-popup
+  blur investigation (proven-correct Vulkan state, zero pixels on
+  screen; needed a Metal GPU frame capture to go further, never deemed
+  worth it). Surfaced this explicitly to the user rather than continuing
+  to guess after three independent, all-clean verification passes.
+- **User chose: keep the border, drop the rounded corner** (of the three
+  options offered: keep investigating with GPU tooling, revert the
+  border entirely, or ship it square). Implemented in `paint_border()`
+  (causality/src/ui/paint.c): the border draw command now always sets
+  `corner_radius`/`corner_tl/tr/br/bl = 0` regardless of the panel's own
+  rounding — a deliberate, explained divergence from `node->desc`, not a
+  reversion of Round 9's post-children ordering fix (which stays; it's
+  still what makes the border visible over children at all, corner
+  shape aside). Since a square corner would otherwise poke past the
+  panel's own rounded silhouette (the panel's arc is *inside* where a
+  naive square corner would reach), the border rect is inset by
+  `radius * (1 - 1/√2) ≈ 0.293 * radius` on all sides — the standard
+  "largest inset square that stays inside a radius-r rounded corner"
+  formula — clamped so the inset never exceeds half the node's smaller
+  dimension (degenerate/tiny nodes). At the panel's 8px radius this is
+  a ~2.3px inset, comfortably clearing the curve.
+- Left the scissor floor/ceil fix (Hypothesis B) in place even though it
+  didn't resolve the corner bug on its own — it's still a real,
+  independently-justified correctness fix (never under-clip a legitimate
+  edge pixel) with no observed downside, just not sufficient alone.
+- Build + full CTest suite (14/14) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs.
+- **If revisiting the rounded-border corner bug later:** the next real
+  lead is GPU-side inspection (Xcode Metal frame capture, or a
+  debug-only shader variant that writes `d_outer`/`d_inner`/`bm`
+  directly to `out_color` for one frame) — everything reachable from
+  reading C/GLSL source and reimplementing the math on the CPU has now
+  been checked clean three times over.
+
 ## Validation
 
 - `cmake --build build --parallel 6`: passed.
