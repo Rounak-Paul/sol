@@ -12,7 +12,7 @@
 
 #define SOL_THEME_ID_MAX 63u
 #define SOL_THEME_NAME_MAX 63u
-#define SOL_THEME_MAX 64u
+#define SOL_THEME_MAX 96u
 
 typedef struct SolThemeRegistry SolThemeRegistry;
 typedef void (*SolThemeChangeFn)(void *user_data);

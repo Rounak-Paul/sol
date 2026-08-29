@@ -14,12 +14,18 @@
 ## Curated themes
 
 `plugins/sol-plugin-themes` uses one data-driven palette model and one semantic
-CSS generator. The 27 palettes are adapted from LocalDocsMD:
+CSS generator. It carries all 66 palettes from LocalDocsMD's theme registry:
 
 - Midnight, Daylight, Catppuccin, Obsidian, OLED
 - Dracula, Nord, Gruvbox, Solarized Light/Dark, Tokyo Night, Monokai
 - GitHub Light/Dark, Forest, Rose, Sunset, Ocean, Aurora, Slate
 - Copper, Sakura, Terminal, Coffee, Arctic, High Contrast Light/Dark
+- Cyberpunk, Neon, Synthwave, Retro
+- Amber, Mint, Lavender, Peach, Sky, Lemon
+- Moonlight, Kanagawa, Everforest, Rosé Pine, Ayu Light/Dark
+- One Light/Dark, Material Light/Dark, Palenight, Panda, Horizon
+- Pitch Black, Paper, Newspaper, Ink, Dusk, Pastel, Teal
+- Woodland, Desert, Volcano, Deep Sea, Grape, Ash, Crimson, Ice, Coral
 
 Each palette defines background, layered surfaces, primary/accent, text levels,
 and status colors. The generator consistently themes system chrome, workspace,
@@ -32,7 +38,8 @@ contrast.
 
 - Plugin themes extend `com.sol.theme.glass` and are copied by the registry.
 - A plugin can track up to the registry's `SOL_THEME_MAX` owned theme IDs, so
-  ownership cleanup cannot become a smaller silent limit.
+  ownership cleanup cannot become a smaller silent limit. The bounded capacity
+  is 96, leaving room beyond the 66 plugin themes and Glass fallback.
 - Theme changes parse the complete CSS before replacing the live stylesheet,
   refresh every Causality window, then push semantic colors to the active
   background.
@@ -44,6 +51,6 @@ contrast.
 ## Validation boundary
 
 - `sol_theme_tests` covers copied CSS, derived CSS, semantic-color inheritance,
-  active selection, removal, and invalid descriptors.
+  active selection, removal, invalid descriptors, and the 96-entry boundary.
 - Runtime startup is required to prove every generated stylesheet registers;
   a successful C build alone cannot validate Causality CSS parsing.

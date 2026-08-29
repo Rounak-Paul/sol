@@ -4,6 +4,7 @@
 #include "test_harness.h"
 #include "sol_theme.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static void count_changes(void *user_data)
@@ -83,11 +84,40 @@ static void test_validation(SolTestCtx *T)
     sol_theme_registry_destroy(registry);
 }
 
+/* Verify the bounded registry accepts its documented capacity and rejects overflow. */
+static void test_registry_capacity(SolTestCtx *T)
+{
+    SolThemeRegistry *registry = sol_theme_registry_create();
+    SOL_CHECK_NOT_NULL(T, registry);
+    if (!registry) return;
+
+    for (size_t i = 0u; i < SOL_THEME_MAX; ++i) {
+        char id[SOL_THEME_ID_MAX + 1u];
+        char name[SOL_THEME_NAME_MAX + 1u];
+        snprintf(id, sizeof(id), "capacity.%zu", i);
+        snprintf(name, sizeof(name), "Capacity Theme %zu", i);
+        SOL_CHECK(T, sol_theme_register(registry, &(SolThemeDesc){
+            .id = id,
+            .name = name,
+            .css = ".root{}",
+        }));
+    }
+
+    SOL_CHECK_EQ_SZ(T, sol_theme_count(registry), SOL_THEME_MAX);
+    SOL_CHECK(T, !sol_theme_register(registry, &(SolThemeDesc){
+        .id = "capacity.overflow",
+        .name = "Overflow",
+        .css = ".root{}",
+    }));
+    sol_theme_registry_destroy(registry);
+}
+
 int main(void)
 {
     SolTestSuite suite;
     sol_suite_init(&suite, "sol_theme_tests");
     SOL_RUN(suite, test_registry_lifecycle);
     SOL_RUN(suite, test_validation);
+    SOL_RUN(suite, test_registry_capacity);
     return sol_suite_report(&suite);
 }
