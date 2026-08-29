@@ -41,8 +41,6 @@ struct SolInputRouter {
     bool             terminal_mouse_down;  /* button held while reporting to a mouse-aware TUI */
 };
 
-#define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX 1.0f
-
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -162,7 +160,7 @@ static bool point_in_active_buffer_leaf(SolInputRouter *r,
 
     const SolBufferNodeId leaf = sol_buffer_leaf_at_point(
         r->buffers, root.x, root.y, root.w, root.h,
-        SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX,
+        SOL_UI_PANEL_GAP_PX * sol_ui_system_scale(r->ui),
         (float)x, (float)y);
     if (leaf == 0u) return false;
     if (out_leaf) *out_leaf = leaf;
@@ -255,8 +253,8 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
     if (leaf_id != 0u &&
         sol_ui_system_buffer_area_rect(r->ui, &root_rect.x, &root_rect.y, &root_rect.w, &root_rect.h) &&
         sol_buffer_leaf_geometry(r->buffers, leaf_id, &root_rect,
-                                 SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {
-        leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+                                 SOL_UI_PANEL_GAP_PX * ui_scale, &leaf_rect)) {
+        leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT * ui_scale;
         if (leaf_rect.h < 0.0f) leaf_rect.h = 0.0f;
         const int viewport_full =
             sol_text_view_visible_lines_for_height(leaf_rect.h, ui_scale);
@@ -734,11 +732,11 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     const float scale = sol_ui_system_scale(r->ui);
     if (target_leaf != 0u &&
         sol_buffer_leaf_geometry(r->buffers, target_leaf, &root_rect,
-                                 SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX, &leaf_rect)) {
+                                 SOL_UI_PANEL_GAP_PX * scale, &leaf_rect)) {
         /* The pane-local tab strip owns wheel gestures in its top band. */
-        if ((float)r->mouse_y < leaf_rect.y + SOL_UI_BUFFER_TAB_STRIP_HEIGHT)
+        if ((float)r->mouse_y < leaf_rect.y + SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale)
             return;
-        leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+        leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale;
         if (leaf_rect.h < 0.0f) leaf_rect.h = 0.0f;
         const int rendered =
             sol_text_view_visible_lines_for_height(leaf_rect.h, scale);

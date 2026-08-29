@@ -78,7 +78,6 @@ typedef struct SolWorkspaceVisitorContext {
 } SolWorkspaceVisitorContext;
 
 /* Buffer split-tree and pane-local tab geometry. */
-#define SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX    1.0f
 #define SOL_UI_BUFFER_TAB_WIDTH_PX        140.0f
 #define SOL_UI_BUFFER_TAB_LABEL_CHARS      18u
 
@@ -110,8 +109,8 @@ static const char *sol_ui_tab_display_name(const char *name, bool *truncated)
 
 /*
  * Compute the buffer area's bounding rectangle in logical pixels, accounting
- * for the title bar, status bar, and optional file-tree
- * split panel.
+ * for floating workspace margins, title/status chrome, optional side panel,
+ * and optional terminal split.
  *
  * ui     The UI system providing window dimensions and tree visibility.
  * out_x  Receives the left edge of the buffer area.
@@ -133,12 +132,16 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     const float ui_scale = sol_ui_system_scale(ui);
     const float status_h = SOL_UI_STATUS_BAR_HEIGHT * (ui_scale > 0.0f ? ui_scale : 1.0f);
     const float title_h = ca_window_get_title_bar_height(ui->primary_window);
+    const float scale = ui_scale > 0.0f ? ui_scale : 1.0f;
+    const float panel_margin = SOL_UI_PANEL_MARGIN_PX * scale;
+    const float panel_gap = SOL_UI_PANEL_GAP_PX * scale;
 
-    float root_x = 0.0f;
-    float root_y = title_h;
-    float root_w = (float)ui->window_w;
-    float root_h = (float)ui->window_h - title_h - status_h;
+    float root_x = panel_margin;
+    float root_y = title_h + panel_margin;
+    float root_w = (float)ui->window_w - panel_margin * 2.0f;
+    float root_h = (float)ui->window_h - title_h - status_h - panel_margin * 2.0f;
 
+    if (root_w < 0.0f) root_w = 0.0f;
     if (root_h < 0.0f) root_h = 0.0f;
 
     const bool has_left_panel = ui->active_side_panel != SOL_UI_SIDE_PANEL_TOKEN_INVALID ||
@@ -146,16 +149,33 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
          sol_ui_system_file_tree_visible(ui) &&
          sol_file_tree_root(ui->file_tree) != NULL);
     if (has_left_panel) {
-        float avail_w = root_w - SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX;
+        float avail_w = root_w - panel_gap;
         if (avail_w < 0.0f) avail_w = 0.0f;
         const float ratio = ui->tree_panel_ratio < 0.0f ? 0.0f
                              : (ui->tree_panel_ratio > 1.0f ? 1.0f
                              : ui->tree_panel_ratio);
         float tree_w = avail_w * ratio;
         if (tree_w < 0.0f) tree_w = 0.0f;
-        root_x += tree_w + SOL_UI_BUFFER_SPLIT_BAR_SIZE_PX;
+        root_x += tree_w + panel_gap;
         root_w = avail_w - tree_w;
         if (root_w < 0.0f) root_w = 0.0f;
+    }
+
+    const bool term_visible = ui->terminal_mgr &&
+        sol_terminal_manager_visible(ui->terminal_mgr) &&
+        sol_terminal_manager_count(ui->terminal_mgr) > 0u;
+    if (term_visible) {
+        float term_ratio = sol_terminal_manager_ratio(ui->terminal_mgr);
+        if (term_ratio < 0.20f) term_ratio = 0.20f;
+        if (term_ratio > 0.80f) term_ratio = 0.80f;
+        const float buffer_ratio = 1.0f - term_ratio;
+        if (sol_terminal_manager_position(ui->terminal_mgr) == SOL_TERMINAL_POSITION_BOTTOM) {
+            float available = root_h - panel_gap;
+            root_h = available > 0.0f ? available * buffer_ratio : 0.0f;
+        } else {
+            float available = root_w - panel_gap;
+            root_w = available > 0.0f ? available * buffer_ratio : 0.0f;
+        }
     }
 
     if (out_x) *out_x = root_x;
@@ -165,7 +185,33 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     return true;
 }
 
-/* Synchronize normalized glass regions with the current workspace geometry. */
+/* Append one resolved div rectangle to the localized rounded blur region list. */
+static void sol_ui_append_panel_blur_region(
+    SolBgEffectBlurRegion regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS],
+    size_t *count,
+    const Ca_Div *panel,
+    float window_w,
+    float window_h,
+    float corner_radius,
+    uint32_t passes)
+{
+    if (!regions || !count || !panel || *count >= SOL_BG_EFFECT_MAX_BLUR_REGIONS ||
+        window_w <= 0.0f || window_h <= 0.0f)
+        return;
+    float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
+    ca_div_screen_rect(panel, &x, &y, &width, &height);
+    if (width <= 0.0f || height <= 0.0f) return;
+    regions[(*count)++] = (SolBgEffectBlurRegion){
+        .x = x / window_w,
+        .y = y / window_h,
+        .width = width / window_w,
+        .height = height / window_h,
+        .corner_radius = corner_radius / window_h,
+        .passes = passes,
+    };
+}
+
+/* Synchronize rounded glass blur with the resolved panel rectangles. */
 static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
 {
     if (!ui || !ui->bg_effects || ui->window_w <= 0 || ui->window_h <= 0)
@@ -175,46 +221,46 @@ static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
     const float window_h = (float)ui->window_h;
     const float ui_scale = sol_ui_system_scale(ui);
     const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
-    const float title_h  = ca_window_get_title_bar_height(ui->primary_window) / window_h;
-    const float status_h = (SOL_UI_STATUS_BAR_HEIGHT * scale) / window_h;
+    const float title_px = ca_window_get_title_bar_height(ui->primary_window);
     const uint32_t max_passes    = sol_bg_effect_blur_passes(ui->bg_effects);
     const uint32_t chrome_passes = ui->settings
         ? (uint32_t)(ui->settings->bg_blur    + 0.5f) : max_passes;
     const uint32_t buffer_passes = ui->settings
         ? (uint32_t)(ui->settings->buffer_blur + 0.5f) : max_passes;
-    SolBgEffectBlurRegion regions[5];
+    const float panel_radius = ui->settings
+        ? ui->settings->corner_radius * scale
+        : SOL_UI_PANEL_RADIUS_PX * scale;
+    SolBgEffectBlurRegion regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
     size_t count = 0;
 
-    regions[count++] = (SolBgEffectBlurRegion){
-        .x = 0.0f, .y = 1.0f - status_h, .width = 1.0f, .height = status_h,
-        .passes = chrome_passes,
-    };
-
-    float buffer_x = 0.0f;
-    if (sol_ui_buffer_area_rect_internal(ui, &buffer_x, NULL, NULL, NULL) &&
-        buffer_x > 0.0f) {
-        const float left_w = buffer_x / window_w;
+    if (title_px > 0.0f) {
         regions[count++] = (SolBgEffectBlurRegion){
-            .x = 0.0f,
-            .y = title_h,
-            .width = left_w,
-            .height = 1.0f - title_h - status_h,
+            .x = 0.0f, .y = 0.0f, .width = 1.0f, .height = title_px / window_h,
+            .corner_radius = 0.0f,
             .passes = chrome_passes,
         };
     }
 
-    float editor_x = 0.0f, editor_y = 0.0f, editor_w = 0.0f, editor_h = 0.0f;
-    if (sol_ui_buffer_area_rect_internal(ui, &editor_x, &editor_y,
-                                         &editor_w, &editor_h) &&
-        editor_w > 0.0f && editor_h > 0.0f) {
-        regions[count++] = (SolBgEffectBlurRegion){
-            .x = editor_x / window_w,
-            .y = editor_y / window_h,
-            .width = editor_w / window_w,
-            .height = editor_h / window_h,
-            .passes = buffer_passes,
-        };
+    sol_ui_append_panel_blur_region(regions, &count, ui->status_bar_host,
+                                    window_w, window_h, panel_radius,
+                                    chrome_passes);
+    sol_ui_append_panel_blur_region(regions, &count, ui->tree_panel_host,
+                                    window_w, window_h, panel_radius,
+                                    chrome_passes);
+
+    for (size_t i = 0u; i < ui->glass_panel_count; ++i) {
+        sol_ui_append_panel_blur_region(regions, &count,
+                                        ui->glass_panel_hosts[i],
+                                        window_w, window_h, panel_radius,
+                                        buffer_passes);
     }
+
+    sol_ui_append_panel_blur_region(regions, &count, ui->term_panel_host,
+                                    window_w, window_h, panel_radius,
+                                    buffer_passes);
+    sol_ui_append_panel_blur_region(regions, &count, ui->command_panel_host,
+                                    window_w, window_h, panel_radius,
+                                    chrome_passes);
 
     sol_bg_effect_set_blur_regions(ui->bg_effects, regions, count);
 }
@@ -541,10 +587,13 @@ static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
     if (tab_count == 0u) return;
 
     const SolBufferId active_bufid = sol_buffer_leaf_buffer(ui->buffers, leaf_id);
+    const float scale = sol_ui_system_scale(ui);
+    const float scaled_tab_width = SOL_UI_BUFFER_TAB_WIDTH_PX * scale;
     float pane_width = rect ? rect->w : 0.0f;
-    if (pane_width <= 0.0f) pane_width = SOL_UI_BUFFER_TAB_WIDTH_PX;
+    if (pane_width <= 0.0f) pane_width = scaled_tab_width;
     size_t visible_count = pane_width > 5.0f
-        ? (size_t)((pane_width - 5.0f) / (SOL_UI_BUFFER_TAB_WIDTH_PX + 1.0f))
+        ? (size_t)((pane_width - 5.0f * scale) /
+                   (scaled_tab_width + 1.0f * scale))
         : 1u;
     if (visible_count < 1u) visible_count = 1u;
     if (visible_count > tab_count) visible_count = tab_count;
@@ -661,10 +710,13 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
     }
     SolUISystem *ui = ctx->ui;
 
-    ca_div_begin(&(Ca_DivDesc){
+    Ca_Div *pane_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style     = is_active ? "buffer-pane buffer-pane-active" : "buffer-pane",
     });
+    if (pane_host && ui->glass_panel_count < SOL_UI_MAX_GLASS_PANELS) {
+        ui->glass_panel_hosts[ui->glass_panel_count++] = pane_host;
+    }
 
     sol_ui_render_pane_tab_strip(ui, leaf_id, rect);
 
@@ -695,9 +747,10 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
             .system      = ui->buffers,
         };
         if (rect) {
+            const float scale = sol_ui_system_scale(ui);
             args.rect = *rect;
-            args.rect.y += SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
-            args.rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+            args.rect.y += SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale;
+            args.rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale;
             if (args.rect.h < 0.0f) args.rect.h = 0.0f;
         }
         sol_buffer_render(buffer, &args);
@@ -725,10 +778,13 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
 
     if (sol_buffer_count(ui->buffers) == 0u) {
         /* Welcome screen — shown whenever no buffers are open. */
-        ca_div_begin(&(Ca_DivDesc){
+        Ca_Div *welcome_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style     = "welcome-pane",
         });
+        if (welcome_host && ui->glass_panel_count < SOL_UI_MAX_GLASS_PANELS) {
+            ui->glass_panel_hosts[ui->glass_panel_count++] = welcome_host;
+        }
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style     = "welcome-content",
@@ -860,7 +916,10 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
         .w = root_w,
         .h = root_h,
     };
-    sol_buffer_workspace_visit(ui->buffers, &root_rect, &visitor, &visitor_context);
+    const float scale = sol_ui_system_scale(ui);
+    sol_buffer_workspace_visit(ui->buffers, &root_rect,
+                               SOL_UI_SPLIT_BAR_SIZE * (scale > 0.0f ? scale : 1.0f),
+                               &visitor, &visitor_context);
 }
 
 /*
@@ -936,7 +995,7 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
         .ratio           = buf_ratio,
         .min_ratio       = 0.20f,
         .max_ratio       = 0.80f,
-        .bar_size        = 1.0f,
+        .bar_size        = SOL_UI_SPLIT_BAR_SIZE,
         .on_resize       = sol_ui_on_terminal_resize,
         .user_data       = ui,
     });
@@ -990,6 +1049,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
     (void)ca_signal_get_u32(ui->sig_window_rev);
     (void)ca_signal_get_u32(ui->sig_terminal_rev);
     (void)ca_signal_get_u32(ui->sig_side_panel_rev);
+    ui->glass_panel_count = 0u;
 
     /* Top region: optional left tree panel + buffer area (+ optional terminal).
        When the tree is visible we use ca_split_begin so the divider is
@@ -1017,7 +1077,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             .ratio          = ui->tree_panel_ratio,
             .min_ratio      = 0.10f,
             .max_ratio      = 0.50f,
-            .bar_size       = 1.0f,
+            .bar_size       = SOL_UI_SPLIT_BAR_SIZE,
             .on_resize      = sol_ui_on_panel_resize,
             .user_data      = ui,
         });
@@ -1090,6 +1150,7 @@ static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
     if (!ui) {
         return;
     }
+    ui->command_panel_host = NULL;
     /* Subscribe to the leader-active signal. Open/close re-runs us. */
     const bool active = ca_signal_get_bool(ui->sig_leader_active);
     if (!active) {
@@ -1139,6 +1200,7 @@ static void sol_ui_on_frame(void *user_data)
     if (!ui) {
         return;
     }
+    sol_ui_sync_bg_blur_regions(ui);
     /* Reap closed file-picker windows. Safe even when none are open.
        Reactive scheduling is owned by causality — nothing else to
        drive from here. */
@@ -1454,8 +1516,8 @@ static bool sol_ui_build_layout(SolUISystem *ui)
     ui->tree_sticky_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .position  = CA_POSITION_ABSOLUTE,
-        .pos_x     = 0.0f,
-        .pos_y     = SOL_UI_TREE_STICKY_TOP,
+        .pos_x     = SOL_UI_PANEL_MARGIN_PX,
+        .pos_y     = SOL_UI_PANEL_MARGIN_PX + SOL_UI_TREE_STICKY_TOP,
         .z_index   = 5,
         .style     = "tree-sticky-host",
         .no_hover  = true,   /* transparent to hover — sticky-row children still hit-test */

@@ -392,12 +392,14 @@ bool sol_buffer_cycle_active_leaf(SolBufferSystem *system, int direction);
  *
  * system     The buffer system.
  * root_rect  Workspace rectangle used to compute leaf geometry.
+ * bar_size   Divider thickness in the same pixel space as root_rect.
  * visitor    Callback table for split and leaf events.
  * user_data  Passed unchanged to every visitor callback.
  */
 void sol_buffer_workspace_visit(
     SolBufferSystem *system,
     const SolBufferRect *root_rect,
+    float bar_size,
     const SolBufferWorkspaceVisitor *visitor,
     void *user_data
 );

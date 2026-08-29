@@ -2,6 +2,7 @@
 
 #include <causality.h>   /* Ca_Signal, ca_signal_set_u32, ca_signal_get_u32 */
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1397,23 +1398,25 @@ static void sol_buffer_visit_node(
  *
  * system    Buffer system whose layout is traversed.
  * root_rect Total area available to the root node.
+ * bar_size  Divider thickness used by the rendered split tree.
  * visitor   Callback table; individual callbacks may be NULL.
  * user_data Opaque value forwarded to every visitor callback.
  */
 void sol_buffer_workspace_visit(
     SolBufferSystem *system,
     const SolBufferRect *root_rect,
+    float bar_size,
     const SolBufferWorkspaceVisitor *visitor,
     void *user_data
 )
 {
-    if (!system || !visitor || system->root_id == 0u || !root_rect) {
+    if (!system || !visitor || system->root_id == 0u || !root_rect ||
+        !isfinite(bar_size) || bar_size < 0.0f) {
         return;
     }
 
     sol_buffer_visit_node(system, root_rect, visitor, system->root_id,
-                          /* split bar size — keep in sync with workspace.c */
-                          1.0f,
+                          bar_size,
                           user_data);
 }
 

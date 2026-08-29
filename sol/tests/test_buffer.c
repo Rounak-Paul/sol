@@ -55,6 +55,7 @@ typedef struct VisitLog {
     SolBufferNodeId leaf_ids[16];
     bool            leaf_active[16];
     SolBufferId     leaf_bufs[16];
+    SolBufferRect   leaf_rects[16];
 } VisitLog;
 
 static void visit_begin_split(SolBufferSplitDirection dir, float ratio,
@@ -68,13 +69,13 @@ static void visit_end_split(void *ud) { (void)ud; }
 static void visit_leaf(SolBuffer *buf, SolBufferNodeId leaf_id,
                         bool active, const SolBufferRect *rect, void *ud)
 {
-    (void)rect;
     VisitLog *v = (VisitLog *)ud;
     int n = v->leaves;
     if (n < 16) {
         v->leaf_ids[n]    = leaf_id;
         v->leaf_active[n] = active;
         v->leaf_bufs[n]   = buf ? sol_buffer_id(buf) : 0u;
+        v->leaf_rects[n]  = rect ? *rect : (SolBufferRect){0};
     }
     v->leaves++;
 }
@@ -237,9 +238,13 @@ static void test_split_vertical(SolTestCtx *T)
     /* Visitor should now see two leaves. */
     VisitLog vlog = {0};
     SolBufferWorkspaceVisitor vis = make_visitor();
-    sol_buffer_workspace_visit(sys, &kTestRootRect, &vis, &vlog);
+    sol_buffer_workspace_visit(sys, &kTestRootRect, 8.0f, &vis, &vlog);
     SOL_CHECK_EQ_INT(T, vlog.leaves, 2);
     SOL_CHECK_EQ_INT(T, vlog.splits, 1);
+    const SolBufferRect *first = &vlog.leaf_rects[0];
+    const SolBufferRect *second = &vlog.leaf_rects[1];
+    SOL_CHECK_MSG(T, second->x - (first->x + first->w) == 8.0f,
+                  "visitor geometry must preserve the rendered divider gap");
 
     sol_buffer_system_destroy(sys);
 }
@@ -257,7 +262,7 @@ static void test_split_horizontal(SolTestCtx *T)
 
     VisitLog vlog = {0};
     SolBufferWorkspaceVisitor vis = make_visitor();
-    sol_buffer_workspace_visit(sys, &kTestRootRect, &vis, &vlog);
+    sol_buffer_workspace_visit(sys, &kTestRootRect, 1.0f, &vis, &vlog);
     SOL_CHECK_EQ_INT(T, vlog.leaves, 2);
 
     sol_buffer_system_destroy(sys);
@@ -463,7 +468,7 @@ static void test_workspace_visitor(SolTestCtx *T)
 
     VisitLog vlog = {0};
     SolBufferWorkspaceVisitor vis = make_visitor();
-    sol_buffer_workspace_visit(sys, &kTestRootRect, &vis, &vlog);
+    sol_buffer_workspace_visit(sys, &kTestRootRect, 1.0f, &vis, &vlog);
 
     SOL_CHECK_EQ_INT(T, vlog.leaves, 3);
     SOL_CHECK_EQ_INT(T, vlog.splits, 2);
@@ -528,7 +533,7 @@ static void test_null_safety(SolTestCtx *T)
 
     SolBufferWorkspaceVisitor vis = make_visitor();
     VisitLog vlog = {0};
-    sol_buffer_workspace_visit(NULL, &kTestRootRect, &vis, &vlog);
+    sol_buffer_workspace_visit(NULL, &kTestRootRect, 1.0f, &vis, &vlog);
     SOL_CHECK_EQ_INT(T, vlog.leaves, 0);
 }
 

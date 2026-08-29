@@ -52,7 +52,7 @@ typedef struct Ca_Instance  Ca_Instance;
 typedef struct Ca_Window    Ca_Window;
 typedef struct SolBgEffectRegistry SolBgEffectRegistry;
 
-#define SOL_BG_EFFECT_MAX_BLUR_REGIONS 8
+#define SOL_BG_EFFECT_MAX_BLUR_REGIONS 72
 #define SOL_BG_EFFECT_MAX_ANIMATION_FPS 240u
 
 /* Normalized swapchain rectangle receiving the frosted backdrop blur. */
@@ -61,6 +61,7 @@ typedef struct SolBgEffectBlurRegion {
     float y;
     float width;
     float height;
+    float corner_radius; /* normalized against swapchain height */
     uint32_t passes;
 } SolBgEffectBlurRegion;
 
@@ -273,8 +274,9 @@ uint32_t sol_bg_effect_blur_passes(const SolBgEffectRegistry *reg);
 
 /*
  * Replace the normalized regions receiving backdrop blur.
- * Coordinates are clamped to the swapchain's [0, 1] range. The passes field
- * controls local blur strength and is clamped to the registry maximum.
+ * Coordinates and corner_radius are normalized against swapchain width/height
+ * and clamped to [0, 1]. The passes field controls local blur strength and is
+ * clamped to the registry maximum.
  * Passing no regions preserves the shader unblurred across the complete window.
  *
  * reg      The registry.

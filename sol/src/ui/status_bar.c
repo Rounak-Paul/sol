@@ -138,11 +138,9 @@ void sol_ui_render_status_bar(SolUISystem *ui)
         return;
     }
 
-    /* Causality's status_bar_node is the outer horizontal strip of the
-       configured height; this wrapper only carries the "status-bar"
-       style class and inherits the parent's full height (height = 0
-       means "auto-fill" in the cross axis of a horizontal container). */
-    ca_div_begin(&(Ca_DivDesc){
+    /* Render a centered pill inside Causality's status strip. The stylesheet
+       reserves the remaining strip height for the bottom gutter. */
+    ui->status_bar_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style     = "status-bar",
     });

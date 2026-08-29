@@ -113,7 +113,7 @@ void sol_ui_render_command_flow_panel(SolUISystem *ui)
        so the panel naturally lands in the bottom-right corner without
        any pixel math against the viewport. Explicit width+height keep
        the card from stretching to fill the overlay. */
-    ca_div_begin(&(Ca_DivDesc){
+    ui->command_panel_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .width     = panel_w,
         .height    = panel_h,

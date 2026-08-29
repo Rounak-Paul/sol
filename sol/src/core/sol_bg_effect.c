@@ -42,7 +42,13 @@ typedef struct {
 } BgPushConst;
 
 /* Push constants for the blur passes. */
-typedef struct { float inv_w, inv_h; } BlurPushConst;
+typedef struct {
+    float inv_w, inv_h;
+    float region_x, region_y;
+    float region_w, region_h;
+    float corner_radius;
+    float _pad0;
+} BlurPushConst;
 
 /* ------------------------------------------------------------------ */
 /* Shader-mode GPU state                                               */
@@ -111,15 +117,26 @@ static const char k_blur_h_frag[] =
 static const char k_blur_v_frag[] =
     "#version 450\n"
     "layout(set=0,binding=0) uniform sampler2D src;\n"
-    "layout(push_constant) uniform PC { float inv_w; float inv_h; } pc;\n"
+    "layout(push_constant) uniform PC {\n"
+    "    float inv_w; float inv_h; float region_x; float region_y;\n"
+    "    float region_w; float region_h; float corner_radius; float _pad0;\n"
+    "} pc;\n"
     "layout(location=0) in  vec2 v_uv;\n"
     "layout(location=0) out vec4 out_color;\n"
     /* 9-tap Gaussian kernel (sigma ~2.5), vertical */
     "void main() {\n"
+    "    vec2 half_size = vec2(pc.region_w, pc.region_h) * 0.5;\n"
+    "    float radius = min(pc.corner_radius, min(half_size.x, half_size.y));\n"
+    "    vec2 center = vec2(pc.region_x, pc.region_y) + half_size;\n"
+    "    vec2 q = abs(gl_FragCoord.xy - center) - (half_size - vec2(radius));\n"
+    "    float distance = length(max(q, vec2(0.0)))\n"
+    "                   + min(max(q.x, q.y), 0.0) - radius;\n"
+    "    float coverage = 1.0 - smoothstep(-0.75, 0.75, distance);\n"
+    "    if (coverage < 0.001) discard;\n"
     "    float w[9] = float[](0.0542,0.0816,0.1065,0.1213,0.1283,0.1213,0.1065,0.0816,0.0542);\n"
     "    vec4 c = vec4(0.0);\n"
     "    for(int i=0;i<9;i++) c += w[i] * texture(src, v_uv + vec2(0.0, (float(i)-4.0)*pc.inv_h));\n"
-    "    out_color = c;\n"
+    "    out_color = vec4(c.rgb, coverage);\n"
     "}\n";
 
 /* ------------------------------------------------------------------ */
@@ -389,7 +406,8 @@ static void gpu_destroy(BgShaderGPU *gpu, VkDevice device)
  */
 static bool blur_build_pipeline(VkPipelineLayout layout, VkDevice device,
                                 Ca_Instance *instance, VkFormat format,
-                                const char *frag_glsl, VkPipeline *out)
+                                const char *frag_glsl, bool blend_output,
+                                VkPipeline *out)
 {
     VkShaderModule vert = ca_shader_compile(device, k_fullscreen_vert,
                                             VK_SHADER_STAGE_VERTEX_BIT);
@@ -412,7 +430,16 @@ static bool blur_build_pipeline(VkPipelineLayout layout, VkDevice device,
     VkPipelineViewportStateCreateInfo      vps = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1 };
     VkPipelineRasterizationStateCreateInfo rst = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .polygonMode = VK_POLYGON_MODE_FILL, .cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, .lineWidth = 1.0f };
     VkPipelineMultisampleStateCreateInfo   ms  = { .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
-    VkPipelineColorBlendAttachmentState    bla = { .blendEnable = VK_FALSE, .colorWriteMask = 0xf };
+    VkPipelineColorBlendAttachmentState bla = {
+        .blendEnable = blend_output ? VK_TRUE : VK_FALSE,
+        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
+        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = VK_BLEND_OP_ADD,
+        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp = VK_BLEND_OP_ADD,
+        .colorWriteMask = 0xf,
+    };
     VkPipelineColorBlendStateCreateInfo    bl  = { .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1, .pAttachments = &bla };
     VkDynamicState                         dyn_s[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
     VkPipelineDynamicStateCreateInfo       dyn = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = 2, .pDynamicStates = dyn_s };
@@ -545,10 +572,10 @@ static bool blur_build(BlurGPU *blur, Ca_Instance *instance,
         goto fail;
 
     if (!blur_build_pipeline(blur->pipeline_layout, device, instance, format,
-                              k_blur_h_frag, &blur->pipeline_h))
+                             k_blur_h_frag, false, &blur->pipeline_h))
         goto fail;
     if (!blur_build_pipeline(blur->pipeline_layout, device, instance, format,
-                              k_blur_v_frag, &blur->pipeline_v))
+                             k_blur_v_frag, true, &blur->pipeline_v))
         goto fail;
 
     blur->width  = width;
@@ -627,11 +654,25 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1
     };
     VkViewport    vp = { 0.0f, 0.0f, (float)blur->width, (float)blur->height, 0.0f, 1.0f };
-    VkRect2D      sc = { {0,0}, {blur->width, blur->height} };
     BlurPushConst pc = {
-        SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->width,
-        SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->height,
+        .inv_w = SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->width,
+        .inv_h = SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->height,
     };
+
+    /* Sample radius in texels: the 9-tap kernel reaches
+       ±4 * SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD from the source texel. The
+       H-pass scissor is padded by this much on BOTH axes: horizontally so
+       its own horizontal taps stay fed from the region's own content, and
+       vertically — even though the H-pass itself only samples
+       horizontally — because the V-pass immediately after samples
+       vertically from these exact scratch rows, reaching this same ±4
+       texels above and below the region's top/bottom edge. Padding only
+       the horizontal axis left the top and bottom few rows of scratch
+       outside the region unwritten (DONT_CARE garbage) on every pass after
+       the first, which the V-pass then blended into the region's top/
+       bottom edge as a dark horizontal band. */
+    const int32_t sample_pad =
+        (int32_t)(4.0f * SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD + 1.0f);
 
     /* --- H-pass barriers --- */
     /* Swapchain: COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL */
@@ -662,7 +703,17 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
                                .imageMemoryBarrierCount = 2, .pImageMemoryBarriers = barr_h };
     vkCmdPipelineBarrier2(cmd, &dep_h);
 
-    /* H-pass draw */
+    /* H-pass draw — scoped to each active region's footprint (padded by the
+       kernel's sample reach on both axes — see sample_pad above), never the
+       full screen. Blurring the whole
+       swapchain unconditionally would, on iterated passes, re-sample pixels
+       the previous V-pass left untouched just outside a region's rounded
+       corner (V-pass discards there, preserving crisp background) and smear
+       that hard sharp/blurred boundary sideways into the scratch buffer —
+       which the next V-pass then composites again, leaving a visible
+       rectangular fringe hugging the rounded corner. Restricting the H-pass
+       to the region (plus sampling headroom) keeps every pass's source data
+       within content the mask is actually allowed to touch. */
     VkRenderingAttachmentInfo h_att = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
         .imageView = blur->scratch_view, .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -676,9 +727,26 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                             blur->pipeline_layout, 0, 1, &blur->desc_set_h, 0, NULL);
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &sc);
     vkCmdPushConstants(cmd, blur->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
+    for (size_t i = 0; i < region_count; ++i) {
+        const SolBgEffectBlurRegion *region = &regions[i];
+        if (region->passes <= pass_index) continue;
+        int32_t x = (int32_t)(region->x * (float)blur->width) - sample_pad;
+        int32_t y = (int32_t)(region->y * (float)blur->height) - sample_pad;
+        int32_t right = (int32_t)((region->x + region->width) * (float)blur->width + 0.999f) + sample_pad;
+        int32_t bottom = (int32_t)((region->y + region->height) * (float)blur->height + 0.999f) + sample_pad;
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+        if (right > (int32_t)blur->width) right = (int32_t)blur->width;
+        if (bottom > (int32_t)blur->height) bottom = (int32_t)blur->height;
+        if (right <= x || bottom <= y) continue;
+        VkRect2D h_scissor = {
+            .offset = { x, y },
+            .extent = { (uint32_t)(right - x), (uint32_t)(bottom - y) },
+        };
+        vkCmdSetScissor(cmd, 0, 1, &h_scissor);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
     vkCmdEndRendering(cmd);
 
     /* --- V-pass barriers --- */
@@ -734,11 +802,18 @@ static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
         if (right > blur->width) right = blur->width;
         if (bottom > blur->height) bottom = blur->height;
         if (right <= x || bottom <= y) continue;
+        pc.region_x = (float)x;
+        pc.region_y = (float)y;
+        pc.region_w = (float)(right - x);
+        pc.region_h = (float)(bottom - y);
+        pc.corner_radius = region->corner_radius * (float)blur->height;
         VkRect2D region_scissor = {
             .offset = { (int32_t)x, (int32_t)y },
             .extent = { right - x, bottom - y },
         };
         vkCmdSetScissor(cmd, 0, 1, &region_scissor);
+        vkCmdPushConstants(cmd, blur->pipeline_layout,
+                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
         vkCmdDraw(cmd, 3, 1, 0, 0);
     }
     vkCmdEndRendering(cmd);
@@ -1091,7 +1166,8 @@ void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
     if (count > SOL_BG_EFFECT_MAX_BLUR_REGIONS)
         count = SOL_BG_EFFECT_MAX_BLUR_REGIONS;
 
-    reg->blur_region_count = 0;
+    SolBgEffectBlurRegion next[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
+    size_t next_count = 0;
     for (size_t i = 0; i < count; ++i) {
         float left = regions[i].x;
         float top = regions[i].y;
@@ -1105,16 +1181,33 @@ void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
         if (right > 1.0f) right = 1.0f;
         if (bottom > 1.0f) bottom = 1.0f;
         if (right <= left || bottom <= top) continue;
-        reg->blur_regions[reg->blur_region_count++] = (SolBgEffectBlurRegion){
+        float corner_radius = regions[i].corner_radius;
+        if (!isfinite(corner_radius) || corner_radius < 0.0f)
+            corner_radius = 0.0f;
+        if (corner_radius > 1.0f) corner_radius = 1.0f;
+        next[next_count++] = (SolBgEffectBlurRegion){
             .x = left,
             .y = top,
             .width = right - left,
             .height = bottom - top,
+            .corner_radius = corner_radius,
             .passes = regions[i].passes > (uint32_t)reg->blur_passes
                           ? (uint32_t)reg->blur_passes
                           : regions[i].passes,
         };
     }
+
+    bool changed = reg->blur_region_count != next_count;
+    for (size_t i = 0; !changed && i < next_count; ++i) {
+        const SolBgEffectBlurRegion *a = &reg->blur_regions[i];
+        const SolBgEffectBlurRegion *b = &next[i];
+        changed = a->x != b->x || a->y != b->y ||
+                  a->width != b->width || a->height != b->height ||
+                  a->corner_radius != b->corner_radius || a->passes != b->passes;
+    }
+    if (!changed) return;
+    memcpy(reg->blur_regions, next, next_count * sizeof(next[0]));
+    reg->blur_region_count = next_count;
     fire_change(reg);
 }
 

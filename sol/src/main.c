@@ -185,8 +185,9 @@ static int sol_active_buffer_viewport_lines(SolAppContext *app, SolTextBuffer *t
         SolBufferRect leaf_rect = {0};
         const SolBufferNodeId leaf = sol_buffer_active_leaf(app->buffers);
         if (leaf != 0u &&
-            sol_buffer_leaf_geometry(app->buffers, leaf, &root_rect, 1.0f, &leaf_rect)) {
-            leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT;
+            sol_buffer_leaf_geometry(app->buffers, leaf, &root_rect,
+                                     SOL_UI_PANEL_GAP_PX * scale, &leaf_rect)) {
+            leaf_rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale;
             if (leaf_rect.h < 0.0f) leaf_rect.h = 0.0f;
             int viewport = sol_text_view_visible_lines_for_height(leaf_rect.h, scale) - 2;
             if (viewport < 1) viewport = 1;

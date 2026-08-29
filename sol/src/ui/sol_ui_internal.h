@@ -43,11 +43,12 @@
 #define SOL_UI_MAX_SIDE_PANELS         8u
 #define SOL_UI_MAX_CONTEXT_ACTIONS    16u
 #define SOL_UI_CONTEXT_PATH_MAX       4096u
+#define SOL_UI_MAX_GLASS_PANELS       64u
 
 /* Causality manages the title and status strips; sol only declares the
    status-bar height it wants reserved. The title bar height is fixed by
    causality itself and not visible from sol's layout code. */
-#define SOL_UI_STATUS_BAR_HEIGHT      22.0f
+#define SOL_UI_STATUS_BAR_HEIGHT      30.0f
 
 /* File-tree panel layout constants — kept in sync with the CSS in style.h
    so C code can compute geometry without re-parsing the stylesheet. */
@@ -193,6 +194,11 @@ struct SolUISystem {
        re-runs the affected builder(s). NULL until build_layout runs. */
     Ca_Div           *tree_panel_host;
     Ca_Div           *buffer_area_host;
+    /* Resolved floating surfaces tracked for exact rounded blur clipping. */
+    Ca_Div           *glass_panel_hosts[SOL_UI_MAX_GLASS_PANELS];
+    size_t            glass_panel_count;
+    Ca_Div           *status_bar_host;
+    Ca_Div           *command_panel_host;
     /* Retained handle to the terminal pane div for layout-height queries in
        sol_ui_system_pre_tick.  Updated each builder run; NULL when the
        terminal panel is not in the current layout tree. */

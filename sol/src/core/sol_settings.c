@@ -41,7 +41,6 @@ SolSettings sol_settings_defaults(void)
         .titlebar_blur    = SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT,
         .panel_opacity    = SOL_SETTINGS_PANEL_OPACITY_DEFAULT,
         .scrollbar_width  = SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT,
-        .scrollbar_radius = SOL_SETTINGS_SCROLLBAR_RADIUS_DEFAULT,
     };
     snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
     snprintf(s.bg_effect_id, sizeof(s.bg_effect_id), "%s",
@@ -259,7 +258,6 @@ static void jp_parse_appearance(JP *j, SolSettings *s)
         PARSE_FLOAT_FIELD("titlebar_blur",    titlebar_blur,    SOL_SETTINGS_TITLEBAR_BLUR_MIN,    SOL_SETTINGS_TITLEBAR_BLUR_MAX)
         PARSE_FLOAT_FIELD("panel_opacity",    panel_opacity,    SOL_SETTINGS_PANEL_OPACITY_MIN,    SOL_SETTINGS_PANEL_OPACITY_MAX)
         PARSE_FLOAT_FIELD("scrollbar_width",  scrollbar_width,  SOL_SETTINGS_SCROLLBAR_WIDTH_MIN,  SOL_SETTINGS_SCROLLBAR_WIDTH_MAX)
-        PARSE_FLOAT_FIELD("scrollbar_radius", scrollbar_radius, SOL_SETTINGS_SCROLLBAR_RADIUS_MIN, SOL_SETTINGS_SCROLLBAR_RADIUS_MAX)
         /* else */
         {
             jp_skip_value(j);
@@ -397,8 +395,7 @@ bool sol_settings_save(const SolSettings *settings)
         "    \"panel_blur\": %.2f,\n"
         "    \"titlebar_blur\": %.2f,\n"
         "    \"panel_opacity\": %.2f,\n"
-        "    \"scrollbar_width\": %.2f,\n"
-        "    \"scrollbar_radius\": %.2f\n"
+        "    \"scrollbar_width\": %.2f\n"
         "  }\n"
         "}\n",
         (double)settings->ui_scale,
@@ -411,8 +408,7 @@ bool sol_settings_save(const SolSettings *settings)
         (double)settings->panel_blur,
         (double)settings->titlebar_blur,
         (double)settings->panel_opacity,
-        (double)settings->scrollbar_width,
-        (double)settings->scrollbar_radius);
+        (double)settings->scrollbar_width);
 
     fclose(fp);
     return n > 0;
@@ -421,12 +417,12 @@ bool sol_settings_save(const SolSettings *settings)
 /*
  * Build a CSS override snippet encoding the appearance overlay settings.
  *
- * The generated CSS overrides corner-radius, shadow, scrollbar width/radius,
+ * The generated CSS overrides border-radius, scrollbar width/radius,
  * and panel opacity. It is appended after the active theme so it wins by
  * declaration order.
  *
- * Corner-radius is applied to every interactive element that has a
- * `corner-radius: 0px` declaration in the default stylesheet so the slider
+ * Corner radius is applied to every interactive element that has a
+ * `border-radius: 0px` declaration in the default stylesheet so the slider
  * produces a uniform effect across the whole UI.
  *
  * Panel opacity uses the CSS `opacity` property (theme-independent) rather
@@ -439,18 +435,34 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
 
     float cr      = settings->corner_radius;
     float sw      = settings->scrollbar_width;
-    float sr      = settings->scrollbar_radius;
+    float sr      = sw * 0.5f;
     float pblur   = settings->panel_blur;
     float tblur   = settings->titlebar_blur;
     float op      = settings->panel_opacity;
+    float control_radius = fminf(cr * 0.5f, 10.0f);
 
     int written = snprintf(buf, (size_t)bufsz,
         "/* sol appearance overlay */"
         /* Scrollbar geometry — wildcard wins by appending after theme. */
-        "* { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx; }"
+        "* { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx;"
+        " scrollbar-track-color: transparent; }"
+        ".buffer-scrollbar { width: %.1fpx; padding: 0px 2px; background: transparent; }"
+        ".buffer-scrollbar-spacer { width: 100%%; }"
+        ".buffer-hscrollbar { height: %.1fpx; padding: 2px 0px; background: transparent; }"
+        ".buffer-hscrollbar-spacer { height: 100%%; }"
+        ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active {"
+        " width: 100%%; border-radius: %.1fpx; }"
+        ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
+        " height: 100%%; border-radius: %.1fpx; }"
+        ".buffer-tabs-row { border-top-left-radius: %.1fpx;"
+        " border-top-right-radius: %.1fpx; overflow: hidden; }"
+        ".buffer-body, .buffer-scroll-row { border-bottom-left-radius: %.1fpx;"
+        " border-bottom-right-radius: %.1fpx; overflow: hidden; }"
+        ".buffer-gutter-col { border-bottom-left-radius: %.1fpx; }"
         /* Buffer panes + side panel: corner-radius, backdrop blur, opacity. */
-        ".cf-panel, .buffer-pane {"
-        "  corner-radius: %.1fpx;"
+        ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel,"
+        ".welcome-pane, .cf-panel, .status-bar {"
+        "  border-radius: %.1fpx;"
         "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
         "}"
@@ -479,8 +491,24 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".fp-action-new-folder,"
         ".fp-nf-create,"
         ".fp-nf-cancel,"
+        ".fp-up-btn,"
+        ".fp-crumb-btn,"
+        ".fp-colhdr-btn,"
+        ".fp-colhdr-btn-end,"
+        ".fp-action-cancel,"
+        ".fp-action-primary,"
+        ".pm-btn,"
+        ".pm-btn-enable,"
         ".pm-btn-disable,"
         ".pm-search-input,"
+        ".scm-header-action,"
+        ".scm-action,"
+        ".scm-row-action,"
+        ".scm-row-danger,"
+        ".scm-section-action,"
+        ".scm-primary-action,"
+        ".scm-danger-action,"
+        ".scm-commit-input,"
         ".scm-branch-input,"
         ".scm-branch-row,"
         ".scm-branch-row-current,"
@@ -495,13 +523,21 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".cf-row,"
         ".cf-row-key,"
         ".status-bar-badge,"
+        ".pm-badge,"
+        ".term-tab,"
+        ".term-tab-active,"
+        ".term-tab-close,"
         ".welcome-btn,"
-        ".welcome-btn-primary"
-        " { corner-radius: %.1fpx; }",
+        ".welcome-btn-primary,"
+        ".scm-tab,"
+        ".scm-tab-active"
+        " { border-radius: %.1fpx; }",
         (double)sw, (double)sr,
+        (double)sw, (double)sw, (double)sr, (double)sr,
+        (double)cr, (double)cr, (double)cr, (double)cr, (double)cr,
         (double)cr, (double)pblur, (double)op,
         (double)tblur, (double)op,
-        (double)cr);
+        (double)control_radius);
 
     if (written < 0 || written >= bufsz) return 0;
     return written;

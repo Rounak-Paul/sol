@@ -15,12 +15,11 @@
  *       "opacity": 1.0
  *     },
  *     "appearance": {
- *       "corner_radius": 0.0,
- *       "panel_blur": 0.0,
- *       "titlebar_blur": 0.0,
+ *       "corner_radius": 12.0,
+ *       "panel_blur": 16.0,
+ *       "titlebar_blur": 12.0,
  *       "panel_opacity": 1.0,
- *       "scrollbar_width": 8.0,
- *       "scrollbar_radius": 0.0
+ *       "scrollbar_width": 8.0
  *     }
  *   }
  *
@@ -53,25 +52,26 @@
 /* Appearance overlay tunables */
 #define SOL_SETTINGS_CORNER_RADIUS_MIN     0.0f
 #define SOL_SETTINGS_CORNER_RADIUS_MAX     20.0f
-#define SOL_SETTINGS_CORNER_RADIUS_DEFAULT 0.0f
+#define SOL_SETTINGS_CORNER_RADIUS_DEFAULT 12.0f
 
 #define SOL_SETTINGS_PANEL_BLUR_MIN     0.0f
 #define SOL_SETTINGS_PANEL_BLUR_MAX     40.0f
-#define SOL_SETTINGS_PANEL_BLUR_DEFAULT 0.0f
+#define SOL_SETTINGS_PANEL_BLUR_DEFAULT 16.0f
 
 #define SOL_SETTINGS_TITLEBAR_BLUR_MIN     0.0f
 #define SOL_SETTINGS_TITLEBAR_BLUR_MAX     40.0f
-#define SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT 0.0f
+#define SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT 12.0f
 
 /* Background-effect blur passes for chrome regions (titlebar/statusbar/sidebar).
- * Integer 0–8; stored as float for slider compatibility. */
+ * Integer 0–4; stored as float for slider compatibility. */
 #define SOL_SETTINGS_BG_BLUR_MIN     0.0f
-#define SOL_SETTINGS_BG_BLUR_MAX     8.0f
+#define SOL_SETTINGS_BG_BLUR_MAX     4.0f
 #define SOL_SETTINGS_BG_BLUR_DEFAULT 3.0f
 
-/* Background-effect blur passes for the centre buffer area. */
+/* Background-effect blur passes for the centre buffer area.  The editor stays
+ * deliberately sharper than chrome so text remains crisp. */
 #define SOL_SETTINGS_BUFFER_BLUR_MIN     0.0f
-#define SOL_SETTINGS_BUFFER_BLUR_MAX     8.0f
+#define SOL_SETTINGS_BUFFER_BLUR_MAX     2.0f
 #define SOL_SETTINGS_BUFFER_BLUR_DEFAULT 1.0f
 
 #define SOL_SETTINGS_PANEL_OPACITY_MIN     0.0f
@@ -81,10 +81,6 @@
 #define SOL_SETTINGS_SCROLLBAR_WIDTH_MIN     2.0f
 #define SOL_SETTINGS_SCROLLBAR_WIDTH_MAX     20.0f
 #define SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT 8.0f
-
-#define SOL_SETTINGS_SCROLLBAR_RADIUS_MIN     0.0f
-#define SOL_SETTINGS_SCROLLBAR_RADIUS_MAX     10.0f
-#define SOL_SETTINGS_SCROLLBAR_RADIUS_DEFAULT 0.0f
 
 /* ------------------------------------------------------------------ */
 /* Settings aggregate                                                  */
@@ -139,13 +135,10 @@ typedef struct SolSettings {
      * Range: [SOL_SETTINGS_PANEL_OPACITY_MIN, SOL_SETTINGS_PANEL_OPACITY_MAX]. */
     float panel_opacity;
 
-    /* Scrollbar thumb/track width (px).
+    /* Scrollbar thumb width (px). The radius is always half this value so
+     * every scrollbar remains pill-shaped at every configured width.
      * Range: [SOL_SETTINGS_SCROLLBAR_WIDTH_MIN, SOL_SETTINGS_SCROLLBAR_WIDTH_MAX]. */
     float scrollbar_width;
-
-    /* Scrollbar thumb corner radius (px).
-     * Range: [SOL_SETTINGS_SCROLLBAR_RADIUS_MIN, SOL_SETTINGS_SCROLLBAR_RADIUS_MAX]. */
-    float scrollbar_radius;
 } SolSettings;
 
 /* ------------------------------------------------------------------ */

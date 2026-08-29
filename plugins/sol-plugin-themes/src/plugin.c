@@ -163,7 +163,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
 
     ThemeCssBuilder css = { .data = out, .capacity = capacity, .valid = true };
     css_append(&css,
-        "*{scrollbar-track-color:%s;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}"
+        "*{scrollbar-track-color:transparent;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}"
         ".ca-titlebar{background:%s;}"
         ".ca-titlebar-title,.ca-titlebar-menu-item,.ca-titlebar-control{color:%s;}"
         ".ca-titlebar-menu-item:hover,.ca-titlebar-control:hover{background:%s;color:%s;}"
@@ -173,7 +173,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".status-bar-text{color:%s;}"
         ".status-bar-badge-key{background:%s;}.status-bar-badge-command{background:%s;}"
         ".status-bar-badge-leader{background:%s;}",
-        chrome, selected, theme->primary, chrome, theme->secondary, hover,
+        selected, theme->primary, chrome, theme->secondary, hover,
         theme->text, theme->danger, hover, theme->primary, chrome, theme->muted,
         selected, hover, raised);
 

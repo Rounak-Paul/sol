@@ -354,7 +354,6 @@ SW_MAKE_SLIDER_CB(sw_on_panel_blur_change,       panel_blur)
 SW_MAKE_SLIDER_CB(sw_on_titlebar_blur_change,    titlebar_blur)
 SW_MAKE_SLIDER_CB(sw_on_panel_opacity_change,    panel_opacity)
 SW_MAKE_SLIDER_CB(sw_on_scrollbar_width_change,  scrollbar_width)
-SW_MAKE_SLIDER_CB(sw_on_scrollbar_radius_change, scrollbar_radius)
 
 #undef SW_MAKE_SLIDER_CB
 
@@ -512,7 +511,6 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     SW_SLIDER_ROW("Panel Blur",      SOL_SETTINGS_PANEL_BLUR_MIN,      SOL_SETTINGS_PANEL_BLUR_MAX,      w->settings->panel_blur,      sw_on_panel_blur_change)
     SW_SLIDER_ROW("Titlebar Blur",   SOL_SETTINGS_TITLEBAR_BLUR_MIN,   SOL_SETTINGS_TITLEBAR_BLUR_MAX,   w->settings->titlebar_blur,   sw_on_titlebar_blur_change)
     SW_SLIDER_ROW("Scrollbar Width", SOL_SETTINGS_SCROLLBAR_WIDTH_MIN, SOL_SETTINGS_SCROLLBAR_WIDTH_MAX, w->settings->scrollbar_width, sw_on_scrollbar_width_change)
-    SW_SLIDER_ROW("Scrollbar Radius",SOL_SETTINGS_SCROLLBAR_RADIUS_MIN,SOL_SETTINGS_SCROLLBAR_RADIUS_MAX,w->settings->scrollbar_radius,sw_on_scrollbar_radius_change)
 
 #undef SW_SLIDER_ROW
 }
