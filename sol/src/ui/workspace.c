@@ -211,6 +211,14 @@ static void sol_ui_append_panel_blur_region(
     };
 }
 
+/* Return the configured logical radius shared by every floating workspace panel. */
+static float sol_ui_panel_corner_radius(const SolUISystem *ui)
+{
+    return ui && ui->settings
+        ? ui->settings->corner_radius
+        : SOL_UI_PANEL_RADIUS_PX;
+}
+
 /* Synchronize rounded glass blur with the resolved panel rectangles. */
 static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
 {
@@ -726,6 +734,7 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
 
     Ca_Div *pane_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
+        .corner_radius = sol_ui_panel_corner_radius(ui),
         .style     = pane_style,
     });
     if (pane_host && ui->glass_panel_count < SOL_UI_MAX_GLASS_PANELS) {
@@ -794,6 +803,7 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
         /* Welcome screen — shown whenever no buffers are open. */
         Ca_Div *welcome_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
+            .corner_radius = sol_ui_panel_corner_radius(ui),
             .style     = "welcome-pane",
         });
         if (welcome_host && ui->glass_panel_count < SOL_UI_MAX_GLASS_PANELS) {
@@ -1025,6 +1035,7 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
         sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TERMINAL;
     ui->term_panel_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
+        .corner_radius = sol_ui_panel_corner_radius(ui),
         .style     = term_focused ? "term-panel term-panel-focused" : "term-panel",
     });
     sol_ui_render_terminal_panel(ui);
@@ -1111,6 +1122,7 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
             (tree_focused ? "tree-panel tree-panel-focused" : "tree-panel");
         ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
+            .corner_radius = sol_ui_panel_corner_radius(ui),
             .style     = tree_style,
         });
         if (active_panel) {

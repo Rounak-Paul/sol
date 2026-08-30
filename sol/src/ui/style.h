@@ -2131,6 +2131,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
        the node's own bounds and immune to both problems. */
     ".tree-panel-focused, .plugin-side-panel-focused,"
     ".buffer-pane-focused, .term-panel-focused {"
+    "  border-radius: " SOL_UI_PANEL_RADIUS_PX_CSS ";"
     "  border-width: " SOL_UI_FOCUS_BORDER_WIDTH_PX_CSS ";"
     "  border-color: " SOL_UI_FOCUS_BORDER_COLOR_CSS ";"
     "}"

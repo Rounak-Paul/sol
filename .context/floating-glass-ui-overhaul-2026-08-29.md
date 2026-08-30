@@ -744,6 +744,66 @@ letting this be checked far more precisely than in Round 9.
   reading C/GLSL source and reimplementing the math on the CPU has now
   been checked clean three times over.
 
+## Round 11 — focused-panel border restoration
+
+The square inset border introduced in Round 10 was a deliberate workaround for
+the old rounded-border compositor, but it necessarily left visible gaps where
+the square stroke stopped short of the rounded panel silhouette. Replaced that
+workaround with a dedicated `CA_DRAW_MODE_BORDER_STROKE` path: it draws one
+centered signed-distance stroke along the node's real per-corner radii and
+uses derivative-based antialiasing, so a thin border remains continuous around
+the arc without blending a transparent interior. `paint_border` now restores
+the node's full bounds and per-corner radii for the post-children stroke. The
+Sol focus indicator is reduced from 1.5px to 1px. Build and all 14 CTests
+pass, both worktrees pass `git diff --check`, and a native startup produced no
+runtime shader diagnostics. Visual confirmation remains the user's next live
+run.
+
+## Round 12 — border clip ownership
+
+The user screenshot confirmed that Round 11's curved stroke itself was active,
+but its arcs were entirely cut away. `paint_tree_cached` passed `own_clip` to
+both the scrollbar and the post-children border. That is correct for a
+scrollbar, which needs the panel's rounded overflow mask, but wrong for the
+border: the border-stroke SDF already defines the panel silhouette, and the
+second hard rounded clip removes its antialiased corner coverage. Borders now
+use only the inherited ancestor clip, while scrollbars retain `own_clip`.
+Build and all 14 CTests pass; both worktrees pass `git diff --check`.
+
+## Round 13 — focused CSS radius parity
+
+The next user screenshot proved the Round 12 change had removed the double
+clip, but the focused panel's resolved border radius was zero, producing a
+sharp rectangle. The focused modifier must explicitly carry the panel radius:
+it now declares the shared default in the fallback stylesheet, and the live
+appearance overlay applies the configured radius to every focused panel class.
+The border therefore follows the same radius as the active theme and Settings
+appearance value, rather than relying on cross-class radius resolution. Build
+and all 14 CTests pass; both worktrees pass `git diff --check`.
+
+## Round 14 — panel radius ownership
+
+The focused CSS rule correctly declared a radius, but the screenshot remained
+square because the Causality panel descriptor still carried zero: its CSS value
+was not the same value Sol used for the rounded blur mask. Panel construction
+is now the authoritative handoff. Tree/plugin, buffer, terminal, and welcome
+panel descriptors receive `SolSettings.corner_radius` directly (or the shared
+default before settings load), which Causality scales and preserves for the
+post-children border command. Blur, fill, clipping, and the focus stroke now
+use the same configured radius. Build and all 14 CTests pass; both worktrees
+pass `git diff --check`.
+
+## Round 15 — explicit rounded-border geometry
+
+The screenshot still rendered a square border after radius propagation, so the
+problem was isolated to the single-command uniform border ring, not CSS or
+panel geometry. Removed that ring path. Uniform borders now render as four
+thin straight segments plus a tangent sequence of normal rounded-rectangle
+stamps around each actual corner radius, all inside the panel's own rounded
+clip. This avoids the failing transparent-fill/border shader path entirely
+while preserving post-children paint order and CSS border colours/widths.
+Build and all 14 CTests pass; both worktrees pass `git diff --check`.
+
 ## Validation
 
 - `cmake --build build --parallel 6`: passed.

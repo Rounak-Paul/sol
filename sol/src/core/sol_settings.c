@@ -460,8 +460,10 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         " border-bottom-right-radius: %.1fpx; overflow: hidden; }"
         ".buffer-gutter-col { border-bottom-left-radius: %.1fpx; }"
         /* Buffer panes + side panel: corner-radius, backdrop blur, opacity. */
-        ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel,"
-        ".welcome-pane, .cf-panel, .status-bar {"
+        ".tree-panel, .tree-panel-focused, .plugin-side-panel,"
+        ".plugin-side-panel-focused, .buffer-pane, .buffer-pane-focused,"
+        ".term-panel, .term-panel-focused, .welcome-pane, .cf-panel,"
+        ".status-bar {"
         "  border-radius: %.1fpx;"
         "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
