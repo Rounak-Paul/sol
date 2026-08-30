@@ -651,6 +651,12 @@ static void on_text_col_drag_move(const Ca_DragEvent *ev, void *user_data)
  * Handle the start of a scrollbar thumb drag: compute the grab offset so the
  * thumb tracks the pointer smoothly, and latch the drag state into the global
  * drag variables for use by subsequent on_scrollbar_drag calls.
+ *
+ * The offset is stored as a fraction of thumb length (0..1), not an absolute
+ * pixel distance: a resize or ui_scale change mid-drag rebuilds the pane with
+ * a different track_len/thumb_len every frame, and a pixel offset captured
+ * against the old geometry would apply the wrong grab point (and can exceed
+ * the new thumb_len entirely) once combined with the new one.
  */
 static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
 {
@@ -669,15 +675,20 @@ static void on_scrollbar_drag_start(const Ca_DragEvent *ev, void *user_data)
     const float thumb_pos = pct * travel;
     const float pointer = ctx->is_vertical ? ev->local_y : ev->local_x;
 
-    if (pointer >= thumb_pos && pointer <= thumb_pos + ctx->thumb_len) {
-        ctx->grab_offset = pointer - thumb_pos;
+    float grab_frac;
+    if (ctx->thumb_len > 0.0f &&
+        pointer >= thumb_pos && pointer <= thumb_pos + ctx->thumb_len) {
+        grab_frac = (pointer - thumb_pos) / ctx->thumb_len;
     } else {
-        ctx->grab_offset = ctx->thumb_len * 0.5f;
+        grab_frac = 0.5f;
     }
+    if (grab_frac < 0.0f) grab_frac = 0.0f;
+    if (grab_frac > 1.0f) grab_frac = 1.0f;
+    ctx->grab_offset = grab_frac;
     g_scrollbar_drag_tb = ctx->tb;
     g_scrollbar_drag_leaf_id = ctx->leaf_id;
     g_scrollbar_drag_vertical = ctx->is_vertical;
-    g_scrollbar_drag_grab_offset = ctx->grab_offset;
+    g_scrollbar_drag_grab_offset = grab_frac;
     g_scrollbar_drag_active = true;
 }
 
@@ -694,13 +705,17 @@ static void on_scrollbar_drag(const Ca_DragEvent *ev, void *user_data)
     if (travel <= 0.0f) return;
 
     const float pointer = ctx->is_vertical ? ev->local_y : ev->local_x;
-    float grab_offset = ctx->grab_offset;
+    float grab_frac = ctx->grab_offset;
     if (g_scrollbar_drag_active &&
         (g_scrollbar_drag_leaf_id == ctx->leaf_id ||
          g_scrollbar_drag_tb == ctx->tb) &&
         g_scrollbar_drag_vertical == ctx->is_vertical) {
-        grab_offset = g_scrollbar_drag_grab_offset;
+        grab_frac = g_scrollbar_drag_grab_offset;
     }
+    /* grab_frac is a 0..1 fraction of thumb length, re-applied against this
+     * frame's (possibly resized) thumb_len so mid-drag layout changes don't
+     * desync the grab point from the pointer. */
+    const float grab_offset = grab_frac * ctx->thumb_len;
     float pct = (pointer - grab_offset) / travel;
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 1.0f) pct = 1.0f;

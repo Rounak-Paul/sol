@@ -24,6 +24,40 @@ Planned fix:
 - Horizontal wheel sign must feel like VS Code/content-following trackpad behavior: a rightward sweep should reduce `scroll_left` so the rendered content moves right, not left.
 - Do not force every tiny `dx` into a whole column. Accumulate fractional horizontal wheel deltas in the input router and only apply whole-column changes once the accumulated movement crosses a column threshold.
 
+2026-08-30 scrollbar edge-case audit (resize / tiny panes / mid-drag resize):
+- `sol_ui_visit_render_leaf` (workspace.c) was clamping `args.rect.h` to `0.0f`
+  after subtracting the tab-strip height. A rect of exactly 0 is what
+  `sol_text_view_render` also uses to mean "no rect provided yet" (dynamic
+  layout not ready), so a legitimately tiny pane (heavy splits, extreme
+  resize) fell into the "unknown size" branch and got sized against the full
+  window instead of its real tiny rect, producing an oversized/misplaced
+  scrollbar. Fixed by flooring `args.rect.h`/`.w` to `1.0f` instead of `0.0f`
+  so tiny-but-real panes stay distinguishable from "not laid out yet".
+  Verified the rest of the geometry pipeline (sol_text_view_visible_lines_for_height,
+  sol_text_view_visible_cols_for_width, text_track_w) already clamps safely
+  down to a 1px pane — no follow-on div-by-zero.
+- `on_scrollbar_drag_start`/`on_scrollbar_drag` (text_view.c) captured
+  `grab_offset` as an absolute pixel distance from the thumb's top/left edge,
+  computed against that frame's `track_len`/`thumb_len`. `ScrollbarDragCtx`
+  is rebuilt fresh every frame from current pane geometry, so if the pane
+  resizes (or ui_scale changes) mid-drag, the *next* frame's `on_scrollbar_drag`
+  combines the *old* pixel offset with the *new* track/thumb length, causing
+  the thumb to jump/snap relative to the pointer. Fixed by storing the grab
+  point as a 0..1 fraction of thumb length instead, and re-scaling it by the
+  current frame's `thumb_len` inside `on_scrollbar_drag` — invariant under
+  mid-drag resizes.
+- Confirmed NOT a bug (initially suspected, ruled out after checking git
+  history): `viewport = rendered - 2` vs `rendered` in `sol_text_view_render`.
+  `rendered` deliberately over-paints by 2 rows (parent clips via
+  overflow:hidden); `viewport` is the precise fitting count and is correctly
+  the one used for `max_top`/thumb-size math.
+- Confirmed NOT a bug: the `g_scrollbar_drag_leaf_id == ctx->leaf_id ||
+  g_scrollbar_drag_tb == ctx->tb` OR-match. Causality's `on_drag` only fires
+  per-frame on the element actually being dragged (drag_data is bound to
+  that div), so this can never cross-match two different panes/split leaves
+  even when they share the same underlying SolTextBuffer (e.g. same file
+  open in two split panes).
+
 2026-06-07 scrollbar geometry/drag follow-up:
 - Vertical editor scrollbar must use the actual pane-height track, not `viewport_lines * line_height`; otherwise its thumb cannot reach the bottom of tall panes.
 - Horizontal editor scrollbar should be flush to the bottom edge of the text pane and span the text viewport width, not leave the old 8px padding gap underneath.

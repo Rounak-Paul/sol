@@ -250,6 +250,49 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         panel, hover, editor, theme->text, selected, theme->text, theme->primary,
         theme->primary, theme->accent, theme->primary, theme->success,
         theme->warning, theme->danger, theme->accent);
+
+    /* Source-control panel accent/status roles. These classes were added
+       after the block above was written, so without this they stayed on
+       their compile-time fallback colors in style.h regardless of the
+       active theme — the panel visually disagreed with everything else
+       once a non-default theme was selected. Primary/accent drive the
+       panel's interactive chrome (title icon, branch icon, active tab,
+       CTA buttons); success/danger/warning/accent drive git status
+       semantics (added/modified/deleted/conflict, ahead/behind, busy). */
+    css_append(&css,
+        ".scm-title-icon,.scm-branch-icon,.scm-clean-icon{color:%s;}"
+        ".scm-icon-action:hover,.scm-header-icon-action:hover,"
+        ".scm-action-icon:hover{background:%s;color:%s;}"
+        ".scm-primary-action{background:%s;color:%s;}"
+        ".scm-primary-action:hover{background:%s;}"
+        ".scm-danger-action,.scm-icon-danger{color:%s;}"
+        ".scm-danger-action:hover,.scm-icon-danger:hover{background:%s;color:%s;}"
+        ".scm-tab:hover{background:%s;color:%s;}"
+        ".scm-tab-active{color:%s;}"
+        ".scm-busy-icon,.scm-activity-icon{color:%s;}"
+        ".scm-status-added,.scm-sync-ahead{color:%s;}"
+        ".scm-status-modified,.scm-sync-behind{color:%s;}"
+        ".scm-status-deleted,.scm-error-icon,.scm-error-text{color:%s;}"
+        ".scm-status-renamed{color:%s;}.scm-status-conflict{color:%s;}"
+        ".scm-branch-current-icon{color:%s;}"
+        ".scm-graph-line-active{background:%s;}"
+        ".scm-graph-dot-merge{background:%s;}",
+        /* 1 */ theme->secondary,
+        /* 2 */ hover, /* 3 */ theme->text,
+        /* 4 */ theme->primary, /* 5 */ theme->text,
+        /* 6 */ theme->accent,
+        /* 7 */ theme->danger,
+        /* 8 */ hover, /* 9 */ theme->danger,
+        /* 10 */ hover, /* 11 */ theme->text,
+        /* 12 */ theme->primary,
+        /* 13 */ theme->accent,
+        /* 14 */ theme->success,
+        /* 15 */ theme->warning,
+        /* 16 */ theme->danger,
+        /* 17 */ theme->accent, /* 18 */ theme->danger,
+        /* 19 */ theme->primary,
+        /* 20 */ theme->primary,
+        /* 21 */ theme->accent);
     return css.valid && css.length > 0u;
 }
 

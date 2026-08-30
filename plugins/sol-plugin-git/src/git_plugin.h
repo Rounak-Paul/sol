@@ -33,12 +33,28 @@ typedef struct GitFileStatus {
     GitFileKind kind;
 } GitFileStatus;
 
+#define GIT_MAX_PARENTS 2u
+#define GIT_MAX_GRAPH_LANES 32u
+
 typedef struct GitCommitEntry {
     char hash[41];
     char short_hash[17];
     char author[128];
     char date[32];
     char subject[512];
+    /* Parent commit hashes (first GIT_MAX_PARENTS of them; octopus merges
+     * beyond that are rare and the graph only needs enough parents to draw
+     * merge/branch lines, not full ancestry). parent_count may be 0 (root
+     * commit). */
+    char parents[GIT_MAX_PARENTS][41];
+    size_t parent_count;
+    /* Graph layout, computed by git_model_layout_graph() after history is
+     * loaded: which vertical lane this commit's dot sits in, and which
+     * lanes have a line passing through this row (bit i set = lane i has
+     * a continuing line segment spanning this row, used to draw the
+     * vertical connectors between a parent lane and where it resumes). */
+    int lane;
+    uint32_t through_lanes;
 } GitCommitEntry;
 
 typedef struct GitBranchEntry {
@@ -149,11 +165,18 @@ bool git_model_refresh(const char *root,
                        char *error,
                        size_t error_capacity);
 
-/* Load recent commit history. */
+/* Load recent commit history, including parent hashes for graph layout. */
 bool git_model_history(const char *root,
                        GitHistory *history,
                        char *error,
                        size_t error_capacity);
+
+/* Assign a vertical lane to every commit in history (already in reverse-
+ * chronological order, i.e. newest first, matching `git log`'s default
+ * order) and record which lanes have a continuing line through each row,
+ * so the history view can render a compact branch/merge graph. Commits
+ * are assumed already populated with parent hashes. Exposed for tests. */
+void git_model_layout_graph(GitHistory *history);
 
 /* Load local branches and upstream relationships. */
 bool git_model_branches(const char *root,

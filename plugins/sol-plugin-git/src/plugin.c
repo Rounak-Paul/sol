@@ -159,6 +159,71 @@ static const char *git_file_status_style(const GitFileStatus *file,
     return "scm-status-modified";
 }
 
+/* Return the final path component (file name) of a repository-relative path. */
+static const char *git_basename(const char *path)
+{
+    if (!path) return "";
+    const char *slash = strrchr(path, '/');
+#if defined(_WIN32)
+    const char *backslash = strrchr(path, '\\');
+    if (backslash && (!slash || backslash > slash)) slash = backslash;
+#endif
+    return slash ? slash + 1 : path;
+}
+
+/* Return true when `suffix` (some tail segment of `path`, always ending at
+ * its basename) also matches the same tail of `other` at a clean path-
+ * segment boundary. Used to test whether a shortened display name would
+ * still be ambiguous against another visible file. */
+static bool git_path_suffix_collides(const char *suffix, const char *other)
+{
+    const size_t suffix_len = strlen(suffix);
+    const size_t other_len = strlen(other);
+    if (other_len < suffix_len) return false;
+    const char *other_suffix = other + (other_len - suffix_len);
+    if (strcmp(suffix, other_suffix) != 0) return false;
+    if (other_len == suffix_len) return true;
+    const char sep = other[other_len - suffix_len - 1u];
+    return sep == '/' || sep == '\\';
+}
+
+/* Return true when some other file in the snapshot shares the tail `suffix`
+ * of `path`. */
+static bool git_suffix_ambiguous(const GitSnapshot *snapshot,
+                                 const char *path,
+                                 const char *suffix)
+{
+    for (size_t i = 0u; i < snapshot->file_count; ++i) {
+        const char *other = snapshot->files[i].path;
+        if (strcmp(other, path) == 0) continue;
+        if (git_path_suffix_collides(suffix, other)) return true;
+    }
+    return false;
+}
+
+/* Build the display name for one file row into `out`: the basename alone,
+ * or however many trailing path segments are needed to distinguish it from
+ * every other visible file sharing that basename (e.g. two plugins each
+ * with their own src/plugin.c both need their plugin directory name, not
+ * just "src", to stay distinguishable). Falls back to the full path if
+ * every ancestor segment is exhausted without becoming unique. */
+static void git_display_name(const GitSnapshot *snapshot,
+                             const char *path,
+                             char *out,
+                             size_t out_capacity)
+{
+    const char *seg_start = git_basename(path);
+    while (git_suffix_ambiguous(snapshot, path, seg_start) && seg_start > path) {
+        const char *sep = seg_start - 1;
+        const char *seg_begin = sep;
+        while (seg_begin > path && seg_begin[-1] != '/' && seg_begin[-1] != '\\') {
+            --seg_begin;
+        }
+        seg_start = seg_begin;
+    }
+    git_copy_string(out, out_capacity, seg_start);
+}
+
 /* Allocate a stable click context for the current panel rebuild. */
 static GitActionContext *git_action_context(GitPlugin *plugin,
                                             GitUiAction action,
@@ -755,6 +820,34 @@ static void git_render_button(GitPlugin *plugin,
     ca_btn_end();
 }
 
+/* Render a square icon-only button with a hover tooltip label. Used for
+ * compact, densely-aligned row/header actions where a text label would
+ * break horizontal rhythm across rows. Every icon button in this panel
+ * uses the same 16px box / 11px glyph geometry as .buffer-tab-close —
+ * the one icon-button size in this app with a proven non-clipping
+ * track record — rather than a size invented for this panel. */
+static void git_render_icon_button(GitPlugin *plugin,
+                                   const char *icon,
+                                   const char *tooltip,
+                                   GitUiAction action,
+                                   const char *value,
+                                   bool flag,
+                                   bool disabled,
+                                   const char *style)
+{
+    GitActionContext *context = git_action_context(plugin, action, value, flag);
+    ca_btn_begin(&(Ca_BtnDesc){
+        .on_click = context ? git_on_action : NULL,
+        .click_data = context,
+        .style = style ? style : "scm-icon-action",
+        .disabled = disabled || !context,
+        .direction = CA_HORIZONTAL,
+    });
+    ca_text(&(Ca_TextDesc){ .text = icon, .style = "scm-icon-glyph" });
+    ca_btn_end();
+    if (tooltip) ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
+}
+
 /* Dispatch all source-control panel click actions. */
 static void git_on_action(Ca_Button *button, void *user_data)
 {
@@ -881,55 +974,103 @@ static void git_on_branch_change(Ca_TextInput *input, void *user_data)
                                 ca_get_text(input));
 }
 
-/* Render one changed-file row with open, diff, and mutation actions. */
+/* Render one changed-file row. The row itself opens the diff (the most
+ * common action); a dedicated icon button opens the file for editing, and
+ * stage/unstage/discard get their own icon buttons so no action is hidden
+ * behind ambiguous click targets. Only the file name is shown inline —
+ * the full repository-relative path (and rename source, if any) surfaces
+ * as a hover tooltip so long paths never crowd the fixed-width action rail. */
 static void git_render_file_row(GitPlugin *plugin,
                                 const GitFileStatus *file,
                                 bool staged)
 {
-    ca_div_begin(&(Ca_DivDesc){
+    const bool row_disabled = plugin->task_running;
+    char name[128];
+    git_display_name(&plugin->snapshot, file->path, name, sizeof(name));
+    const bool renamed = file->kind == GIT_FILE_RENAMED && file->original_path[0];
+
+    GitActionContext *row_ctx = git_action_context(
+        plugin, GIT_UI_DIFF, file->path, staged);
+    ca_btn_begin(&(Ca_BtnDesc){
         .direction = CA_HORIZONTAL,
+        .on_click = row_ctx ? git_on_action : NULL,
+        .click_data = row_ctx,
         .style = "scm-file-row",
+        .disabled = row_disabled || !row_ctx,
     });
+
     ca_text(&(Ca_TextDesc){
         .text = git_file_status_label(file, staged),
         .style = git_file_status_style(file, staged),
     });
-    git_render_button(plugin, file->path, GIT_UI_OPEN, file->path, false,
-                      false, "scm-file-open");
-    git_render_button(plugin, "Diff", GIT_UI_DIFF, file->path, staged,
-                      plugin->task_running, "scm-row-action");
-    if (staged) {
-        git_render_button(plugin, "-", GIT_UI_UNSTAGE, file->path, false,
-                          plugin->task_running, "scm-row-action");
-    } else {
-        git_render_button(plugin, "+", GIT_UI_STAGE, file->path, false,
-                          plugin->task_running, "scm-row-action");
-        git_render_button(plugin, "x", GIT_UI_DISCARD, file->path,
-                          file->kind == GIT_FILE_UNTRACKED,
-                          plugin->task_running, "scm-row-danger");
+
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .style = "scm-file-name-col",
+    });
+    if (renamed) {
+        ca_text(&(Ca_TextDesc){
+            .text = git_basename(file->original_path),
+            .style = "scm-file-name-old",
+        });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_ARROW_UP, .style = "scm-file-rename-arrow" });
     }
+    ca_text(&(Ca_TextDesc){ .text = name, .style = "scm-file-name" });
     ca_div_end();
+    {
+        char full_path[GIT_PATH_CAP + 64u];
+        if (renamed) {
+            snprintf(full_path, sizeof(full_path), "%s -> %s",
+                     file->original_path, file->path);
+        } else {
+            git_copy_string(full_path, sizeof(full_path), file->path);
+        }
+        ca_tooltip(&(Ca_TooltipDesc){ .text = full_path });
+    }
+
+    git_render_icon_button(plugin, CA_ICON_NF_COD_GO_TO_FILE, "Open File",
+                           GIT_UI_OPEN, file->path, false,
+                           false, "scm-icon-action");
+    if (staged) {
+        git_render_icon_button(plugin, CA_ICON_NF_COD_DASH, "Unstage",
+                               GIT_UI_UNSTAGE, file->path, false,
+                               row_disabled, "scm-icon-action");
+    } else {
+        git_render_icon_button(plugin, CA_ICON_NF_COD_ADD, "Stage",
+                               GIT_UI_STAGE, file->path, false,
+                               row_disabled, "scm-icon-action");
+        git_render_icon_button(plugin, CA_ICON_NF_COD_DISCARD,
+                               file->kind == GIT_FILE_UNTRACKED
+                                   ? "Delete Untracked File" : "Discard Changes",
+                               GIT_UI_DISCARD, file->path,
+                               file->kind == GIT_FILE_UNTRACKED,
+                               row_disabled, "scm-icon-action scm-icon-danger");
+    }
+
+    ca_btn_end();   /* scm-file-row */
 }
 
-/* Render a staged or unstaged file group. */
+/* Render a staged or unstaged file group. Omitted entirely when empty so a
+ * partially-clean tree (e.g. everything staged) doesn't show a dangling
+ * zero-count section with nothing underneath it. */
 static void git_render_file_group(GitPlugin *plugin,
                                   const char *title,
                                   bool staged)
 {
     const size_t count = staged ? plugin->snapshot.staged_count
                                 : plugin->snapshot.unstaged_count;
+    if (count == 0u) return;
+
     char heading[128];
-    snprintf(heading, sizeof(heading), "%s  %zu", title, count);
+    snprintf(heading, sizeof(heading), "%s (%zu)", title, count);
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style = "scm-section-header",
     });
     ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
-    if (count > 0u) {
-        git_render_button(plugin, staged ? "Unstage All" : "Stage All",
-                          staged ? GIT_UI_UNSTAGE_ALL : GIT_UI_STAGE_ALL,
-                          NULL, false, plugin->task_running, "scm-section-action");
-    }
+    git_render_button(plugin, staged ? "Unstage All" : "Stage All",
+                      staged ? GIT_UI_UNSTAGE_ALL : GIT_UI_STAGE_ALL,
+                      NULL, false, plugin->task_running, "scm-section-action");
     ca_div_end();
 
     for (size_t i = 0u; i < plugin->snapshot.file_count; ++i) {
@@ -950,22 +1091,36 @@ static void git_render_changes(GitPlugin *plugin)
     });
     plugin->commit_input = ca_input(&(Ca_InputDesc){
         .text = plugin->commit_message,
-        .placeholder = "Commit message",
+        .placeholder = plugin->snapshot.staged_count > 0u
+            ? "Commit message"
+            : "Stage changes to commit",
         .on_change = git_on_commit_change,
         .change_data = plugin,
         .style = "scm-commit-input",
         .disabled = plugin->task_running,
     });
-    git_render_button(plugin, "Commit", GIT_UI_COMMIT, NULL, false,
-                      plugin->task_running || plugin->snapshot.staged_count == 0u ||
-                      !git_has_content(plugin->commit_message),
-                      "scm-primary-action");
+    {
+        char commit_label[32];
+        if (plugin->snapshot.staged_count > 0u) {
+            snprintf(commit_label, sizeof(commit_label), "Commit (%zu)",
+                     plugin->snapshot.staged_count);
+        } else {
+            git_copy_string(commit_label, sizeof(commit_label), "Commit");
+        }
+        git_render_button(plugin, commit_label, GIT_UI_COMMIT, NULL, false,
+                          plugin->task_running || plugin->snapshot.staged_count == 0u ||
+                          !git_has_content(plugin->commit_message),
+                          "scm-primary-action");
+    }
     ca_div_end();
 
     if (plugin->pending_discard[0]) {
         char message[GIT_PATH_CAP + 96u];
-        snprintf(message, sizeof(message), "Discard local changes to %s?",
-                 plugin->pending_discard);
+        snprintf(message, sizeof(message), "Discard changes to \"%s\"?%s",
+                 git_basename(plugin->pending_discard),
+                 plugin->pending_discard_untracked
+                     ? " This will permanently delete the untracked file."
+                     : " This cannot be undone.");
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style = "scm-confirm",
@@ -981,14 +1136,14 @@ static void git_render_changes(GitPlugin *plugin)
     }
 
     if (plugin->snapshot.file_count == 0u) {
-        ca_text(&(Ca_TextDesc){
-            .text = "Working tree clean",
-            .style = "scm-empty",
-        });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "scm-clean-state" });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CHECK, .style = "scm-clean-icon" });
+        ca_text(&(Ca_TextDesc){ .text = "No changes", .style = "scm-empty" });
+        ca_div_end();
         return;
     }
-    git_render_file_group(plugin, "STAGED CHANGES", true);
-    git_render_file_group(plugin, "CHANGES", false);
+    git_render_file_group(plugin, "Staged Changes", true);
+    git_render_file_group(plugin, "Changes", false);
     if (plugin->snapshot.omitted_count > 0u) {
         char omitted[96];
         snprintf(omitted, sizeof(omitted), "%zu additional paths omitted",
@@ -997,13 +1152,94 @@ static void git_render_changes(GitPlugin *plugin)
     }
 }
 
-/* Render recent repository history. */
+/* Pixel geometry for the commit graph gutter. Lines/dots are plain
+ * absolutely-positioned divs (Causality has no line-drawing primitive),
+ * matching the technique text_view.c already uses for column rulers —
+ * every segment here is axis-aligned (no rotation/diagonal math), which
+ * keeps the geometry exact arithmetic instead of guessed pixel values. */
+#define GIT_GRAPH_LANE_W 14.0f
+#define GIT_GRAPH_LINE_W 2.0f
+#define GIT_GRAPH_DOT_SIZE 8.0f
+#define GIT_GRAPH_MAX_VISIBLE_LANES 5u
+
+/* Return the highest lane index referenced by any commit's through_lanes
+ * bitmask, so the gutter is only as wide as the graph actually needs
+ * (capped so a very tangled history can't push the commit text off the
+ * edge of the narrow sidebar). */
+static unsigned git_graph_lane_span(const GitHistory *history)
+{
+    uint32_t seen = 0u;
+    for (size_t i = 0u; i < history->count; ++i) {
+        seen |= history->commits[i].through_lanes;
+    }
+    unsigned span = 1u;
+    for (unsigned lane = 0u; lane < 32u; ++lane) {
+        if (seen & (1u << lane)) span = lane + 1u;
+    }
+    return span > GIT_GRAPH_MAX_VISIBLE_LANES
+        ? GIT_GRAPH_MAX_VISIBLE_LANES : span;
+}
+
+/* Render one commit row's graph gutter: a full-height vertical line for
+ * every lane passing through this row, plus a dot marking this commit's
+ * own lane. Lines are drawn full-row-height (not stopping at the dot) so
+ * adjacent rows visually connect into continuous vertical rails; the dot
+ * simply paints on top, centered in its lane column. */
+static void git_render_graph_gutter(const GitCommitEntry *entry,
+                                    unsigned lane_span,
+                                    float row_height)
+{
+    const float gutter_w = (float)lane_span * GIT_GRAPH_LANE_W;
+    ca_div_begin(&(Ca_DivDesc){
+        .width = gutter_w,
+        .height = row_height,
+        .style = "scm-graph-gutter",
+    });
+    for (unsigned lane = 0u; lane < lane_span; ++lane) {
+        if (!(entry->through_lanes & (1u << lane))) continue;
+        const float center_x = ((float)lane + 0.5f) * GIT_GRAPH_LANE_W;
+        ca_div_begin(&(Ca_DivDesc){
+            .position = CA_POSITION_ABSOLUTE,
+            .pos_x = center_x - GIT_GRAPH_LINE_W * 0.5f,
+            .pos_y = 0.0f,
+            .width = GIT_GRAPH_LINE_W,
+            .height = row_height,
+            .style = (int)lane == entry->lane
+                ? "scm-graph-line scm-graph-line-active" : "scm-graph-line",
+        });
+        ca_div_end();
+    }
+    if ((unsigned)entry->lane < lane_span) {
+        const float center_x = ((float)entry->lane + 0.5f) * GIT_GRAPH_LANE_W;
+        ca_div_begin(&(Ca_DivDesc){
+            .position = CA_POSITION_ABSOLUTE,
+            .pos_x = center_x - GIT_GRAPH_DOT_SIZE * 0.5f,
+            .pos_y = (row_height - GIT_GRAPH_DOT_SIZE) * 0.5f,
+            .width = GIT_GRAPH_DOT_SIZE,
+            .height = GIT_GRAPH_DOT_SIZE,
+            .corner_radius = GIT_GRAPH_DOT_SIZE * 0.5f,
+            .style = entry->parent_count > 1u
+                ? "scm-graph-dot scm-graph-dot-merge" : "scm-graph-dot",
+        });
+        ca_div_end();
+    }
+    ca_div_end();   /* scm-graph-gutter */
+}
+
+/* Render recent repository history as a compact branch/merge graph: a
+ * lane gutter (computed by git_model_layout_graph) to the left of each
+ * commit's subject/meta text. */
 static void git_render_history(GitPlugin *plugin)
 {
     if (plugin->history.count == 0u && !plugin->task_running) {
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "scm-clean-state" });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_GIT_COMMIT, .style = "scm-clean-icon" });
         ca_text(&(Ca_TextDesc){ .text = "No commits found", .style = "scm-empty" });
+        ca_div_end();
         return;
     }
+    const unsigned lane_span = git_graph_lane_span(&plugin->history);
+    const float row_height = 46.0f;
     for (size_t i = 0u; i < plugin->history.count; ++i) {
         const GitCommitEntry *entry = &plugin->history.commits[i];
         GitActionContext *context = git_action_context(
@@ -1011,15 +1247,23 @@ static void git_render_history(GitPlugin *plugin)
         ca_btn_begin(&(Ca_BtnDesc){
             .on_click = context ? git_on_action : NULL,
             .click_data = context,
-            .direction = CA_VERTICAL,
+            .direction = CA_HORIZONTAL,
             .style = "scm-commit-row",
             .disabled = plugin->task_running || !context,
         });
+        git_render_graph_gutter(entry, lane_span, row_height);
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style = "scm-commit-info",
+        });
         ca_text(&(Ca_TextDesc){ .text = entry->subject, .style = "scm-commit-subject" });
-        char metadata[320];
-        snprintf(metadata, sizeof(metadata), "%s  %s  %s",
-                 entry->short_hash, entry->author, entry->date);
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-commit-meta-row" });
+        ca_text(&(Ca_TextDesc){ .text = entry->short_hash, .style = "scm-commit-hash" });
+        char metadata[300];
+        snprintf(metadata, sizeof(metadata), "%s  \xc2\xb7  %s", entry->author, entry->date);
         ca_text(&(Ca_TextDesc){ .text = metadata, .style = "scm-commit-meta" });
+        ca_div_end();
+        ca_div_end();   /* scm-commit-info */
         ca_btn_end();
     }
 }
@@ -1044,6 +1288,10 @@ static void git_render_branches(GitPlugin *plugin)
                       "scm-primary-action");
     ca_div_end();
 
+    if (plugin->branches.count == 0u && !plugin->task_running) {
+        ca_text(&(Ca_TextDesc){ .text = "No local branches", .style = "scm-empty" });
+    }
+
     for (size_t i = 0u; i < plugin->branches.count; ++i) {
         const GitBranchEntry *entry = &plugin->branches.branches[i];
         GitActionContext *context = git_action_context(
@@ -1051,14 +1299,20 @@ static void git_render_branches(GitPlugin *plugin)
         ca_btn_begin(&(Ca_BtnDesc){
             .on_click = context && !entry->current ? git_on_action : NULL,
             .click_data = context,
-            .direction = CA_VERTICAL,
+            .direction = CA_HORIZONTAL,
             .style = entry->current ? "scm-branch-row-current" : "scm-branch-row",
             .disabled = plugin->task_running || entry->current || !context,
         });
+        ca_text(&(Ca_TextDesc){
+            .text = entry->current ? CA_ICON_NF_COD_CHECK : "",
+            .style = "scm-branch-current-icon",
+        });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "scm-branch-info" });
         ca_text(&(Ca_TextDesc){ .text = entry->name, .style = "scm-branch-name" });
         if (entry->upstream[0]) {
             ca_text(&(Ca_TextDesc){ .text = entry->upstream, .style = "scm-branch-upstream" });
         }
+        ca_div_end();
         ca_btn_end();
     }
 }
@@ -1076,19 +1330,36 @@ static void git_panel_render(void *user_data)
         .direction = CA_HORIZONTAL,
         .style = "scm-header",
     });
-    ca_text(&(Ca_TextDesc){ .text = "SOURCE CONTROL", .style = "scm-title" });
-    git_render_button(plugin, "Refresh", GIT_UI_REFRESH, NULL, false,
-                      plugin->task_running || !plugin->snapshot.repository,
-                      "scm-header-action");
-    git_render_button(plugin, "Close", GIT_UI_CLOSE, NULL, false,
-                      false, "scm-header-action");
+    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_SOURCE_CONTROL, .style = "scm-title-icon" });
+    ca_text(&(Ca_TextDesc){ .text = "Source Control", .style = "scm-title" });
+    /* Fixed-size slot, always present, never toggled with `hidden` —
+     * only its glyph/color/tooltip change with task_running. This is
+     * what keeps busy/idle transitions from ever reflowing the rest of
+     * the panel (a conditionally-rendered banner used to do that). */
+    ca_div_begin(&(Ca_DivDesc){
+        .style = plugin->task_running ? "scm-busy-slot scm-busy-slot-active" : "scm-busy-slot",
+    });
+    if (plugin->task_running) {
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_SYNC, .style = "scm-busy-icon" });
+    }
+    ca_div_end();
+    if (plugin->task_running && plugin->activity[0]) {
+        ca_tooltip(&(Ca_TooltipDesc){ .text = plugin->activity });
+    }
+    git_render_icon_button(plugin, CA_ICON_NF_FA_REFRESH, "Refresh",
+                           GIT_UI_REFRESH, NULL, false,
+                           plugin->task_running || !plugin->snapshot.repository,
+                           "scm-header-icon-action");
+    git_render_icon_button(plugin, CA_ICON_NF_COD_CLOSE, "Close",
+                           GIT_UI_CLOSE, NULL, false, false,
+                           "scm-header-icon-action");
     ca_div_end();
 
     if (plugin->error[0]) {
-        ca_text(&(Ca_TextDesc){ .text = plugin->error, .style = "scm-error" });
-    }
-    if (plugin->task_running && plugin->activity[0]) {
-        ca_text(&(Ca_TextDesc){ .text = plugin->activity, .style = "scm-activity" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-error" });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_DISCARD, .style = "scm-error-icon" });
+        ca_text(&(Ca_TextDesc){ .text = plugin->error, .style = "scm-error-text" });
+        ca_div_end();
     }
 
     if (!plugin->snapshot.repository) {
@@ -1096,6 +1367,7 @@ static void git_panel_render(void *user_data)
             .direction = CA_VERTICAL,
             .style = "scm-no-repository",
         });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_SOURCE_CONTROL, .style = "scm-clean-icon" });
         ca_text(&(Ca_TextDesc){
             .text = plugin->workspace_root[0]
                 ? "The open workspace is not a Git repository."
@@ -1115,36 +1387,64 @@ static void git_panel_render(void *user_data)
         .direction = CA_VERTICAL,
         .style = "scm-repository",
     });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-branch-row-summary" });
+    ca_text(&(Ca_TextDesc){
+        .text = plugin->snapshot.detached ? CA_ICON_NF_COD_GIT_COMMIT : CA_ICON_NF_COD_SOURCE_CONTROL,
+        .style = "scm-branch-icon",
+    });
     ca_text(&(Ca_TextDesc){
         .text = plugin->snapshot.detached ? "detached HEAD" : plugin->snapshot.branch,
         .style = "scm-branch-heading",
     });
-    char sync[256];
+    ca_div_end();
     if (plugin->snapshot.upstream[0]) {
-        snprintf(sync, sizeof(sync), "%s   up %d   down %d",
-                 plugin->snapshot.upstream,
-                 plugin->snapshot.ahead,
-                 plugin->snapshot.behind);
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-upstream-row" });
+        ca_text(&(Ca_TextDesc){ .text = plugin->snapshot.upstream, .style = "scm-upstream" });
+        if (plugin->snapshot.behind > 0) {
+            char behind[24];
+            snprintf(behind, sizeof(behind), "%s%d",
+                     CA_ICON_NF_COD_ARROW_DOWN, plugin->snapshot.behind);
+            ca_text(&(Ca_TextDesc){ .text = behind, .style = "scm-sync-behind" });
+        }
+        if (plugin->snapshot.ahead > 0) {
+            char ahead[24];
+            snprintf(ahead, sizeof(ahead), "%s%d",
+                     CA_ICON_NF_COD_ARROW_UP, plugin->snapshot.ahead);
+            ca_text(&(Ca_TextDesc){ .text = ahead, .style = "scm-sync-ahead" });
+        }
+        ca_div_end();
     } else {
-        snprintf(sync, sizeof(sync), "No upstream configured");
+        ca_text(&(Ca_TextDesc){ .text = "No upstream configured", .style = "scm-upstream" });
     }
-    ca_text(&(Ca_TextDesc){ .text = sync, .style = "scm-upstream" });
     ca_div_end();
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style = "scm-remote-actions",
     });
-    git_render_button(plugin, "Fetch", GIT_UI_FETCH, NULL, false,
-                      plugin->task_running, "scm-action");
-    git_render_button(plugin, "Pull", GIT_UI_PULL, NULL, false,
-                      plugin->task_running || !plugin->snapshot.upstream[0],
-                      "scm-action");
-    git_render_button(plugin, "Push", GIT_UI_PUSH, NULL, false,
-                      plugin->task_running || plugin->snapshot.detached,
-                      "scm-action");
+    git_render_icon_button(plugin, CA_ICON_NF_COD_GIT_FETCH, "Fetch",
+                           GIT_UI_FETCH, NULL, false,
+                           plugin->task_running, "scm-action-icon");
+    git_render_icon_button(plugin, CA_ICON_NF_COD_CLOUD_DOWNLOAD, "Pull",
+                           GIT_UI_PULL, NULL, false,
+                           plugin->task_running || !plugin->snapshot.upstream[0],
+                           "scm-action-icon");
+    git_render_icon_button(plugin, CA_ICON_NF_COD_CLOUD_UPLOAD, "Push",
+                           GIT_UI_PUSH, NULL, false,
+                           plugin->task_running || plugin->snapshot.detached,
+                           "scm-action-icon");
     ca_div_end();
 
+    /* Tabs share the row width evenly (flex-grow, centered) instead of a
+     * fixed-padding row — three text labels at a fixed width could overflow
+     * a narrow sidebar and clip the last tab. All three tabs use the exact
+     * same git_render_button() path (plain Ca_BtnDesc.text, no children) —
+     * an earlier version special-cased Changes with an extra dot-badge
+     * child so it needed its own manually-styled child ca_text instead of
+     * Ca_BtnDesc.text, and that visibly diverged from History/Branches
+     * (wrong size/position) for reasons that didn't resolve under
+     * investigation. Keeping all three on one identical, simple path
+     * removes the divergence outright instead of chasing it further. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style = "scm-tabs",

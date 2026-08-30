@@ -243,6 +243,70 @@ static void test_process_untracked_diff(void)
           strstr(output, "--- a/NUL") != NULL);
 }
 
+/* Fill one commit slot with a hash and up to two parent hashes. */
+static void set_commit(GitCommitEntry *entry, const char *hash,
+                       const char *parent0, const char *parent1)
+{
+    memset(entry, 0, sizeof(*entry));
+    snprintf(entry->hash, sizeof(entry->hash), "%s", hash);
+    if (parent0) {
+        snprintf(entry->parents[0], sizeof(entry->parents[0]), "%s", parent0);
+        entry->parent_count = 1u;
+    }
+    if (parent1) {
+        snprintf(entry->parents[1], sizeof(entry->parents[1]), "%s", parent1);
+        entry->parent_count = 2u;
+    }
+}
+
+/* Verify a merge commit and its feature branch get distinct lanes that
+ * converge back to the mainline lane once the branch's base is reached. */
+static void test_graph_layout_merge(void)
+{
+    GitHistory history;
+    memset(&history, 0, sizeof(history));
+    /* Newest-first, matching git log order:
+     *   C5 = merge(C4, C3b), C4 = feature-of(C2)->main, C3b = feature tip,
+     *   C2 = shared base, C1 = root. */
+    set_commit(&history.commits[0], "C5", "C4", "C3b");
+    set_commit(&history.commits[1], "C4", "C2", NULL);
+    set_commit(&history.commits[2], "C3b", "C2", NULL);
+    set_commit(&history.commits[3], "C2", "C1", NULL);
+    set_commit(&history.commits[4], "C1", NULL, NULL);
+    history.count = 5u;
+
+    git_model_layout_graph(&history);
+
+    CHECK(history.commits[0].lane == 0); /* C5: merge commit stays on mainline */
+    CHECK(history.commits[1].lane == 0); /* C4: mainline continues */
+    CHECK(history.commits[2].lane == 1); /* C3b: feature branch gets its own lane */
+    CHECK(history.commits[3].lane == 0); /* C2: both lanes converge back */
+    CHECK(history.commits[4].lane == 0); /* C1: root, still mainline */
+    /* C4's row is where the feature lane is visibly open alongside main. */
+    CHECK((history.commits[1].through_lanes & 0x3u) == 0x3u);
+}
+
+/* Verify two unrelated branch tips (never merged, as happens when history
+ * is truncated) don't hold a lane open past where each one closes — the
+ * second branch should reuse the first's freed lane, not open a new one. */
+static void test_graph_layout_unrelated_branches(void)
+{
+    GitHistory history;
+    memset(&history, 0, sizeof(history));
+    set_commit(&history.commits[0], "B2", "B1", NULL);
+    set_commit(&history.commits[1], "B1", NULL, NULL);
+    set_commit(&history.commits[2], "A2", "A1", NULL);
+    set_commit(&history.commits[3], "A1", NULL, NULL);
+    history.count = 4u;
+
+    git_model_layout_graph(&history);
+
+    CHECK(history.commits[0].lane == 0);
+    CHECK(history.commits[1].lane == 0);
+    CHECK(history.commits[2].lane == 0); /* reuses lane 0, freed after B1 */
+    CHECK(history.commits[3].lane == 0);
+}
+
 int main(void)
 {
     test_status_core_records();
@@ -254,6 +318,8 @@ int main(void)
     test_process_invalid_directory();
     test_process_tracked_diff();
     test_process_untracked_diff();
+    test_graph_layout_merge();
+    test_graph_layout_unrelated_branches();
     if (g_failures == 0) {
         printf("sol_git_plugin_tests: all checks passed\n");
         return 0;

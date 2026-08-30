@@ -270,6 +270,27 @@ bool git_model_refresh(const char *root,
 }
 
 /* Load recent commit history using control-character field delimiters. */
+/* Split a space-separated list of parent hashes (git log's %P) into up to
+ * GIT_MAX_PARENTS entries on the commit entry. */
+static void git_parse_parent_hashes(GitCommitEntry *entry,
+                                    const char *field,
+                                    const char *field_end)
+{
+    entry->parent_count = 0u;
+    const char *p = field;
+    while (p < field_end && entry->parent_count < GIT_MAX_PARENTS) {
+        while (p < field_end && *p == ' ') ++p;
+        const char *start = p;
+        while (p < field_end && *p != ' ') ++p;
+        if (p > start) {
+            git_copy_span(entry->parents[entry->parent_count],
+                         sizeof(entry->parents[0]), start,
+                         (size_t)(p - start));
+            entry->parent_count++;
+        }
+    }
+}
+
 bool git_model_history(const char *root,
                        GitHistory *history,
                        char *error,
@@ -281,7 +302,7 @@ bool git_model_history(const char *root,
     if (!output) return false;
     const char *argv[] = {
         "git", "log", "--max-count=128", "--date=short",
-        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1e", NULL
+        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%P%x1f%s%x1e", NULL
     };
     GitProcessResult result = git_process_run(root, argv, output,
                                               GIT_PROCESS_OUTPUT_CAP, 30000u);
@@ -296,17 +317,18 @@ bool git_model_history(const char *root,
     while (cursor < limit && history->count < GIT_MAX_COMMITS) {
         const char *record_end = memchr(cursor, 0x1e, (size_t)(limit - cursor));
         if (!record_end) record_end = limit;
-        const char *fields[5] = { cursor, NULL, NULL, NULL, NULL };
+        const char *fields[6] = { cursor, NULL, NULL, NULL, NULL, NULL };
         const char *scan = cursor;
-        for (size_t i = 1u; i < 5u; ++i) {
+        for (size_t i = 1u; i < 6u; ++i) {
             scan = memchr(scan, 0x1f, (size_t)(record_end - scan));
             if (!scan) break;
             fields[i] = ++scan;
         }
-        if (fields[4]) {
+        if (fields[5]) {
             GitCommitEntry *entry = &history->commits[history->count++];
-            const char *ends[5] = { fields[1] - 1, fields[2] - 1,
-                                    fields[3] - 1, fields[4] - 1, record_end };
+            const char *ends[6] = { fields[1] - 1, fields[2] - 1,
+                                    fields[3] - 1, fields[4] - 1,
+                                    fields[5] - 1, record_end };
             git_copy_span(entry->hash, sizeof(entry->hash), fields[0],
                           (size_t)(ends[0] - fields[0]));
             git_copy_span(entry->short_hash, sizeof(entry->short_hash), fields[1],
@@ -315,13 +337,89 @@ bool git_model_history(const char *root,
                           (size_t)(ends[2] - fields[2]));
             git_copy_span(entry->date, sizeof(entry->date), fields[3],
                           (size_t)(ends[3] - fields[3]));
-            git_copy_span(entry->subject, sizeof(entry->subject), fields[4],
-                          (size_t)(ends[4] - fields[4]));
+            git_parse_parent_hashes(entry, fields[4], ends[4]);
+            git_copy_span(entry->subject, sizeof(entry->subject), fields[5],
+                          (size_t)(ends[5] - fields[5]));
         }
         cursor = record_end < limit ? record_end + 1u : limit;
     }
     free(output);
+    git_model_layout_graph(history);
     return true;
+}
+
+/* Return true when two commit hashes are the same non-empty hash. */
+static bool git_hash_eq(const char *a, const char *b)
+{
+    return a[0] != '\0' && b[0] != '\0' && strcmp(a, b) == 0;
+}
+
+/* Assign vertical graph lanes to a commit list in reverse-chronological
+ * (newest-first) order — the same order `git log` returns.
+ *
+ * One pass, tracking which commit hash each active lane is "waiting for"
+ * (i.e. the next commit, further down the list, that will continue that
+ * lane). For each commit: find the lane already waiting for it (or open a
+ * new one for a fresh branch tip), record every currently-active lane as
+ * "passing through" this row for line drawing, then update lane
+ * assignments for its parents — first parent continues the same lane,
+ * additional parents (merges) each claim an existing lane already waiting
+ * for them or open a new one. Trailing free lanes are trimmed so closed
+ * branches don't hold a column open forever.
+ */
+void git_model_layout_graph(GitHistory *history)
+{
+    if (!history) return;
+    char lanes[GIT_MAX_GRAPH_LANES][41];
+    size_t lane_count = 0u;
+    for (size_t i = 0u; i < GIT_MAX_GRAPH_LANES; ++i) lanes[i][0] = '\0';
+
+    for (size_t i = 0u; i < history->count; ++i) {
+        GitCommitEntry *commit = &history->commits[i];
+
+        int my_lane = -1;
+        for (size_t lane = 0u; lane < lane_count; ++lane) {
+            if (git_hash_eq(lanes[lane], commit->hash)) {
+                my_lane = (int)lane;
+                break;
+            }
+        }
+        if (my_lane < 0) {
+            my_lane = lane_count < GIT_MAX_GRAPH_LANES
+                ? (int)lane_count++ : (int)GIT_MAX_GRAPH_LANES - 1;
+        }
+        commit->lane = my_lane;
+
+        uint32_t through = 0u;
+        for (size_t lane = 0u; lane < lane_count; ++lane) {
+            if (lanes[lane][0]) through |= (1u << lane);
+        }
+        through |= (1u << (uint32_t)my_lane);
+        commit->through_lanes = through;
+
+        lanes[my_lane][0] = '\0';
+        if (commit->parent_count > 0u) {
+            git_copy_span(lanes[my_lane], sizeof(lanes[my_lane]),
+                         commit->parents[0], strlen(commit->parents[0]));
+        }
+        for (size_t p = 1u; p < commit->parent_count; ++p) {
+            bool found = false;
+            for (size_t lane = 0u; lane < lane_count; ++lane) {
+                if (git_hash_eq(lanes[lane], commit->parents[p])) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && lane_count < GIT_MAX_GRAPH_LANES) {
+                git_copy_span(lanes[lane_count], sizeof(lanes[lane_count]),
+                             commit->parents[p], strlen(commit->parents[p]));
+                ++lane_count;
+            }
+        }
+        while (lane_count > 0u && lanes[lane_count - 1u][0] == '\0') {
+            --lane_count;
+        }
+    }
 }
 
 /* Load local branches and upstream names. */

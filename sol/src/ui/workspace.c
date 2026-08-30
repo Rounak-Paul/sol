@@ -774,7 +774,13 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
             args.rect = *rect;
             args.rect.y += SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale;
             args.rect.h -= SOL_UI_BUFFER_TAB_STRIP_HEIGHT * scale;
-            if (args.rect.h < 0.0f) args.rect.h = 0.0f;
+            /* Clamp to a small positive floor rather than 0: a rect of
+             * exactly 0 is indistinguishable downstream from "no layout
+             * rect provided yet", which falls back to full-window sizing
+             * and would badly oversize the scrollbar/viewport math for a
+             * pane that is merely tiny (heavy splits, extreme resize). */
+            if (args.rect.h < 1.0f) args.rect.h = 1.0f;
+            if (args.rect.w < 1.0f) args.rect.w = 1.0f;
         }
         sol_buffer_render(buffer, &args);
     }
