@@ -994,13 +994,20 @@ static bool sol_on_tree_file_open(const char *path, void *user_data)
  * SSH connect-dialog callback: fired once when the user confirms a
  * connection attempt in the connect window (sol_ssh_window.h).
  *
- * The terminal-over-SSH transport (sol_terminal_manager_new_ssh_tab,
- * backed by the vendored libssh2) is not wired up yet — this currently
- * surfaces a clear "not yet available" popup rather than silently
- * discarding the user's Connect click, so the dialog visibly does
- * something meaningful in the interim. Replace the popup with an
- * actual sol_terminal_manager_new_ssh_tab(app->terminal_mgr, conn,
- * password) call once that backend lands.
+ * Opens a new terminal tab backed by an SSH shell channel to conn's
+ * host (sol_terminal_manager_new_ssh_tab, see sol_terminal.c) and
+ * switches focus to the terminal panel so the session is immediately
+ * visible — the same sequence "terminal.tab.new" already uses for a
+ * local tab.
+ *
+ * The connect+handshake+auth sequence runs synchronously on the main
+ * thread (a few hundred ms on a reachable host; up to the OS TCP
+ * connect timeout — tens of seconds — on an unreachable one), so the
+ * UI is unresponsive for the duration of a slow/failed connection
+ * attempt. Acceptable for this pass; moving it to a background job
+ * with a "connecting..." indicator is a reasonable follow-up if that
+ * proves annoying in practice, not a correctness issue blocking this
+ * one.
  *
  * conn       The confirmed connection profile.
  * password   Password typed for this attempt (only meaningful when
@@ -1010,17 +1017,28 @@ static bool sol_on_tree_file_open(const char *path, void *user_data)
 static void sol_on_ssh_connect(const SolSshConnection *conn,
                                const char *password, void *user_data)
 {
-    (void)password;
     SolAppContext *app = (SolAppContext *)user_data;
     if (!app || !conn) return;
+    if (!app->terminal_mgr) {
+        sol_show_error(app, "Terminal is unavailable; cannot open an SSH session.");
+        return;
+    }
 
-    char message[512];
-    snprintf(message, sizeof(message),
-             "SSH connections aren't wired up yet — \"%s\" (%s@%s:%u) was "
-             "saved but not connected.",
-             conn->name, conn->user[0] ? conn->user : "?", conn->host,
-             (unsigned)conn->port);
-    sol_show_error(app, message);
+    const char *err = NULL;
+    SolTerminal *term = sol_terminal_manager_new_ssh_tab(
+        app->terminal_mgr, conn, password, &err);
+    if (!term) {
+        char message[512];
+        snprintf(message, sizeof(message), "Could not connect to \"%s\" (%s@%s:%u): %s",
+                 conn->name, conn->user[0] ? conn->user : "?", conn->host,
+                 (unsigned)conn->port, err ? err : "unknown error");
+        sol_show_error(app, message);
+        return;
+    }
+
+    sol_terminal_manager_set_visible(app->terminal_mgr, true);
+    sol_ui_system_terminal_set_focused(app->ui, true);
+    sol_ui_system_terminal_notify(app->ui);
 }
 
 /* File-picker callbacks. */

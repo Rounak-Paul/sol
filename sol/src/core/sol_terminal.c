@@ -7,11 +7,16 @@
  * Cell grid: scrollback ring + viewport grid + alt-screen.
  * PTY (Unix):  forkpty/posix_openpt + reader pthread.
  * PTY (Win):   ConPTY (CreatePseudoConsole) + reader thread.
+ * SSH (Unix):  libssh2 exec channel over a raw TCP socket + reader thread —
+ *              see the "SSH backend" section below. Not yet available on
+ *              Windows (BSD-socket assumptions throughout); a Winsock port
+ *              is future work, not a design constraint on the Unix path.
  */
 
 #include "sol_terminal.h"
 #include "sol_input.h"      /* SOL_KEY_*, SOL_MOD_* constants */
 #include "sol_platform.h"   /* sol_platform_now_monotonic_ns */
+#include "sol_ssh_config.h" /* SolSshConnection, SolSshAuthMethod */
 #include "sol_threading.h"
 
 #include <causality.h>
@@ -34,8 +39,10 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
 #include <processthreadsapi.h>
 #else
 #include <fcntl.h>
+#include <netdb.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -44,6 +51,7 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
 #else
 #include <pty.h>
 #endif
+#include <libssh2.h>
 #endif
 
 /* ================================================================== */
@@ -198,6 +206,19 @@ struct SolTerminal {
 #else
     int          master_fd;
     pid_t        child_pid;
+
+    /* SSH transport (only when is_ssh is true — see the "SSH backend"
+       section). master_fd stays -1 for an SSH session; ssh_sock is the
+       raw TCP socket libssh2 reads/writes through instead. Kept as
+       separate fields rather than reusing master_fd for the socket so
+       every existing "if (term->master_fd >= 0)" PTY-path check stays
+       correct unmodified — those checks now implicitly also mean
+       "this is a local PTY session", which is exactly the condition
+       they need now that a second transport exists. */
+    bool             is_ssh;
+    int              ssh_sock;
+    LIBSSH2_SESSION *ssh_session;
+    LIBSSH2_CHANNEL *ssh_channel;
 #endif
 
     /* Reader thread. */
@@ -1028,12 +1049,8 @@ static void vt_csi_dispatch(SolTerminal *term, uint8_t final)
     /* ---- Device attributes / status ---- */
     case 'c': /* DA: device attributes — report as VT102 */
         if (!priv || vt_param(term, 0, 0) == 0) {
-#if !defined(_WIN32)
             const char *da = "\033[?6c";
-            if (term->master_fd >= 0) {
-                (void)write(term->master_fd, da, strlen(da));
-            }
-#endif
+            sol_terminal_send_text(term, da, strlen(da));
         }
         break;
     case 'n': /* DSR: device status report */
@@ -1042,10 +1059,7 @@ static void vt_csi_dispatch(SolTerminal *term, uint8_t final)
             char buf[32];
             snprintf(buf, sizeof(buf), "\033[%d;%dR",
                      term->cur_row + 1, term->cur_col + 1);
-#if !defined(_WIN32)
-            if (term->master_fd >= 0)
-                (void)write(term->master_fd, buf, strlen(buf));
-#endif
+            sol_terminal_send_text(term, buf, strlen(buf));
         }
         break;
 
@@ -1563,6 +1577,42 @@ static void vt_utf8_feed(SolTerminal *term, VtUtf8 *u, uint8_t byte)
 #if !defined(_WIN32)
 
 /*
+ * Deposit n freshly-read bytes into the output ring buffer and, if the
+ * main thread has consumed the previous wake, ping the Causality
+ * instance so it drains and repaints. Shared by both the local-PTY and
+ * SSH reader threads — every byte-source difference between them ends
+ * here.
+ *
+ * term  Terminal whose ring buffer receives the bytes.
+ * buf   Freshly-read bytes.
+ * n     Number of bytes in buf (> 0).
+ */
+static void sol_terminal_reader_deposit(SolTerminal *term, const char *buf, ssize_t n)
+{
+    pthread_mutex_lock(&term->output_mutex);
+    for (ssize_t i = 0; i < n; ++i) {
+        size_t next = (term->output_head + 1) % SOL_TERM_OUTPUT_RING_SIZE;
+        if (next != term->output_tail) {
+            term->output_ring[term->output_head] = buf[i];
+            term->output_head = next;
+        }
+        /* Drop bytes if ring is full rather than blocking the reader. */
+    }
+    pthread_mutex_unlock(&term->output_mutex);
+
+    /* Rate-limit wakes: only call ca_instance_wake() if the main thread
+       has already consumed the previous wake (i.e. cleared wake_pending
+       during drain).  Under flood output this keeps wake rate at one per
+       drain cycle (~one per display frame) instead of one per read(). */
+    bool expected = false;
+    if (atomic_compare_exchange_strong_explicit(
+            &term->wake_pending, &expected, true,
+            memory_order_acq_rel, memory_order_relaxed)) {
+        ca_instance_wake();
+    }
+}
+
+/*
  * Reader thread: blocks on read() from the PTY master fd, deposits bytes
  * into the ring buffer, then wakes the Causality instance.
  *
@@ -1588,27 +1638,47 @@ static void *sol_terminal_reader_thread(void *arg)
             break; /* EIO (slave closed), EBADF (fd closed), or EOF */
         }
 
-        pthread_mutex_lock(&term->output_mutex);
-        for (ssize_t i = 0; i < n; ++i) {
-            size_t next = (term->output_head + 1) % SOL_TERM_OUTPUT_RING_SIZE;
-            if (next != term->output_tail) {
-                term->output_ring[term->output_head] = buf[i];
-                term->output_head = next;
-            }
-            /* Drop bytes if ring is full rather than blocking the reader. */
-        }
-        pthread_mutex_unlock(&term->output_mutex);
+        sol_terminal_reader_deposit(term, buf, n);
+    }
 
-        /* Rate-limit wakes: only call ca_instance_wake() if the main thread
-           has already consumed the previous wake (i.e. cleared wake_pending
-           during drain).  Under flood output this keeps wake rate at one per
-           drain cycle (~one per display frame) instead of one per read(). */
-        bool expected = false;
-        if (atomic_compare_exchange_strong_explicit(
-                &term->wake_pending, &expected, true,
-                memory_order_acq_rel, memory_order_relaxed)) {
-            ca_instance_wake();
+    term->is_alive = false;
+    ca_instance_wake();
+    return NULL;
+}
+
+/*
+ * Reader thread for an SSH-backed session: blocks on
+ * libssh2_channel_read_ex, deposits bytes into the ring buffer, then
+ * wakes the Causality instance. Mirrors sol_terminal_reader_thread
+ * exactly except for the byte source — see sol_terminal_reader_deposit.
+ *
+ * arg  SolTerminal pointer.
+ * Returns NULL always.
+ */
+static void *sol_terminal_ssh_reader_thread(void *arg)
+{
+    SolTerminal *term = (SolTerminal *)arg;
+    char buf[32768];
+    LIBSSH2_CHANNEL *channel = term->ssh_channel;
+
+    while (!atomic_load_explicit(&term->stop_reader, memory_order_relaxed)) {
+        ssize_t n = (ssize_t)libssh2_channel_read_ex(channel, 0, buf, sizeof(buf));
+        if (n > 0) {
+            sol_terminal_reader_deposit(term, buf, n);
+            continue;
         }
+        if (n == LIBSSH2_ERROR_EAGAIN) {
+            usleep(1000);
+            continue;
+        }
+        /* n == 0 (remote closed its write side) or a real libssh2 error
+           (n < 0, not EAGAIN) — either way, this session is over. Also
+           stop once the remote has sent SSH_MSG_CHANNEL_EOF even if a
+           final zero-byte read hasn't been observed yet, so a channel
+           that stops sending data but never reports 0/error doesn't
+           spin this thread forever. */
+        if (n <= 0 && (n != LIBSSH2_ERROR_EAGAIN)) break;
+        if (libssh2_channel_eof(channel)) break;
     }
 
     term->is_alive = false;
@@ -1709,6 +1779,368 @@ static void sol_terminal_stop_pty(SolTerminal *term)
     if (term->master_fd >= 0) {
         close(term->master_fd);
         term->master_fd = -1;
+    }
+}
+
+/* ================================================================== */
+/* SSH backend — Unix                                                  */
+/* ================================================================== */
+
+/*
+ * Resolve host to an IPv4/IPv6 address and open a connected, blocking
+ * TCP socket to it on the given port.
+ *
+ * host       Hostname or numeric address.
+ * port       TCP port (SSH is almost always 22, but the connection
+ *            profile carries whatever the user configured).
+ * out_error  Set to a short static string describing the failure on
+ *            return -1; untouched on success.
+ * Returns    A connected socket fd, or -1 on failure.
+ */
+static int sol_ssh_connect_tcp(const char *host, uint16_t port, const char **out_error)
+{
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)port);
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo *results = NULL;
+    if (getaddrinfo(host, port_str, &hints, &results) != 0 || !results) {
+        if (out_error) *out_error = "could not resolve host";
+        return -1;
+    }
+
+    int sock = -1;
+    for (struct addrinfo *ai = results; ai; ai = ai->ai_next) {
+        sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock < 0) continue;
+        if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0) break;
+        close(sock);
+        sock = -1;
+    }
+    freeaddrinfo(results);
+
+    if (sock < 0 && out_error) *out_error = "could not connect to host";
+    return sock;
+}
+
+/*
+ * Verify the remote host's key against ~/.ssh/known_hosts.
+ *
+ * Sol never silently trusts an unrecognized or changed host key — an
+ * unknown host fails the connection with a clear message (the user can
+ * still add it via a normal `ssh` invocation first, which is the
+ * standard trust-on-first-use flow every SSH client already asks the
+ * user to go through once) rather than proceeding as if the key were
+ * verified. A file that cannot be read at all (missing known_hosts, no
+ * $HOME) is treated the same as "not found" for the one host being
+ * checked, not as a hard error — a first-ever SSH connection from this
+ * machine should not be blocked by an absent file.
+ *
+ * session    Handshaked libssh2 session to read the host key from.
+ * host       Hostname the connection was made to (the known_hosts key).
+ * port       Port the connection was made to.
+ * out_error  Set to a short static string describing the failure on
+ *            return false; untouched on success.
+ * Returns    true if the host key matches a known_hosts entry.
+ */
+static bool sol_ssh_verify_host_key(LIBSSH2_SESSION *session, const char *host,
+                                    uint16_t port, const char **out_error)
+{
+    size_t key_len = 0;
+    int key_type = 0;
+    const char *key = libssh2_session_hostkey(session, &key_len, &key_type);
+    if (!key) {
+        if (out_error) *out_error = "remote sent no host key";
+        return false;
+    }
+
+    LIBSSH2_KNOWNHOSTS *hosts = libssh2_knownhost_init(session);
+    if (!hosts) {
+        if (out_error) *out_error = "could not initialize known_hosts check";
+        return false;
+    }
+
+    bool ok = false;
+    char *home = getenv("HOME");
+    if (home) {
+        char path[1088];
+        snprintf(path, sizeof(path), "%s/.ssh/known_hosts", home);
+        /* A missing/unreadable file just means nothing is known yet —
+           libssh2_knownhost_checkp below correctly reports NOTFOUND in
+           that case too, so there is nothing to branch on here. */
+        (void)libssh2_knownhost_readfile(hosts, path, LIBSSH2_KNOWNHOST_FILE_OPENSSH);
+    }
+
+    struct libssh2_knownhost *found = NULL;
+    const int mask = LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW |
+        ((key_type == LIBSSH2_HOSTKEY_TYPE_RSA)     ? LIBSSH2_KNOWNHOST_KEY_SSHRSA
+        : (key_type == LIBSSH2_HOSTKEY_TYPE_DSS)    ? LIBSSH2_KNOWNHOST_KEY_SSHDSS
+        : (key_type == LIBSSH2_HOSTKEY_TYPE_ECDSA_256) ? LIBSSH2_KNOWNHOST_KEY_ECDSA_256
+        : (key_type == LIBSSH2_HOSTKEY_TYPE_ECDSA_384) ? LIBSSH2_KNOWNHOST_KEY_ECDSA_384
+        : (key_type == LIBSSH2_HOSTKEY_TYPE_ECDSA_521) ? LIBSSH2_KNOWNHOST_KEY_ECDSA_521
+        : (key_type == LIBSSH2_HOSTKEY_TYPE_ED25519)   ? LIBSSH2_KNOWNHOST_KEY_ED25519
+        : LIBSSH2_KNOWNHOST_KEY_UNKNOWN);
+    const int check = libssh2_knownhost_checkp(hosts, host, (int)port, key, key_len,
+                                               mask | LIBSSH2_KNOWNHOST_TYPE_PLAIN,
+                                               &found);
+    switch (check) {
+    case LIBSSH2_KNOWNHOST_CHECK_MATCH:
+        ok = true;
+        break;
+    case LIBSSH2_KNOWNHOST_CHECK_MISMATCH:
+        if (out_error) *out_error =
+            "host key changed — possible impersonation; refusing to connect "
+            "(remove the stale entry from ~/.ssh/known_hosts if this is expected)";
+        break;
+    case LIBSSH2_KNOWNHOST_CHECK_NOTFOUND:
+        if (out_error) *out_error =
+            "host key not in ~/.ssh/known_hosts — connect with a regular `ssh` "
+            "client first to add it, then retry";
+        break;
+    default:
+        if (out_error) *out_error = "could not verify host key";
+        break;
+    }
+
+    libssh2_knownhost_free(hosts);
+    return ok;
+}
+
+/*
+ * Authenticate an established, handshaked libssh2 session using the
+ * method recorded on conn.
+ *
+ * session    Handshaked session to authenticate.
+ * conn       Connection profile (user, auth method, key path).
+ * password   Password to try (only used for SOL_SSH_AUTH_PASSWORD).
+ * out_error  Set to a short static string describing the failure on
+ *            return false; untouched on success.
+ * Returns    true once libssh2_userauth_authenticated(session) is true.
+ */
+static bool sol_ssh_authenticate(LIBSSH2_SESSION *session, const SolSshConnection *conn,
+                                 const char *password, const char **out_error)
+{
+    switch (conn->auth) {
+    case SOL_SSH_AUTH_PASSWORD:
+        if (libssh2_userauth_password(session, conn->user, password ? password : "") != 0) {
+            if (out_error) *out_error = "password authentication failed";
+            return false;
+        }
+        break;
+
+    case SOL_SSH_AUTH_KEY: {
+        if (conn->key_path[0] == '\0') {
+            if (out_error) *out_error = "no private key file configured";
+            return false;
+        }
+        /* Public key path left NULL: libssh2 derives it from the
+           private key itself for the common case (OpenSSH-format keys
+           embed/derive their own public half), matching what a bare
+           `ssh -i keyfile` invocation does without a separate .pub. */
+        if (libssh2_userauth_publickey_fromfile(
+                session, conn->user, NULL, conn->key_path, NULL) != 0) {
+            if (out_error) *out_error = "public key authentication failed "
+                                         "(wrong passphrase, or key rejected)";
+            return false;
+        }
+        break;
+    }
+
+    case SOL_SSH_AUTH_AGENT: {
+        LIBSSH2_AGENT *agent = libssh2_agent_init(session);
+        if (!agent) {
+            if (out_error) *out_error = "could not initialize ssh-agent connection";
+            return false;
+        }
+        bool ok = false;
+        if (libssh2_agent_connect(agent) == 0 &&
+            libssh2_agent_list_identities(agent) == 0) {
+            struct libssh2_agent_publickey *identity = NULL;
+            struct libssh2_agent_publickey *prev = NULL;
+            for (;;) {
+                if (libssh2_agent_get_identity(agent, &identity, prev) != 0) break;
+                if (libssh2_agent_userauth(agent, conn->user, identity) == 0) {
+                    ok = true;
+                    break;
+                }
+                prev = identity;
+            }
+        }
+        libssh2_agent_disconnect(agent);
+        libssh2_agent_free(agent);
+        if (!ok) {
+            if (out_error) *out_error =
+                "no identity offered by ssh-agent was accepted "
+                "(is ssh-agent running with the right key loaded?)";
+            return false;
+        }
+        break;
+    }
+    }
+
+    return libssh2_userauth_authenticated(session) != 0;
+}
+
+/*
+ * Open an SSH session to conn's host, authenticate, open a channel,
+ * request a PTY sized to term->cols/rows, and start an interactive
+ * shell on it — the SSH equivalent of sol_terminal_start_pty. Sets
+ * ssh_sock/ssh_session/ssh_channel and starts the reader thread.
+ *
+ * term       Terminal to initialise. term->cols/rows must already be set
+ *            (sol_terminal_create sets the defaults before calling this).
+ * conn       Connection profile to connect with.
+ * password   Password to try (only used for SOL_SSH_AUTH_PASSWORD).
+ * out_error  Set to a short, user-presentable string on failure
+ *            (points at either a static string or a small internal
+ *            static buffer — valid until the next call on any thread,
+ *            so callers must copy it before doing anything else that
+ *            might call into this module again). Untouched on success.
+ * Returns    true on success.
+ */
+static bool sol_terminal_start_ssh(SolTerminal *term, const SolSshConnection *conn,
+                                   const char *password, const char **out_error)
+{
+    static char err_buf[256];
+
+    term->ssh_sock = sol_ssh_connect_tcp(conn->host, conn->port, out_error);
+    if (term->ssh_sock < 0) return false;
+
+    term->ssh_session = libssh2_session_init();
+    if (!term->ssh_session) {
+        if (out_error) *out_error = "could not create SSH session";
+        close(term->ssh_sock);
+        term->ssh_sock = -1;
+        return false;
+    }
+    /* Reader thread owns blocking reads on the channel, same contract
+       as the local-PTY reader thread — see its comment. Handshake and
+       auth below run blocking too, which is intended: they happen
+       synchronously on the main thread before the terminal is usable
+       either way, so there is nothing to overlap them with. */
+    libssh2_session_set_blocking(term->ssh_session, 1);
+
+    if (libssh2_session_handshake(term->ssh_session, term->ssh_sock) != 0) {
+        if (out_error) *out_error = "SSH handshake failed";
+        libssh2_session_free(term->ssh_session);
+        term->ssh_session = NULL;
+        close(term->ssh_sock);
+        term->ssh_sock = -1;
+        return false;
+    }
+
+    if (!sol_ssh_verify_host_key(term->ssh_session, conn->host, conn->port, out_error))
+        goto fail_after_handshake;
+
+    if (!sol_ssh_authenticate(term->ssh_session, conn, password, out_error))
+        goto fail_after_handshake;
+
+    term->ssh_channel = libssh2_channel_open_session(term->ssh_session);
+    if (!term->ssh_channel) {
+        if (out_error) *out_error = "could not open SSH channel";
+        goto fail_after_handshake;
+    }
+
+    if (libssh2_channel_request_pty_ex(term->ssh_channel, "xterm-256color",
+                                       sizeof("xterm-256color") - 1, NULL, 0,
+                                       term->cols, term->rows, 0, 0) != 0) {
+        if (out_error) *out_error = "remote refused to allocate a PTY";
+        goto fail_after_channel;
+    }
+
+    if (libssh2_channel_shell(term->ssh_channel) != 0) {
+        if (out_error) *out_error = "remote refused to start a shell";
+        goto fail_after_channel;
+    }
+
+    /* Reader thread wants blocking channel reads with an EAGAIN escape
+       hatch handled explicitly (see sol_terminal_ssh_reader_thread),
+       not libssh2's fully-nonblocking session mode — leave the session
+       itself blocking; libssh2_channel_read_ex on a blocking session
+       still returns LIBSSH2_ERROR_EAGAIN from within a callback-driven
+       keepalive/window-adjust path in rare cases, which the reader
+       already treats as "try again", so this is correct either way. */
+    atomic_store_explicit(&term->stop_reader, false, memory_order_relaxed);
+    if (pthread_create(&term->reader_thread, NULL,
+                       sol_terminal_ssh_reader_thread, term) != 0) {
+        if (out_error) *out_error = "could not start terminal reader thread";
+        goto fail_after_channel;
+    }
+    term->reader_started = true;
+    term->is_ssh = true;
+    return true;
+
+fail_after_channel:
+    libssh2_channel_free(term->ssh_channel);
+    term->ssh_channel = NULL;
+fail_after_handshake:
+    if (out_error && *out_error) {
+        /* Copy into a stable buffer before session_free — some libssh2
+           error strings referenced no error buffer of our own, but
+           sol_ssh_authenticate/sol_ssh_verify_host_key already only
+           ever hand back static string literals, so this snprintf is a
+           belt-and-suspenders normalization, not a use-after-free fix. */
+        snprintf(err_buf, sizeof(err_buf), "%s", *out_error);
+        *out_error = err_buf;
+    }
+    libssh2_session_disconnect_ex(term->ssh_session, SSH_DISCONNECT_BY_APPLICATION,
+                                  "", "");
+    libssh2_session_free(term->ssh_session);
+    term->ssh_session = NULL;
+    close(term->ssh_sock);
+    term->ssh_sock = -1;
+    return false;
+}
+
+/*
+ * Tear down an SSH-backed session: stop the reader thread, close the
+ * channel and session, and close the socket. The SSH equivalent of
+ * sol_terminal_stop_pty.
+ *
+ * term  Terminal to tear down.
+ */
+static void sol_terminal_stop_ssh(SolTerminal *term)
+{
+    atomic_store_explicit(&term->stop_reader, true, memory_order_relaxed);
+
+    /* Closing the raw socket first — NOT libssh2_channel_close — is
+       what actually unblocks the reader thread. The reader is parked
+       inside libssh2_channel_read_ex, which internally calls select()
+       on ssh_sock whenever it would otherwise block; closing the fd out
+       from under that select() makes it return immediately with an
+       error, so libssh2_channel_read_ex returns and the reader thread
+       exits its loop. libssh2_channel_close(), by contrast, sends a
+       protocol-level close message through the very channel object the
+       reader thread may be mid-call on — calling it here would be an
+       unsynchronized concurrent use of the same LIBSSH2_CHANNEL from
+       two threads (this one and the reader), and empirically does not
+       unblock a reader stuck in select() anyway: verified this
+       deadlocked pthread_join indefinitely against a real server
+       before switching to closing the socket first. */
+    if (term->ssh_sock >= 0) {
+        close(term->ssh_sock);
+        term->ssh_sock = -1;
+    }
+    if (term->reader_started) {
+        pthread_join(term->reader_thread, NULL);
+        term->reader_started = false;
+    }
+    /* Now safe: the reader thread has exited, so this is the only
+       thread touching ssh_channel/ssh_session from here on. The socket
+       is already closed, so these calls cannot perform real network
+       I/O — they only free libssh2's in-memory state — but they still
+       need to run to release that state without leaking it. */
+    if (term->ssh_channel) {
+        libssh2_channel_free(term->ssh_channel);
+        term->ssh_channel = NULL;
+    }
+    if (term->ssh_session) {
+        libssh2_session_free(term->ssh_session);
+        term->ssh_session = NULL;
     }
 }
 
@@ -1888,7 +2320,21 @@ static void sol_terminal_stop_pty(SolTerminal *term)
  * cwd       Initial working directory, or NULL to inherit.
  * Returns   Heap-allocated terminal, or NULL on failure.
  */
-static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
+/*
+ * Allocate and initialise every transport-agnostic part of a terminal
+ * session (VT/grid state, screen lines, output ring mutex) — everything
+ * sol_terminal_create and sol_terminal_create_ssh both need before
+ * launching their respective backend.
+ *
+ * instance  Causality instance the terminal belongs to.
+ * Returns   A freshly allocated, transport-less SolTerminal, or NULL on
+ *           allocation failure. Caller must still launch a backend
+ *           (sol_terminal_start_pty/start_ssh) before the session is
+ *           usable, and must free via the matching cleanup path on
+ *           backend-launch failure (screen lines + mutex only — no
+ *           backend to tear down yet).
+ */
+static SolTerminal *sol_terminal_create_base(Ca_Instance *instance)
 {
     SolTerminal *term = (SolTerminal *)calloc(1u, sizeof(SolTerminal));
     if (!term) return NULL;
@@ -1910,6 +2356,7 @@ static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
 #if !defined(_WIN32)
     term->master_fd = -1;
     term->child_pid = 0;
+    term->ssh_sock  = -1;
 #endif
 
     pthread_mutex_init(&term->output_mutex, NULL);
@@ -1919,10 +2366,19 @@ static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
         if (!term_line_alloc(&term->screen[r], term->cols)) {
             /* Cleanup on partial allocation. */
             for (int i = 0; i < r; ++i) term_line_free(&term->screen[i]);
+            pthread_mutex_destroy(&term->output_mutex);
             free(term);
             return NULL;
         }
     }
+
+    return term;
+}
+
+static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
+{
+    SolTerminal *term = sol_terminal_create_base(instance);
+    if (!term) return NULL;
 
     if (!sol_terminal_start_pty(term, cwd)) {
         for (int r = 0; r < term->rows; ++r) term_line_free(&term->screen[r]);
@@ -1934,6 +2390,44 @@ static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
     return term;
 }
 
+#if !defined(_WIN32)
+/*
+ * Create a terminal session backed by an SSH shell channel instead of a
+ * local PTY — see sol_terminal_start_ssh for the connect/auth/channel
+ * flow. Not available on Windows in this pass (see this file's header
+ * comment).
+ *
+ * instance   Causality instance the terminal belongs to.
+ * conn       Connection profile to connect with.
+ * password   Password to try (only used for SOL_SSH_AUTH_PASSWORD).
+ * out_error  Set to a user-presentable failure string on NULL return
+ *            (see sol_terminal_start_ssh's contract); untouched on
+ *            success.
+ * Returns    A live terminal session, or NULL on failure.
+ */
+static SolTerminal *sol_terminal_create_ssh(Ca_Instance *instance,
+                                            const SolSshConnection *conn,
+                                            const char *password,
+                                            const char **out_error)
+{
+    SolTerminal *term = sol_terminal_create_base(instance);
+    if (!term) {
+        if (out_error) *out_error = "out of memory";
+        return NULL;
+    }
+
+    if (!sol_terminal_start_ssh(term, conn, password, out_error)) {
+        for (int r = 0; r < term->rows; ++r) term_line_free(&term->screen[r]);
+        pthread_mutex_destroy(&term->output_mutex);
+        free(term);
+        return NULL;
+    }
+
+    snprintf(term->title, sizeof(term->title), "%s", conn->name[0] ? conn->name : conn->host);
+    return term;
+}
+#endif
+
 /*
  * Destroy a terminal session, stopping the PTY and freeing all memory.
  *
@@ -1942,7 +2436,15 @@ static SolTerminal *sol_terminal_create(Ca_Instance *instance, const char *cwd)
 static void sol_terminal_destroy(SolTerminal *term)
 {
     if (!term) return;
+#if !defined(_WIN32)
+    if (term->is_ssh) {
+        sol_terminal_stop_ssh(term);
+    } else {
+        sol_terminal_stop_pty(term);
+    }
+#else
     sol_terminal_stop_pty(term);
+#endif
     for (int r = 0; r < SOL_TERM_DEFAULT_ROWS + 64; ++r)
         term_line_free(&term->screen[r]);
     for (int r = 0; r < SOL_TERM_SCROLLBACK_MAX; ++r)
@@ -2000,6 +2502,29 @@ SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr,
     mgr->active_index = mgr->tab_count - 1;
     return term;
 }
+
+#if !defined(_WIN32)
+SolTerminal *sol_terminal_manager_new_ssh_tab(SolTerminalManager *mgr,
+                                              const SolSshConnection *conn,
+                                              const char *password,
+                                              const char **out_error)
+{
+    if (!mgr || !conn) {
+        if (out_error) *out_error = "invalid arguments";
+        return NULL;
+    }
+    if (mgr->tab_count >= SOL_TERM_MAX_TABS) {
+        if (out_error) *out_error = "too many terminal tabs already open";
+        return NULL;
+    }
+    SolTerminal *term = sol_terminal_create_ssh(mgr->instance, conn, password, out_error);
+    if (!term) return NULL;
+    term->manager = mgr;
+    mgr->tabs[mgr->tab_count++] = term;
+    mgr->active_index = mgr->tab_count - 1;
+    return term;
+}
+#endif
 
 void sol_terminal_manager_close_active(SolTerminalManager *mgr)
 {
@@ -2262,9 +2787,17 @@ void sol_terminal_resize(SolTerminal *term, int cols, int rows)
     term->cur_row = term_clamp(term->cur_row, 0, rows - 1);
     term->cur_col = term_clamp(term->cur_col, 0, cols - 1);
 
-    /* Notify PTY. */
+    /* Notify PTY / SSH channel. */
 #if !defined(_WIN32)
-    if (term->master_fd >= 0) {
+    if (term->is_ssh) {
+        if (term->ssh_channel) {
+            /* Best-effort: a resize request that fails (e.g. the
+               channel is mid-teardown) is not worth surfacing as an
+               error — the next successful resize corrects the remote
+               PTY size, same as a dropped TIOCSWINSZ would be. */
+            (void)libssh2_channel_request_pty_size(term->ssh_channel, cols, rows);
+        }
+    } else if (term->master_fd >= 0) {
         struct winsize ws = { 0 };
         ws.ws_row = (unsigned short)rows;
         ws.ws_col = (unsigned short)cols;
@@ -2282,6 +2815,25 @@ void sol_terminal_send_text(SolTerminal *term, const char *data, size_t len)
 {
     if (!term || !data || len == 0 || !term->is_alive) return;
 #if !defined(_WIN32)
+    if (term->is_ssh) {
+        if (!term->ssh_channel) return;
+        size_t off = 0;
+        while (off < len) {
+            ssize_t n = libssh2_channel_write_ex(term->ssh_channel, 0,
+                                                 data + off, len - off);
+            if (n == LIBSSH2_ERROR_EAGAIN) continue;   /* blocking session; rare */
+            if (n < 0) {
+                /* Any other libssh2 error (channel closed remotely,
+                   session torn down, etc.) means this session is done —
+                   matches the local-PTY path's EIO/EBADF/EPIPE handling
+                   above: mark dead rather than looping or crashing. */
+                term->is_alive = false;
+                break;
+            }
+            off += (size_t)n;
+        }
+        return;
+    }
     if (term->master_fd < 0) return;
     size_t off = 0;
     while (off < len) {

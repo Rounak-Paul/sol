@@ -150,6 +150,34 @@ void sol_terminal_manager_set_clipboard_write(SolTerminalManager *mgr,
 SolTerminal *sol_terminal_manager_new_tab(SolTerminalManager *mgr,
                                           const char *cwd);
 
+/* Forward declaration — include sol_ssh_config.h for the full struct. */
+typedef struct SolSshConnection SolSshConnection;
+
+/*
+ * Open a new terminal tab backed by an SSH shell channel instead of a
+ * local PTY. Not available on Windows in this pass (see sol_terminal.c's
+ * header comment) — omitted from the header entirely on that platform
+ * so callers get a compile error rather than a silent link failure.
+ *
+ * mgr        The manager.
+ * conn       Connection profile to connect with (host/port/user/auth).
+ * password   Password to try (only used when conn->auth is
+ *            SOL_SSH_AUTH_PASSWORD; ignored otherwise). Never retained
+ *            beyond the connection attempt.
+ * out_error  On NULL return, set to a short, user-presentable string
+ *            describing the failure (host unreachable, auth rejected,
+ *            host key mismatch, etc.) — valid until the next call into
+ *            this module. May be NULL if the caller doesn't need the
+ *            reason. Untouched on success.
+ * Returns    The new terminal, or NULL on connect/auth/channel failure.
+ */
+#if !defined(_WIN32)
+SolTerminal *sol_terminal_manager_new_ssh_tab(SolTerminalManager *mgr,
+                                              const SolSshConnection *conn,
+                                              const char *password,
+                                              const char **out_error);
+#endif
+
 /*
  * Kill and remove the active terminal tab.
  *

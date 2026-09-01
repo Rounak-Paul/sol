@@ -49,7 +49,7 @@ target_compile_definitions(sol PRIVATE SOL_BUILD_VERSION="${SOL_BUILD_VERSION}")
 
 target_link_libraries(sol PRIVATE
     causality Threads::Threads ${CMAKE_DL_LIBS} tree_sitter_runtime
-    VulkanMemoryAllocator Vulkan::Vulkan
+    VulkanMemoryAllocator Vulkan::Vulkan libssh2_static
     ${CAUSALITY_LINUX_DEPS}
 )
 
