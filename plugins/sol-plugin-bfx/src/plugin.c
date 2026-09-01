@@ -71,15 +71,16 @@ static const char k_aurora_frag[] = BFX_HEADER BFX_NOISE
     "}\n";
 
 static const char k_starfield_frag[] = BFX_HEADER
-    "float segment(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;float t=clamp(dot(pa,ba)/max(dot(ba,ba),0.00001),0.0,1.0);return length(pa-ba*t);}\n"
+    "float star(vec2 f,vec2 center,float radius){float d=length(f-center);return 1.0-smoothstep(radius,radius*2.8,d);}\n"
     "void main(){\n"
-    " float ar=pc.width/pc.height;vec2 p=(v_uv-0.5)*vec2(ar,1.0);float glow=0.0;\n"
-    " for(int i=0;i<52;i++){float fi=float(i);vec2 seed=h22(vec2(fi,fi*3.17))*2.0-1.0;seed.x*=ar;\n"
-    "  float z=0.08+0.92*fract(h11(fi*7.3)-pc.time*(0.028+h11(fi)*0.018));\n"
-    "  vec2 pos=seed*(0.14/z);vec2 prev=seed*(0.14/min(z+0.025,1.0));float d=segment(p,pos,prev);\n"
-    "  float fade=(1.0-z)*(1.0-z);glow=max(glow,(1.0-smoothstep(0.0008,0.0045,d))*fade);\n"
+    " float ar=pc.width/max(pc.height,1.0);vec3 col=vec3(0.0);float alpha=0.0;\n"
+    " for(int layer=0;layer<3;layer++){float fi=float(layer);float density=12.0+fi*12.0;vec2 grid=vec2(density*ar,density);\n"
+    "  vec2 q=v_uv*grid+vec2(pc.time*(0.003+fi*0.002),pc.time*(0.001+fi*0.0015));vec2 id=floor(q),f=fract(q);\n"
+    "  float seed=h21(id+fi*17.13);vec2 center=0.14+0.72*h22(id+fi*31.7);float size=mix(0.020,0.075,seed)*mix(0.72,1.0,fi*0.5);\n"
+    "  float twinkle=0.72+0.28*sin(pc.time*(0.65+seed*1.7)+seed*31.0);float core=star(f,center,size)*twinkle;float halo=star(f,center,size*3.6)*0.24;\n"
+    "  vec3 hue=mix(primary(),accent(),fract(seed*3.71+fi*0.27));col+=hue*(core+halo);alpha=max(alpha,core*0.82+halo*0.24);\n"
     " }\n"
-    " vec3 col=mix(primary(),vec3(1.0),0.72)*glow;out_color=finish(col,glow*0.90);\n"
+    " vec2 vignette=v_uv*(1.0-v_uv);float space=smoothstep(0.02,0.16,vignette.x*vignette.y);out_color=finish(col*space,alpha*space);\n"
     "}\n";
 
 static const char k_metaballs_frag[] = BFX_HEADER
@@ -91,14 +92,14 @@ static const char k_metaballs_frag[] = BFX_HEADER
     "}\n";
 
 static const char k_flowfield_frag[] = BFX_HEADER
-    "float segment(vec2 p,vec2 a,vec2 b){vec2 pa=p-a,ba=b-a;float t=clamp(dot(pa,ba)/max(dot(ba,ba),0.00001),0.0,1.0);return length(pa-ba*t);}\n"
-    "vec2 flow(vec2 p,float t){float a=sin(p.x*5.1+t*0.37)*cos(p.y*4.3-t*0.29)+sin((p.x+p.y)*3.2+t*0.21);return vec2(cos(a*3.1),sin(a*3.1));}\n"
+    "vec2 flow(vec2 p,float t){float x=sin(p.y*2.4+t*0.13)+0.55*cos((p.x-p.y)*1.8-t*0.09);float y=cos(p.x*2.1-t*0.11)+0.55*sin((p.x+p.y)*1.6+t*0.08);return normalize(vec2(x,y));}\n"
     "void main(){\n"
-    " float ar=pc.width/pc.height;vec2 p=v_uv*vec2(ar,1.0);float glow=0.0;\n"
-    " for(int i=0;i<56;i++){float fi=float(i);vec2 origin=h22(vec2(fi*2.7,fi*9.1))*vec2(ar,1.0);float phase=fract(h11(fi*4.7)+pc.time*(0.018+h11(fi)*0.014));\n"
-    "  vec2 dir=flow(origin,pc.time);vec2 a=fract(origin+dir*phase*0.24);a.x*=ar;vec2 b=a-dir*0.018;float d=segment(p,a,b);glow=max(glow,(1.0-smoothstep(0.001,0.004,d))*(0.35+0.65*sin(phase*3.14159)));\n"
-    " }\n"
-    " vec3 col=mix(primary(),accent(),0.42)*glow;out_color=finish(col,glow*0.58);\n"
+    " float ar=pc.width/max(pc.height,1.0);vec2 p=(v_uv-0.5)*vec2(ar,1.0);vec2 q=p;\n"
+    " for(int i=0;i<4;i++)q-=flow(q,pc.time)*0.115;\n"
+    " float lanes=abs(fract(q.y*12.0)-0.5);float halo=1.0-smoothstep(0.08,0.30,lanes);float filament=1.0-smoothstep(0.018,0.065,lanes);\n"
+    " float pulse=0.58+0.42*sin(q.x*8.0-pc.time*0.55+sin(q.y*5.0));float dashes=smoothstep(0.34,0.66,pulse);\n"
+    " float glow=halo*(0.10+0.36*dashes)+filament*(0.46+0.54*dashes);\n"
+    " vec3 col=mix(primary(),accent(),0.35+0.35*sin(q.x*1.7+q.y*2.3))*glow;out_color=finish(col+accent()*filament*0.26,glow*0.50+filament*0.20);\n"
     "}\n";
 
 static const char k_fireflies_frag[] = BFX_HEADER

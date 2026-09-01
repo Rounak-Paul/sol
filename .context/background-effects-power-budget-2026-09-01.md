@@ -34,3 +34,9 @@ The background itself is normally viewed through translucent panels or in narrow
 - Causality now captures and runs CSS backdrop blur at half linear resolution, scaling the blur radius so the final CSS blur size is unchanged when sampled back at native resolution.
 - All bundled background effects use a 15 FPS cadence instead of mixed 24/30 FPS rates.
 - Validation: full build, 14/14 CTests, whitespace checks for both repositories, and an eight-second native startup smoke completed without output or a crash.
+
+## Visual refinement 2026-09-01
+
+- Replaced the Starfield tunnel-streak shader with three sparse, parallax-scrolling hash-grid layers. It now has stable points, controlled halos, palette-aware color variation, and low-cost twinkle without a per-pixel list of 52 line segments.
+- Replaced the Flow Field's 56 per-pixel particle segments with four backward vector-field advection steps and continuous, animated stream filaments. The result is coherent motion rather than a noisy field of disconnected marks while materially lowering ALU work.
+- Visual proof requires selecting both effects in the running app. No desktop capture is available in this session.
