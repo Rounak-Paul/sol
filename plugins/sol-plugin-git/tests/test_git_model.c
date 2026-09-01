@@ -110,6 +110,41 @@ static void test_status_rejects_malformed_record(void)
     free(snapshot);
 }
 
+/* Verify submodule content state is preserved from porcelain-v2 records. */
+static void test_status_submodule_record(void)
+{
+    static const char status[] =
+        "1 .M S.MU 160000 160000 160000 abcdef0 abcdef1 vendors/causality\0";
+    GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(GitSnapshot));
+    CHECK(snapshot);
+    if (!snapshot) return;
+    char error[GIT_ERROR_CAP] = {0};
+    CHECK(git_model_parse_status(status, sizeof(status) - 1u,
+                                 snapshot, error, sizeof(error)));
+    CHECK(snapshot->file_count == 1u);
+    CHECK(snapshot->files[0].submodule);
+    CHECK(snapshot->files[0].submodule_modified);
+    CHECK(snapshot->files[0].submodule_untracked);
+    free(snapshot);
+}
+
+/* Verify history records remain exact after Git's NUL record terminator. */
+static void test_history_nul_records(void)
+{
+    static const char history_data[] =
+        "C2\0C2\0Ada\0" "2026-09-01\0C1\0second\0\0"
+        "C1\0C1\0Ada\0" "2026-08-31\0\0first\0\0";
+    GitHistory history;
+    char error[GIT_ERROR_CAP] = {0};
+    CHECK(git_model_parse_history(history_data, sizeof(history_data) - 1u,
+                                  &history, error, sizeof(error)));
+    CHECK(history.count == 2u);
+    CHECK(strcmp(history.commits[0].hash, "C2") == 0);
+    CHECK(strcmp(history.commits[1].hash, "C1") == 0);
+    CHECK(history.commits[0].lane == 0);
+    CHECK(history.commits[1].lane == 0);
+}
+
 /* Verify the portable subprocess layer can resolve and capture Git itself. */
 static void test_process_git_version(void)
 {
@@ -135,6 +170,30 @@ static void test_process_git_status(void)
     CHECK(result.exit_code == 0);
     CHECK(result.exit_code != 126);
     CHECK(!result.timed_out);
+}
+
+/* Verify refresh discovers the workspace's registered recursive submodules. */
+static void test_refresh_submodules(void)
+{
+    char root[GIT_PATH_CAP] = {0};
+    char error[GIT_ERROR_CAP] = {0};
+    GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(*snapshot));
+    CHECK(snapshot);
+    if (!snapshot) return;
+    CHECK(git_model_discover(".", root, sizeof(root), error, sizeof(error)));
+    if (root[0]) {
+        CHECK(git_model_refresh(root, snapshot, error, sizeof(error)));
+        CHECK(snapshot->submodule_count > 0u);
+        bool found_causality = false;
+        for (size_t i = 0u; i < snapshot->submodule_count; ++i) {
+            if (strcmp(snapshot->submodules[i].path, "vendors/causality") == 0) {
+                found_causality = true;
+                break;
+            }
+        }
+        CHECK(found_causality);
+    }
+    free(snapshot);
 }
 
 /* Verify an invalid repository path is reported by Git, not as launch code 126. */
@@ -247,7 +306,7 @@ static void test_process_untracked_diff(void)
     CHECK((size_t)target_written < sizeof(target_path));
     if (target_written <= 0 || (size_t)target_written >= sizeof(target_path)) return;
 
-    char output[16384];
+    char output[65536];
 #if defined(_WIN32)
     const char *null_path = "NUL";
 #else
@@ -308,6 +367,8 @@ static void test_graph_layout_merge(void)
     CHECK(history.commits[4].lane == 0); /* C1: root, still mainline */
     /* C4's row is where the feature lane is visibly open alongside main. */
     CHECK((history.commits[1].through_lanes & 0x3u) == 0x3u);
+    CHECK(history.commits[0].parent_lanes[0] == 0);
+    CHECK(history.commits[0].parent_lanes[1] == 1);
 }
 
 /* Verify two unrelated branch tips (never merged, as happens when history
@@ -337,8 +398,11 @@ int main(void)
     test_status_rename_record();
     test_status_detached_and_unmerged();
     test_status_rejects_malformed_record();
+    test_status_submodule_record();
+    test_history_nul_records();
     test_process_git_version();
     test_process_git_status();
+    test_refresh_submodules();
     test_process_invalid_directory();
     test_process_tracked_diff();
     test_process_untracked_diff();

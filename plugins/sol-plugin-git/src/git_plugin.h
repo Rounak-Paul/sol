@@ -13,9 +13,11 @@
 #define GIT_MESSAGE_CAP 1024u
 #define GIT_ERROR_CAP 1024u
 #define GIT_PROCESS_OUTPUT_CAP (4u * 1024u * 1024u)
+#define GIT_HASH_CAP 65u
 #define GIT_MAX_FILES 512u
 #define GIT_MAX_COMMITS 128u
 #define GIT_MAX_BRANCHES 256u
+#define GIT_MAX_SUBMODULES 256u
 #define GIT_TASK_TIMEOUT_MS 120000u
 
 typedef enum GitFileKind {
@@ -31,13 +33,16 @@ typedef struct GitFileStatus {
     char index_status;
     char worktree_status;
     GitFileKind kind;
+    bool submodule;
+    bool submodule_modified;
+    bool submodule_untracked;
 } GitFileStatus;
 
 #define GIT_MAX_PARENTS 2u
 #define GIT_MAX_GRAPH_LANES 32u
 
 typedef struct GitCommitEntry {
-    char hash[41];
+    char hash[GIT_HASH_CAP];
     char short_hash[17];
     char author[128];
     char date[32];
@@ -46,7 +51,8 @@ typedef struct GitCommitEntry {
      * beyond that are rare and the graph only needs enough parents to draw
      * merge/branch lines, not full ancestry). parent_count may be 0 (root
      * commit). */
-    char parents[GIT_MAX_PARENTS][41];
+    char parents[GIT_MAX_PARENTS][GIT_HASH_CAP];
+    int parent_lanes[GIT_MAX_PARENTS];
     size_t parent_count;
     /* Graph layout, computed by git_model_layout_graph() after history is
      * loaded: which vertical lane this commit's dot sits in, and which
@@ -56,6 +62,21 @@ typedef struct GitCommitEntry {
     int lane;
     uint32_t through_lanes;
 } GitCommitEntry;
+
+typedef enum GitSubmoduleState {
+    GIT_SUBMODULE_CLEAN = 0,
+    GIT_SUBMODULE_UNINITIALIZED,
+    GIT_SUBMODULE_REVISION_CHANGED,
+    GIT_SUBMODULE_CONFLICT,
+} GitSubmoduleState;
+
+typedef struct GitSubmodule {
+    char path[GIT_PATH_CAP];
+    char commit[GIT_HASH_CAP];
+    GitSubmoduleState state;
+    bool content_modified;
+    bool content_untracked;
+} GitSubmodule;
 
 typedef struct GitBranchEntry {
     char name[256];
@@ -77,6 +98,9 @@ typedef struct GitSnapshot {
     size_t unstaged_count;
     size_t untracked_count;
     size_t omitted_count;
+    GitSubmodule submodules[GIT_MAX_SUBMODULES];
+    size_t submodule_count;
+    size_t omitted_submodule_count;
 } GitSnapshot;
 
 typedef struct GitHistory {
@@ -170,6 +194,13 @@ bool git_model_history(const char *root,
                        GitHistory *history,
                        char *error,
                        size_t error_capacity);
+
+/* Parse NUL-delimited git-log fields into commit history. */
+bool git_model_parse_history(const char *data,
+                             size_t length,
+                             GitHistory *history,
+                             char *error,
+                             size_t error_capacity);
 
 /* Assign a vertical lane to every commit in history (already in reverse-
  * chronological order, i.e. newest first, matching `git log`'s default

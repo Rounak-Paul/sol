@@ -20,6 +20,10 @@ target_include_directories(sol_plugin_git PRIVATE
     ${CMAKE_SOURCE_DIR}/vendors/causality/causality/include
 )
 
+if(UNIX AND NOT APPLE)
+    target_link_libraries(sol_plugin_git PRIVATE m)
+endif()
+
 if(APPLE)
     target_link_options(sol_plugin_git PRIVATE -undefined dynamic_lookup)
 endif()

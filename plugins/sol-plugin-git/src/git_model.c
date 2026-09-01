@@ -89,6 +89,17 @@ static void git_append_file(GitSnapshot *snapshot,
     }
 }
 
+/* Read the porcelain-v2 submodule summary carried by a tracked path record. */
+static void git_apply_file_submodule_state(GitFileStatus *file,
+                                           const char *field,
+                                           size_t length)
+{
+    if (!file || !field || length < 4u || field[0] != 'S') return;
+    file->submodule = true;
+    file->submodule_modified = field[2] == 'M';
+    file->submodule_untracked = field[3] == 'U';
+}
+
 /* Parse one porcelain-v2 record. */
 static bool git_parse_status_record(const char *record,
                                     size_t length,
@@ -140,6 +151,7 @@ static bool git_parse_status_record(const char *record,
         length > 4u && record[1] == ' ') {
         const char index_status = record[2];
         const char worktree_status = record[3];
+        const char *submodule = git_record_payload(record, length, 2u);
         size_t fields = record[0] == '1' ? 8u : (record[0] == '2' ? 9u : 10u);
         const char *path = git_record_payload(record, length, fields);
         if (!path || path > record + length) return false;
@@ -154,11 +166,116 @@ static bool git_parse_status_record(const char *record,
             original_length = next_length;
             *consume_next = true;
         }
+        const size_t file_count = snapshot->file_count;
         git_append_file(snapshot, kind, index_status, worktree_status,
                         path, path_length, original, original_length);
+        if (snapshot->file_count > file_count) {
+            git_apply_file_submodule_state(&snapshot->files[file_count], submodule,
+                                           submodule ? strcspn(submodule, " ") : 0u);
+        }
         return true;
     }
     return false;
+}
+
+/* Parse recursive `git submodule status --cached` lines into the snapshot. */
+static bool git_model_parse_submodules(const char *data,
+                                       size_t length,
+                                       GitSnapshot *snapshot,
+                                       char *error,
+                                       size_t error_capacity)
+{
+    if (!data || !snapshot) return false;
+    size_t offset = 0u;
+    while (offset < length) {
+        const char *line = data + offset;
+        const char *end = memchr(line, '\n', length - offset);
+        if (!end) end = data + length;
+        const size_t line_length = (size_t)(end - line);
+        if (line_length > 0u) {
+            const char *hash_end = memchr(line + 1u, ' ', line_length - 1u);
+            const size_t hash_length = hash_end ? (size_t)(hash_end - line - 1u) : 0u;
+            if (!hash_end || (hash_length != 40u && hash_length != 64u) ||
+                hash_end + 1u == end) {
+                if (error && error_capacity > 0u) {
+                    snprintf(error, error_capacity, "Malformed Git submodule status");
+                }
+                return false;
+            }
+            if (snapshot->submodule_count >= GIT_MAX_SUBMODULES) {
+                ++snapshot->omitted_submodule_count;
+            } else {
+                GitSubmodule *submodule =
+                    &snapshot->submodules[snapshot->submodule_count++];
+                memset(submodule, 0, sizeof(*submodule));
+                git_copy_span(submodule->commit, sizeof(submodule->commit),
+                              line + 1u, hash_length);
+                const char *path = hash_end + 1u;
+                const char *path_end = end;
+                for (const char *p = path; p + 2u < end; ++p) {
+                    if (p[0] == ' ' && p[1] == '(' && end[-1] == ')') {
+                        path_end = p;
+                        break;
+                    }
+                }
+                git_copy_span(submodule->path, sizeof(submodule->path), path,
+                              (size_t)(path_end - path));
+                switch (line[0]) {
+                    case '-': submodule->state = GIT_SUBMODULE_UNINITIALIZED; break;
+                    case '+': submodule->state = GIT_SUBMODULE_REVISION_CHANGED; break;
+                    case 'U': submodule->state = GIT_SUBMODULE_CONFLICT; break;
+                    case ' ': submodule->state = GIT_SUBMODULE_CLEAN; break;
+                    default:
+                        if (error && error_capacity > 0u) {
+                            snprintf(error, error_capacity,
+                                     "Unsupported Git submodule status '%c'", line[0]);
+                        }
+                        return false;
+                }
+                for (size_t i = 0u; i < snapshot->file_count; ++i) {
+                    const GitFileStatus *file = &snapshot->files[i];
+                    if (!file->submodule || strcmp(file->path, submodule->path) != 0) {
+                        continue;
+                    }
+                    submodule->content_modified = file->submodule_modified;
+                    submodule->content_untracked = file->submodule_untracked;
+                    break;
+                }
+            }
+        }
+        offset = end < data + length ? (size_t)(end - data) + 1u : length;
+    }
+    return true;
+}
+
+/* Load all registered submodules, including clean and nested repositories. */
+static bool git_model_refresh_submodules(const char *root,
+                                         GitSnapshot *snapshot,
+                                         char *error,
+                                         size_t error_capacity)
+{
+    char *output = (char *)calloc(GIT_PROCESS_OUTPUT_CAP, 1u);
+    if (!output) return false;
+    const char *argv[] = {
+        "git", "submodule", "status", "--recursive", "--cached", NULL
+    };
+    GitProcessResult result = git_process_run(root, argv, output,
+                                              GIT_PROCESS_OUTPUT_CAP, 30000u);
+    if (result.exit_code != 0 || result.truncated) {
+        if (result.truncated && error && error_capacity > 0u) {
+            snprintf(error, error_capacity, "Git submodule output exceeded %u bytes",
+                     GIT_PROCESS_OUTPUT_CAP - 1u);
+        } else {
+            git_command_error(error, error_capacity, "Git submodule status", &result,
+                              output);
+        }
+        free(output);
+        return false;
+    }
+    const bool parsed = git_model_parse_submodules(output, result.output_len,
+                                                   snapshot, error, error_capacity);
+    free(output);
+    return parsed;
 }
 
 /* Parse porcelain-v2 status bytes into a repository snapshot. */
@@ -264,12 +381,13 @@ bool git_model_refresh(const char *root,
     memset(snapshot, 0, sizeof(*snapshot));
     git_copy_span(snapshot->root, sizeof(snapshot->root), root_buf, strlen(root_buf));
     const bool parsed = git_model_parse_status(output, result.output_len,
-                                               snapshot, error, error_capacity);
+                                               snapshot, error, error_capacity) &&
+                        git_model_refresh_submodules(root, snapshot, error,
+                                                     error_capacity);
     free(output);
     return parsed;
 }
 
-/* Load recent commit history using control-character field delimiters. */
 /* Split a space-separated list of parent hashes (git log's %P) into up to
  * GIT_MAX_PARENTS entries on the commit entry. */
 static void git_parse_parent_hashes(GitCommitEntry *entry,
@@ -291,61 +409,77 @@ static void git_parse_parent_hashes(GitCommitEntry *entry,
     }
 }
 
+bool git_model_parse_history(const char *data,
+                             size_t length,
+                             GitHistory *history,
+                             char *error,
+                             size_t error_capacity)
+{
+    if (!data || !history) return false;
+    memset(history, 0, sizeof(*history));
+    const char *cursor = data;
+    const char *limit = data + length;
+    while (cursor < limit && history->count < GIT_MAX_COMMITS) {
+        while (cursor < limit && *cursor == '\0') ++cursor;
+        if (cursor == limit) break;
+        const char *fields[6] = {0};
+        const char *ends[6] = {0};
+        for (size_t field = 0u; field < 6u; ++field) {
+            fields[field] = cursor;
+            ends[field] = memchr(cursor, '\0', (size_t)(limit - cursor));
+            if (!ends[field]) {
+                if (error && error_capacity > 0u) {
+                    snprintf(error, error_capacity, "Malformed NUL-delimited Git history");
+                }
+                return false;
+            }
+            cursor = ends[field] + 1u;
+        }
+        GitCommitEntry *entry = &history->commits[history->count++];
+        git_copy_span(entry->hash, sizeof(entry->hash), fields[0],
+                      (size_t)(ends[0] - fields[0]));
+        git_copy_span(entry->short_hash, sizeof(entry->short_hash), fields[1],
+                      (size_t)(ends[1] - fields[1]));
+        git_copy_span(entry->author, sizeof(entry->author), fields[2],
+                      (size_t)(ends[2] - fields[2]));
+        git_copy_span(entry->date, sizeof(entry->date), fields[3],
+                      (size_t)(ends[3] - fields[3]));
+        git_parse_parent_hashes(entry, fields[4], ends[4]);
+        git_copy_span(entry->subject, sizeof(entry->subject), fields[5],
+                      (size_t)(ends[5] - fields[5]));
+    }
+    git_model_layout_graph(history);
+    return true;
+}
+
 bool git_model_history(const char *root,
                        GitHistory *history,
                        char *error,
                        size_t error_capacity)
 {
     if (!root || !history) return false;
-    memset(history, 0, sizeof(*history));
     char *output = (char *)calloc(GIT_PROCESS_OUTPUT_CAP, 1u);
     if (!output) return false;
     const char *argv[] = {
-        "git", "log", "--max-count=128", "--date=short",
-        "--pretty=format:%H%x1f%h%x1f%an%x1f%ad%x1f%P%x1f%s%x1e", NULL
+        "git", "log", "-z", "--max-count=128", "--date=short",
+        "--pretty=format:%H%x00%h%x00%an%x00%ad%x00%P%x00%s%x00", NULL
     };
     GitProcessResult result = git_process_run(root, argv, output,
                                               GIT_PROCESS_OUTPUT_CAP, 30000u);
-    if (result.exit_code != 0) {
-        git_command_error(error, error_capacity, "Git log", &result, output);
+    if (result.exit_code != 0 || result.truncated) {
+        if (result.truncated && error && error_capacity > 0u) {
+            snprintf(error, error_capacity, "Git history output exceeded %u bytes",
+                     GIT_PROCESS_OUTPUT_CAP - 1u);
+        } else {
+            git_command_error(error, error_capacity, "Git log", &result, output);
+        }
         free(output);
         return false;
     }
-
-    const char *cursor = output;
-    const char *limit = output + result.output_len;
-    while (cursor < limit && history->count < GIT_MAX_COMMITS) {
-        const char *record_end = memchr(cursor, 0x1e, (size_t)(limit - cursor));
-        if (!record_end) record_end = limit;
-        const char *fields[6] = { cursor, NULL, NULL, NULL, NULL, NULL };
-        const char *scan = cursor;
-        for (size_t i = 1u; i < 6u; ++i) {
-            scan = memchr(scan, 0x1f, (size_t)(record_end - scan));
-            if (!scan) break;
-            fields[i] = ++scan;
-        }
-        if (fields[5]) {
-            GitCommitEntry *entry = &history->commits[history->count++];
-            const char *ends[6] = { fields[1] - 1, fields[2] - 1,
-                                    fields[3] - 1, fields[4] - 1,
-                                    fields[5] - 1, record_end };
-            git_copy_span(entry->hash, sizeof(entry->hash), fields[0],
-                          (size_t)(ends[0] - fields[0]));
-            git_copy_span(entry->short_hash, sizeof(entry->short_hash), fields[1],
-                          (size_t)(ends[1] - fields[1]));
-            git_copy_span(entry->author, sizeof(entry->author), fields[2],
-                          (size_t)(ends[2] - fields[2]));
-            git_copy_span(entry->date, sizeof(entry->date), fields[3],
-                          (size_t)(ends[3] - fields[3]));
-            git_parse_parent_hashes(entry, fields[4], ends[4]);
-            git_copy_span(entry->subject, sizeof(entry->subject), fields[5],
-                          (size_t)(ends[5] - fields[5]));
-        }
-        cursor = record_end < limit ? record_end + 1u : limit;
-    }
+    const bool parsed = git_model_parse_history(output, result.output_len,
+                                                history, error, error_capacity);
     free(output);
-    git_model_layout_graph(history);
-    return true;
+    return parsed;
 }
 
 /* Return true when two commit hashes are the same non-empty hash. */
@@ -370,7 +504,7 @@ static bool git_hash_eq(const char *a, const char *b)
 void git_model_layout_graph(GitHistory *history)
 {
     if (!history) return;
-    char lanes[GIT_MAX_GRAPH_LANES][41];
+    char lanes[GIT_MAX_GRAPH_LANES][GIT_HASH_CAP];
     size_t lane_count = 0u;
     for (size_t i = 0u; i < GIT_MAX_GRAPH_LANES; ++i) lanes[i][0] = '\0';
 
@@ -401,20 +535,23 @@ void git_model_layout_graph(GitHistory *history)
         if (commit->parent_count > 0u) {
             git_copy_span(lanes[my_lane], sizeof(lanes[my_lane]),
                          commit->parents[0], strlen(commit->parents[0]));
+            commit->parent_lanes[0] = my_lane;
         }
         for (size_t p = 1u; p < commit->parent_count; ++p) {
-            bool found = false;
+            int parent_lane = -1;
             for (size_t lane = 0u; lane < lane_count; ++lane) {
                 if (git_hash_eq(lanes[lane], commit->parents[p])) {
-                    found = true;
+                    parent_lane = (int)lane;
                     break;
                 }
             }
-            if (!found && lane_count < GIT_MAX_GRAPH_LANES) {
-                git_copy_span(lanes[lane_count], sizeof(lanes[lane_count]),
+            if (parent_lane < 0 && lane_count < GIT_MAX_GRAPH_LANES) {
+                parent_lane = (int)lane_count;
+                git_copy_span(lanes[(size_t)parent_lane], sizeof(lanes[0]),
                              commit->parents[p], strlen(commit->parents[p]));
                 ++lane_count;
             }
+            commit->parent_lanes[p] = parent_lane;
         }
         while (lane_count > 0u && lanes[lane_count - 1u][0] == '\0') {
             --lane_count;

@@ -7,6 +7,7 @@
 #include "sol_ui_system.h"
 
 #include <stdatomic.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1135,7 +1136,8 @@ static void git_render_changes(GitPlugin *plugin)
         ca_div_end();
     }
 
-    if (plugin->snapshot.file_count == 0u) {
+    if (plugin->snapshot.file_count == 0u &&
+        plugin->snapshot.submodule_count == 0u) {
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "scm-clean-state" });
         ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CHECK, .style = "scm-clean-icon" });
         ca_text(&(Ca_TextDesc){ .text = "No changes", .style = "scm-empty" });
@@ -1144,6 +1146,61 @@ static void git_render_changes(GitPlugin *plugin)
     }
     git_render_file_group(plugin, "Staged Changes", true);
     git_render_file_group(plugin, "Changes", false);
+    if (plugin->snapshot.submodule_count > 0u) {
+        char heading[128];
+        snprintf(heading, sizeof(heading), "Submodules (%zu)",
+                 plugin->snapshot.submodule_count);
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style = "scm-section-header",
+        });
+        ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
+        ca_div_end();
+        for (size_t i = 0u; i < plugin->snapshot.submodule_count; ++i) {
+            const GitSubmodule *submodule = &plugin->snapshot.submodules[i];
+            const char *state = "Clean";
+            const char *style = "scm-submodule-clean";
+            if (submodule->state == GIT_SUBMODULE_UNINITIALIZED) {
+                state = "Uninitialized";
+                style = "scm-submodule-warning";
+            } else if (submodule->state == GIT_SUBMODULE_REVISION_CHANGED) {
+                state = "Revision changed";
+                style = "scm-submodule-modified";
+            } else if (submodule->state == GIT_SUBMODULE_CONFLICT) {
+                state = "Conflict";
+                style = "scm-submodule-conflict";
+            } else if (submodule->content_untracked) {
+                state = "Untracked content";
+                style = "scm-submodule-warning";
+            } else if (submodule->content_modified) {
+                state = "Modified content";
+                style = "scm-submodule-modified";
+            }
+            ca_div_begin(&(Ca_DivDesc){
+                .direction = CA_HORIZONTAL,
+                .style = "scm-submodule-row",
+            });
+            ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_REPO, .style = style });
+            ca_div_begin(&(Ca_DivDesc){
+                .direction = CA_VERTICAL,
+                .style = "scm-submodule-info",
+            });
+            ca_text(&(Ca_TextDesc){ .text = submodule->path,
+                                     .style = "scm-submodule-path" });
+            char details[96];
+            snprintf(details, sizeof(details), "%.12s  ·  %s", submodule->commit,
+                     state);
+            ca_text(&(Ca_TextDesc){ .text = details, .style = style });
+            ca_div_end();
+            ca_div_end();
+        }
+        if (plugin->snapshot.omitted_submodule_count > 0u) {
+            char omitted[96];
+            snprintf(omitted, sizeof(omitted), "%zu additional submodules omitted",
+                     plugin->snapshot.omitted_submodule_count);
+            ca_text(&(Ca_TextDesc){ .text = omitted, .style = "scm-warning" });
+        }
+    }
     if (plugin->snapshot.omitted_count > 0u) {
         char omitted[96];
         snprintf(omitted, sizeof(omitted), "%zu additional paths omitted",
@@ -1207,6 +1264,30 @@ static void git_render_graph_gutter(const GitCommitEntry *entry,
             .style = (int)lane == entry->lane
                 ? "scm-graph-line scm-graph-line-active" : "scm-graph-line",
         });
+        ca_div_end();
+    }
+    for (size_t parent = 1u; parent < entry->parent_count; ++parent) {
+        const int parent_lane = entry->parent_lanes[parent];
+        if (parent_lane < 0 || (unsigned)parent_lane >= lane_span ||
+            entry->lane < 0 || (unsigned)entry->lane >= lane_span) continue;
+        const float from_x = ((float)entry->lane + 0.5f) * GIT_GRAPH_LANE_W;
+        const float to_x = ((float)parent_lane + 0.5f) * GIT_GRAPH_LANE_W;
+        const float from_y = row_height * 0.5f;
+        const float to_y = row_height;
+        const float dx = to_x - from_x;
+        const float dy = to_y - from_y;
+        const float length = sqrtf(dx * dx + dy * dy);
+        if (length <= 0.0f) continue;
+        Ca_Div *connector = ca_div_begin(&(Ca_DivDesc){
+            .position = CA_POSITION_ABSOLUTE,
+            .pos_x = (from_x + to_x - length) * 0.5f,
+            .pos_y = (from_y + to_y - GIT_GRAPH_LINE_W) * 0.5f,
+            .width = length,
+            .height = GIT_GRAPH_LINE_W,
+            .style = "scm-graph-connector",
+        });
+        ca_div_set_transform(connector, atan2f(dy, dx) * 57.2957795f,
+                             1.0f, 1.0f, 0.5f, 0.5f);
         ca_div_end();
     }
     if ((unsigned)entry->lane < lane_span) {

@@ -294,6 +294,14 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         /* 19 */ theme->primary,
         /* 20 */ theme->primary,
         /* 21 */ theme->accent);
+    css_append(&css,
+        ".scm-graph-connector{background:%s;}"
+        ".scm-submodule-clean{color:%s;}"
+        ".scm-submodule-modified{color:%s;}"
+        ".scm-submodule-warning{color:%s;}"
+        ".scm-submodule-conflict{color:%s;}",
+        theme->primary, theme->muted, theme->warning, theme->warning,
+        theme->danger);
     return css.valid && css.length > 0u;
 }
 
