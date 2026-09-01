@@ -1868,11 +1868,19 @@ int main(int argc, char **argv)
        present from instance init, before any windows inherit it. */
     sol_settings_load(&app.settings);
 
+    /* Compiled-shader cache under ~/.sol — see Ca_InstanceDesc::shader_cache_dir.
+       A NULL path (config dir unresolvable, e.g. $HOME unset) just leaves
+       caching disabled for this run; Causality falls back to compiling
+       every shader via shaderc exactly as before this existed. */
+    char *shader_cache_dir = sol_config_path("shader_cache");
+
     Ca_Instance *instance = ca_instance_create(&(Ca_InstanceDesc){
         .app_name             = "Sol",
         .prefer_dedicated_gpu = true,
         .default_ui_scale     = app.settings.ui_scale,
+        .shader_cache_dir     = shader_cache_dir,
     });
+    free(shader_cache_dir);
     if (!instance) {
         fprintf(stderr, "Failed to create causality instance\n");
         sol_system_manager_destroy(app.systems);

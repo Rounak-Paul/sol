@@ -175,9 +175,9 @@ static bool gpu_build_pipeline(BgShaderGPU *gpu, Ca_Instance *instance,
     if (vkCreatePipelineLayout(device, &pl_ci, NULL, &gpu->pipeline_layout) != VK_SUCCESS)
         return false;
 
-    VkShaderModule vert = ca_shader_compile(device, k_fullscreen_vert,
+    VkShaderModule vert = ca_shader_compile(instance, k_fullscreen_vert,
                                             VK_SHADER_STAGE_VERTEX_BIT);
-    VkShaderModule frag = ca_shader_compile(device, frag_glsl,
+    VkShaderModule frag = ca_shader_compile(instance, frag_glsl,
                                             VK_SHADER_STAGE_FRAGMENT_BIT);
     if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
         if (vert != VK_NULL_HANDLE) vkDestroyShaderModule(device, vert, NULL);
