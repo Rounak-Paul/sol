@@ -42,6 +42,7 @@ typedef enum GitUiAction {
     GIT_UI_SHOW_COMMIT,
     GIT_UI_CHECKOUT,
     GIT_UI_CREATE_BRANCH,
+    GIT_UI_CREATE_BRANCH_FROM,
     GIT_UI_INIT,
     GIT_UI_SELECT_REPOSITORY,
     GIT_UI_SELECT_WORKSPACE_REPOSITORY,
@@ -74,6 +75,7 @@ struct GitPlugin {
 
     char commit_message[GIT_MESSAGE_CAP];
     char new_branch[256];
+    char branch_source[256];
     char active_file[GIT_PATH_CAP];
     char error[GIT_ERROR_CAP];
     char activity[128];
@@ -83,6 +85,7 @@ struct GitPlugin {
     Ca_TextInput *commit_input;
     Ca_TextInput *branch_input;
     bool needs_commit_focus;
+    bool needs_branch_focus;
     bool rediscover_pending;
     GitActionContext actions[GIT_ACTION_CONTEXT_CAP];
     size_t action_count;
@@ -537,8 +540,12 @@ static void git_task_worker(void *user_data)
             break;
         }
         case GIT_TASK_CREATE_BRANCH: {
-            const char *argv[] = { "git", "switch", "-c", task->argument, NULL };
-            success = git_task_command(task, task->repo_root, argv, 30000u) &&
+            const char *from_current[] = { "git", "switch", "-c", task->argument, NULL };
+            const char *from_branch[] = {
+                "git", "switch", "-c", task->argument, task->secondary, NULL
+            };
+            success = git_task_command(task, task->repo_root,
+                                       task->flag ? from_branch : from_current, 30000u) &&
                       git_task_refresh_snapshot(task);
             break;
         }
@@ -633,7 +640,8 @@ static bool git_start_task(GitPlugin *plugin,
                     plugin->snapshot.root);
     git_copy_string(task->argument, sizeof(task->argument), argument);
     git_copy_string(task->secondary, sizeof(task->secondary),
-                    plugin->snapshot.branch);
+                    kind == GIT_TASK_CREATE_BRANCH && flag
+                        ? plugin->branch_source : plugin->snapshot.branch);
     if (kind == GIT_TASK_PUSH) task->flag = !plugin->snapshot.upstream[0];
 
     atomic_store_explicit(&plugin->task_done, false, memory_order_relaxed);
@@ -718,6 +726,7 @@ static void git_consume_task(GitPlugin *plugin)
                     memset(&plugin->branches, 0, sizeof(plugin->branches));
                     plugin->commit_message[0] = '\0';
                     plugin->new_branch[0] = '\0';
+                    plugin->branch_source[0] = '\0';
                     plugin->pending_discard[0] = '\0';
                 }
                 break;
@@ -745,7 +754,10 @@ static void git_consume_task(GitPlugin *plugin)
                     memset(&plugin->branches, 0, sizeof(plugin->branches));
                 }
                 if (task->kind == GIT_TASK_COMMIT) plugin->commit_message[0] = '\0';
-                if (task->kind == GIT_TASK_CREATE_BRANCH) plugin->new_branch[0] = '\0';
+                if (task->kind == GIT_TASK_CREATE_BRANCH) {
+                    plugin->new_branch[0] = '\0';
+                    plugin->branch_source[0] = '\0';
+                }
                 break;
             case GIT_TASK_HISTORY:
                 plugin->history = task->history;
@@ -1050,8 +1062,15 @@ static void git_on_action(Ca_Button *button, void *user_data)
         case GIT_UI_CREATE_BRANCH:
             if (git_has_content(plugin->new_branch)) {
                 (void)git_start_task(plugin, GIT_TASK_CREATE_BRANCH,
-                                     plugin->new_branch, false);
+                                     plugin->new_branch,
+                                     plugin->branch_source[0] != '\0');
             }
+            break;
+        case GIT_UI_CREATE_BRANCH_FROM:
+            git_copy_string(plugin->branch_source, sizeof(plugin->branch_source),
+                            context->value);
+            plugin->needs_branch_focus = true;
+            sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
             break;
         case GIT_UI_INIT:
             (void)git_start_task(plugin, GIT_TASK_INIT, NULL, false);
@@ -1484,10 +1503,19 @@ static void git_render_history(GitPlugin *plugin)
 /* Render branch creation and local branch checkout controls. */
 static void git_render_branches(GitPlugin *plugin)
 {
+    const char *source = plugin->branch_source[0]
+        ? plugin->branch_source
+        : (plugin->snapshot.detached ? "HEAD" : plugin->snapshot.branch);
+    char create_label[320];
+    snprintf(create_label, sizeof(create_label), "Create branch from %s",
+             source[0] ? source : "current HEAD");
+
     ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_HORIZONTAL,
+        .direction = CA_VERTICAL,
         .style = "scm-branch-create",
     });
+    ca_text(&(Ca_TextDesc){ .text = create_label, .style = "scm-branch-create-source" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-branch-create-row" });
     plugin->branch_input = ca_input(&(Ca_InputDesc){
         .text = plugin->new_branch,
         .placeholder = "New branch name",
@@ -1500,6 +1528,7 @@ static void git_render_branches(GitPlugin *plugin)
                       plugin->task_running || !git_has_content(plugin->new_branch),
                       "scm-primary-action");
     ca_div_end();
+    ca_div_end();
 
     if (plugin->branches.count == 0u && !plugin->task_running) {
         ca_text(&(Ca_TextDesc){ .text = "No local branches", .style = "scm-empty" });
@@ -1509,11 +1538,15 @@ static void git_render_branches(GitPlugin *plugin)
         const GitBranchEntry *entry = &plugin->branches.branches[i];
         GitActionContext *context = git_action_context(
             plugin, GIT_UI_CHECKOUT, entry->name, false);
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style = entry->current ? "scm-branch-row-current" : "scm-branch-row",
+        });
         ca_btn_begin(&(Ca_BtnDesc){
             .on_click = context && !entry->current ? git_on_action : NULL,
             .click_data = context,
             .direction = CA_HORIZONTAL,
-            .style = entry->current ? "scm-branch-row-current" : "scm-branch-row",
+            .style = "scm-branch-checkout",
             .disabled = plugin->task_running || entry->current || !context,
         });
         ca_text(&(Ca_TextDesc){
@@ -1527,6 +1560,12 @@ static void git_render_branches(GitPlugin *plugin)
         }
         ca_div_end();
         ca_btn_end();
+        char tooltip[320];
+        snprintf(tooltip, sizeof(tooltip), "Create branch from %s", entry->name);
+        git_render_icon_button(plugin, CA_ICON_NF_COD_ADD, tooltip,
+                               GIT_UI_CREATE_BRANCH_FROM, entry->name, false,
+                               plugin->task_running, "scm-branch-create-from");
+        ca_div_end();
     }
 }
 
@@ -1712,6 +1751,10 @@ static void git_panel_tick(void *user_data)
         ca_input_focus(plugin->commit_input);
         plugin->needs_commit_focus = false;
     }
+    if (plugin->needs_branch_focus && plugin->branch_input) {
+        ca_input_focus(plugin->branch_input);
+        plugin->needs_branch_focus = false;
+    }
     if (plugin->commit_input &&
         ca_input_key_pressed(plugin->commit_input, SOL_KEY_ENTER) &&
         plugin->snapshot.staged_count > 0u &&
@@ -1723,7 +1766,8 @@ static void git_panel_tick(void *user_data)
         ca_input_key_pressed(plugin->branch_input, SOL_KEY_ENTER) &&
         git_has_content(plugin->new_branch)) {
         (void)git_start_task(plugin, GIT_TASK_CREATE_BRANCH,
-                             plugin->new_branch, false);
+                             plugin->new_branch,
+                             plugin->branch_source[0] != '\0');
     }
 }
 
