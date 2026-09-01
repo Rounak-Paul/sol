@@ -1397,6 +1397,18 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
 
     /* ---- buffer.focus.* */
     if (strcmp(p->action, "buffer.focus.previous") == 0) {
+        /* When keyboard focus is elsewhere (terminal, file tree), the
+           user's intent is "take me back to the buffer" — just restore
+           focus to what is already showing. Only cycle to the
+           previously-used buffer when the buffer panel already has
+           focus, matching the alternate-buffer semantics this command
+           is named for. Otherwise a stray tab-swap would fire on the
+           same keystroke that was meant purely to return focus. */
+        if (sol_ui_system_focused_panel(app->ui) != SOL_UI_FOCUSED_PANEL_BUFFER) {
+            sol_ui_system_set_focused_panel(app->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
+            sol_input_router_set_buffer_input_active(app->router, true);
+            return true;
+        }
         return sol_buffer_focus_previous_buffer(app->buffers);
     }
     if (strcmp(p->action, "buffer.focus.first") == 0) {

@@ -21,6 +21,8 @@
 #ifndef SOL_INPUT_ROUTER_H
 #define SOL_INPUT_ROUTER_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,6 +57,19 @@ SolInputRouter *sol_input_router_create(Ca_Instance     *instance,
  * Call this BEFORE destroying any of the subsystems it was created with.
  */
 void sol_input_router_destroy(SolInputRouter *router);
+
+/*
+ * Force whether the buffer text-editing area accepts keyboard input,
+ * independent of the last mouse click. Used by command actions (e.g.
+ * "return focus to the buffer") that move keyboard focus back to the
+ * buffer panel programmatically rather than via a click the router
+ * would otherwise observe through CA_EVENT_MOUSE_BUTTON.
+ *
+ * router  The router to update.
+ * active  True to route subsequent key/char events into the active
+ *         text buffer; false to stop doing so.
+ */
+void sol_input_router_set_buffer_input_active(SolInputRouter *router, bool active);
 
 #ifdef __cplusplus
 }

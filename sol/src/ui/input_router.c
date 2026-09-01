@@ -620,6 +620,8 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
             r, r->mouse_x, r->mouse_y, NULL, NULL);
         if (!r->buffer_input_active) {
             r->horizontal_scroll_remainder = 0.0;
+        } else {
+            sol_ui_system_set_focused_panel(r->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
         }
     }
 }
@@ -889,4 +891,17 @@ void sol_input_router_destroy(SolInputRouter *router)
         ca_event_set_handler(router->instance, CA_EVENT_WINDOW_RESIZE, NULL, NULL);
     }
     free(router);
+}
+
+/*
+ * Force whether the buffer text-editing area accepts keyboard input.
+ * See header for rationale (programmatic focus restoration).
+ *
+ * router  The router to update (no-op if NULL).
+ * active  Desired buffer-input-active state.
+ */
+void sol_input_router_set_buffer_input_active(SolInputRouter *router, bool active)
+{
+    if (!router) return;
+    router->buffer_input_active = active;
 }

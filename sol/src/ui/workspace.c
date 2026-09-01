@@ -3120,7 +3120,12 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
 /*
  * Record which top-level panel currently owns keyboard focus and bump the
  * reactive signal so the workspace rebuilds with the corresponding
- * "-focused" style applied.  No-op when the panel is already current.
+ * "-focused" style applied.
+ *
+ * Any transfer to a non-terminal panel also clears the terminal manager's
+ * own keyboard-focus flag. The terminal reads that flag directly in
+ * on_key/on_char to decide whether to swallow every keystroke for the PTY,
+ * so it must never be left set once focus has visibly moved elsewhere.
  *
  * ui     The UI system to update.
  * panel  The panel that just gained keyboard focus.
@@ -3128,6 +3133,10 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
 void sol_ui_system_set_focused_panel(SolUISystem *ui, SolUIFocusedPanel panel)
 {
     if (!ui) return;
+    if (panel != SOL_UI_FOCUSED_PANEL_TERMINAL && ui->terminal_mgr &&
+        sol_terminal_manager_focused(ui->terminal_mgr)) {
+        sol_terminal_manager_set_focused(ui->terminal_mgr, false);
+    }
     if (ui->focused_panel == panel) return;
     ui->focused_panel = panel;
     if (ui->sig_focused_panel) {
