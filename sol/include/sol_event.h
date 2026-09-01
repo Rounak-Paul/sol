@@ -194,7 +194,6 @@ size_t sol_event_bus_drain  (SolEventBus *bus, size_t max_events);
 typedef struct SolAppStartupPayload {
     uint32_t worker_count;
     uint32_t loaded_plugins;
-    uint64_t warmup_checksum;
     bool     input_binding_active;
 } SolAppStartupPayload;
 

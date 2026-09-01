@@ -2700,19 +2700,22 @@ void sol_ui_system_open_settings_window(SolUISystem *ui)
                                 ui->sig_bg_effect_rev, ui, ui->sig_theme_rev);
 }
 
+/*
+ * Register a theme's composed CSS with the registry.
+ *
+ * Does not parse or validate the CSS here — with dozens of themes
+ * typically registered at startup (most never activated in a given
+ * session), eagerly parsing each one only to discard the result cost
+ * real startup latency for no benefit. The CSS is parsed for real, once,
+ * by sol_ui_rebuild_stylesheet the first time a theme is actually
+ * activated; a malformed theme fails to apply there instead of failing
+ * to register here, and sol_ui_rebuild_stylesheet already handles that
+ * parse failure without disturbing the previously active stylesheet.
+ */
 bool sol_ui_system_register_theme(SolUISystem *ui, const SolThemeDesc *desc)
 {
     if (!ui || !ui->themes || !desc || !desc->css) return false;
-    if (!sol_theme_register(ui->themes, desc)) return false;
-    /* Validate the composed CSS (base + override) as stored by the registry. */
-    const char *composed = sol_theme_css(ui->themes, desc->id);
-    Ca_Stylesheet *validation = composed ? ca_css_parse(composed) : NULL;
-    if (!validation) {
-        sol_theme_unregister(ui->themes, desc->id);
-        return false;
-    }
-    ca_css_destroy(validation);
-    return true;
+    return sol_theme_register(ui->themes, desc);
 }
 
 bool sol_ui_system_unregister_theme(SolUISystem *ui, const char *id)

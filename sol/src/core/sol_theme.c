@@ -119,8 +119,18 @@ bool sol_theme_register(SolThemeRegistry *registry, const SolThemeDesc *desc)
     }
 
     registry->entries[registry->count++] = entry;
-    if (registry->count == 1u) registry->active_index = 0u;
-    sol_theme_notify(registry);
+    /* Only the transition from empty to one entry can change what's
+     * active (there was nothing active before). Registering additional
+     * themes never changes the active theme, so it never changes what's
+     * rendered — notifying on every registration here previously forced
+     * a full CSS re-parse of the active theme for every theme in the
+     * registry, however many were being registered in bulk (e.g. every
+     * built-in theme at startup) regardless of whether any of them were
+     * the active one. */
+    if (registry->count == 1u) {
+        registry->active_index = 0u;
+        sol_theme_notify(registry);
+    }
     return true;
 }
 

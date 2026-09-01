@@ -26,7 +26,6 @@
 
 #include <causality.h>
 
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -131,10 +130,6 @@ static bool sol_resolve_plugin_directory(const char *argv0,
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
-typedef struct SolWarmupContext {
-    _Atomic uint64_t checksum;
-} SolWarmupContext;
-
 typedef struct SolAppContext {
     SolSystemManager     *systems;
     SolEventBus          *events;
@@ -169,6 +164,12 @@ typedef struct SolAppContext {
        least one dirty buffer has a pending external change. Removed once
        no buffer needs the warning anymore. */
     SolUIStatusToken       external_change_status;
+    /* Set once sol_run_deferred_init has run. Plugin loading, saved
+       theme/background-effect restore, and the startup event all happen
+       here instead of before the first frame, so the window paints and
+       becomes interactive immediately instead of waiting on disk I/O and
+       dynamic-library loading it doesn't need for the first frame. */
+    bool                   deferred_init_done;
 } SolAppContext;
 
 /* Debounce interval: a dirty buffer is saved this long after its last
@@ -1095,21 +1096,10 @@ static bool sol_on_startup_event(const SolEvent *event, void *user_data)
         return false;
     }
     const SolAppStartupPayload *p = (const SolAppStartupPayload *)event->payload;
-    printf("[sol] startup: workers=%u plugins=%u warmup=%llu input=%s\n",
+    printf("[sol] startup: workers=%u plugins=%u input=%s\n",
            p->worker_count, p->loaded_plugins,
-           (unsigned long long)p->warmup_checksum,
            p->input_binding_active ? "ready" : "missing");
     return false;
-}
-
-static void sol_warmup_range(uint32_t begin, uint32_t end, void *user_data)
-{
-    SolWarmupContext *ctx = (SolWarmupContext *)user_data;
-    uint64_t local = 0u;
-    for (uint32_t i = begin; i < end; ++i) {
-        local += ((uint64_t)i * 2654435761ull) ^ ((uint64_t)i >> 3u);
-    }
-    atomic_fetch_add_explicit(&ctx->checksum, local, memory_order_relaxed);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1754,6 +1744,82 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
 }
 
 /* ------------------------------------------------------------------ */
+/* Deferred (post-first-frame) init                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Run the startup work that does not gate the first painted frame:
+ * scanning and dynamically loading every plugin from disk, restoring the
+ * saved theme/background effect (which may be plugin-provided), and
+ * announcing SOL_EVENT_APP_STARTUP / SOL_EVENT_APP_READY.
+ *
+ * Called once, from inside the frame loop right after the first
+ * successful ca_instance_tick() — so the window is already created and
+ * showing a frame before this disk I/O and dynamic-library loading runs.
+ *
+ * app   The application context; app->deferred_init_done is set true
+ *       before returning so the caller never runs this twice.
+ * argc  Process argument count, forwarded from main() to resolve the
+ *       plugin directory relative to argv[0].
+ * argv  Process argument vector, forwarded from main().
+ */
+static void sol_run_deferred_init(SolAppContext *app, int argc, char **argv)
+{
+    app->deferred_init_done = true;
+
+    char plugin_dir[1024] = "plugins";
+    (void)sol_resolve_plugin_directory(
+        argc > 0 ? argv[0] : NULL, plugin_dir, sizeof(plugin_dir));
+    const uint32_t loaded_plugins =
+        (uint32_t)sol_system_load_plugins_from_directory(app->systems, plugin_dir);
+
+    /* Restore the saved CSS theme now that plugins have registered theirs. */
+    if (app->settings.theme_id[0] != '\0' &&
+        !sol_ui_system_set_active_theme(app->ui, app->settings.theme_id)) {
+        snprintf(app->settings.theme_id, sizeof(app->settings.theme_id), "%s",
+                 SOL_SETTINGS_THEME_ID_DEFAULT);
+        if (!sol_ui_system_set_active_theme(app->ui, app->settings.theme_id)) {
+            snprintf(app->settings.theme_id, sizeof(app->settings.theme_id), "%s",
+                     SOL_SETTINGS_THEME_ID_FALLBACK);
+            (void)sol_ui_system_set_active_theme(app->ui, app->settings.theme_id);
+        }
+    }
+    /* Always apply appearance overlay after themes load — set_active_theme
+     * skips the callback when the theme index hasn't changed, so the overlay
+     * would otherwise be missing on startup. */
+    sol_ui_system_apply_appearance(app->ui);
+
+    /* Restore the saved background effect now that plugins have registered theirs. */
+    if (app->bg_effects && app->settings.bg_effect_id[0] != '\0' &&
+        !sol_bg_effect_set_active(app->bg_effects, app->settings.bg_effect_id)) {
+        snprintf(app->settings.bg_effect_id, sizeof(app->settings.bg_effect_id), "%s",
+                 SOL_SETTINGS_BG_EFFECT_ID_DEFAULT);
+        if (!sol_bg_effect_set_active(app->bg_effects, app->settings.bg_effect_id))
+            app->settings.bg_effect_id[0] = '\0';
+    }
+
+    const SolAppStartupPayload startup = {
+        .worker_count = sol_job_system_worker_count(app->jobs),
+        .loaded_plugins = loaded_plugins,
+        .input_binding_active = app->command_flows_loaded > 0,
+    };
+
+    sol_event_bus_post(app->events, &(SolEventDesc){
+        .event_name   = SOL_EVENT_APP_STARTUP,
+        .payload      = &startup,
+        .payload_size = sizeof(startup),
+        .sender       = app->systems,
+        .flags        = SOL_EVENT_FLAG_NONE,
+    });
+    sol_system_pump_events(app->systems, 16u);
+
+    /* Window and subsystems are live — announce app readiness. Plugins
+       can use this hook to perform first-frame setup that needs the
+       window to exist. Payload is intentionally empty. */
+    sol_event_publish(app->events, SOL_EVENT_APP_READY, NULL, 0u, app->systems);
+}
+
+/* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -1967,69 +2033,14 @@ int main(int argc, char **argv)
     sol_plugin_manager_attach_syntax_registry(
         sol_system_plugins(app.systems), app.syntax_registry);
 
-    SolWarmupContext warmup = {0};
-    const bool warmup_ok = sol_job_system_parallel_for(
-        app.jobs, 100000u, 256u, sol_warmup_range, &warmup);
-
-    char plugin_dir[1024] = "plugins";
-    (void)sol_resolve_plugin_directory(
-        argc > 0 ? argv[0] : NULL, plugin_dir, sizeof(plugin_dir));
-    const uint32_t loaded_plugins =
-        (uint32_t)sol_system_load_plugins_from_directory(app.systems, plugin_dir);
-
-    /* Restore the saved CSS theme after plugins have registered theirs. */
-    if (app.settings.theme_id[0] != '\0' &&
-        !sol_ui_system_set_active_theme(app.ui, app.settings.theme_id)) {
-        snprintf(app.settings.theme_id, sizeof(app.settings.theme_id), "%s",
-                 SOL_SETTINGS_THEME_ID_DEFAULT);
-        if (!sol_ui_system_set_active_theme(app.ui, app.settings.theme_id)) {
-            snprintf(app.settings.theme_id, sizeof(app.settings.theme_id), "%s",
-                     SOL_SETTINGS_THEME_ID_FALLBACK);
-            (void)sol_ui_system_set_active_theme(app.ui, app.settings.theme_id);
-        }
-    }
-    /* Always apply appearance overlay after themes load — set_active_theme
-     * skips the callback when the theme index hasn't changed, so the overlay
-     * would otherwise be missing on startup. */
-    sol_ui_system_apply_appearance(app.ui);
-
-    /* Restore the saved background effect now that plugins have registered theirs. */
-    if (app.bg_effects && app.settings.bg_effect_id[0] != '\0' &&
-        !sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id)) {
-        snprintf(app.settings.bg_effect_id, sizeof(app.settings.bg_effect_id), "%s",
-                 SOL_SETTINGS_BG_EFFECT_ID_DEFAULT);
-        if (!sol_bg_effect_set_active(app.bg_effects, app.settings.bg_effect_id))
-            app.settings.bg_effect_id[0] = '\0';
-    }
-
-    const SolAppStartupPayload startup = {
-        .worker_count = sol_job_system_worker_count(app.jobs),
-        .loaded_plugins = loaded_plugins,
-        .warmup_checksum = warmup_ok
-            ? atomic_load_explicit(&warmup.checksum, memory_order_relaxed)
-            : 0u,
-        .input_binding_active = app.command_flows_loaded > 0,
-    };
-
-    sol_event_bus_post(app.events, &(SolEventDesc){
-        .event_name   = SOL_EVENT_APP_STARTUP,
-        .payload      = &startup,
-        .payload_size = sizeof(startup),
-        .sender       = app.systems,
-        .flags        = SOL_EVENT_FLAG_NONE,
-    });
-    sol_system_pump_events(app.systems, 16u);
-
-    /* Window and subsystems are live — announce app readiness. Plugins
-       can use this hook to perform first-frame setup that needs the
-       window to exist. Payload is intentionally empty. */
-    sol_event_publish(app.events, SOL_EVENT_APP_READY, NULL, 0u, app.systems);
-
     for (;;) {
         sol_system_begin_frame(app.systems);
         sol_ui_system_pre_tick(app.ui);
         if (!ca_instance_tick(instance)) break;
         sol_system_pump_events(app.systems, 128u);
+        if (!app.deferred_init_done) {
+            sol_run_deferred_init(&app, argc, argv);
+        }
         sol_drain_file_watcher(&app);
         sol_run_autosave_sweep(&app);
         sol_system_end_frame(app.systems);
