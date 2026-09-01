@@ -1,0 +1,34 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 512c64ed..4bc90570 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -179,6 +179,20 @@ set(RUNTIME_DEPENDENCIES ${_RUNTIME_DEPENDENCIES} CACHE INTERNAL
+   "Files that must be in the same directory as the executables at runtime.")
+ 
+ # Package config
++#
++# Skipped entirely when consumed via add_subdirectory() from a parent that
++# links a crypto backend in by name rather than via find_package() (e.g. an
++# in-tree add_subdirectory(mbedtls) build, as opposed to an installed
++# system package) — CMake's export()/install(EXPORT) both require every
++# transitively linked target to itself belong to an export set, which an
++# in-tree, non-find_package()'d dependency never will. Consumers that only
++# build+link libssh2 directly from this source tree (never `cmake
++# --install` a redistributable libssh2 package) don't need this section at
++# all. Guarded on NOT PROJECT_IS_TOP_LEVEL as a reasonable proxy: a
++# standalone build of libssh2 itself (top-level) keeps producing a real
++# installable package with its usual find_package(libssh2) support;
++# a build folded into a larger project's tree does not.
++if(PROJECT_IS_TOP_LEVEL)
+ 
+ ## During package installation, install libssh2-targets.cmake
+ install(EXPORT "${PROJECT_NAME}-targets"
+@@ -200,6 +214,8 @@ install(
+     "${PROJECT_SOURCE_DIR}/cmake/FindWolfSSL.cmake"
+   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+ 
++endif()
++
+ # Calculate variables for pkg-config
+ set(LIBSSH2_PC_LIBS_PRIVATE "")
+ 

@@ -22,6 +22,7 @@
 #include "sol_bg_effect.h"
 #include "sol_file_tree.h"
 #include "sol_settings.h"
+#include "sol_ssh_window.h"
 #include "sol_terminal.h"
 #include "sol_theme.h"
 #include "sol_ui_system.h"

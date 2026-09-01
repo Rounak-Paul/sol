@@ -1180,6 +1180,7 @@ static void sol_ui_on_frame(void *user_data)
        drive from here. */
     sol_file_picker_tick();
     sol_ui_settings_window_tick();
+    sol_ui_ssh_window_tick();
     sol_ui_search_window_tick();
 
     for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
@@ -2622,6 +2623,7 @@ void sol_ui_system_tick(SolUISystem *ui)
     sol_file_picker_tick();
     sol_ui_plugin_window_tick();
     sol_ui_settings_window_tick();
+    sol_ui_ssh_window_tick();
     sol_ui_search_window_tick();
     if (ui) {
         for (size_t i = 0u; i < SOL_UI_MAX_SIDE_PANELS; ++i) {
@@ -2698,6 +2700,23 @@ void sol_ui_system_open_settings_window(SolUISystem *ui)
     if (!ui || !ui->instance || !ui->settings) return;
     sol_ui_settings_window_open(ui->instance, ui->settings, ui->bg_effects,
                                 ui->sig_bg_effect_rev, ui, ui->sig_theme_rev);
+}
+
+/*
+ * Open the SSH connect dialog.
+ *
+ * ui          The UI system owning the instance.
+ * on_connect  Called once when the user confirms a connection attempt
+ *             (see sol_ssh_window.h); typically wired by main.c to
+ *             actually open a remote terminal tab.
+ * user_data   Passed unchanged to on_connect.
+ */
+void sol_ui_system_open_ssh_window(SolUISystem *ui,
+                                   SolSshConnectCallback on_connect,
+                                   void *user_data)
+{
+    if (!ui || !ui->instance) return;
+    sol_ui_ssh_window_open(ui->instance, on_connect, user_data);
 }
 
 /*

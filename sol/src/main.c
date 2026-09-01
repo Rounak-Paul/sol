@@ -44,6 +44,7 @@
 #include "sol_platform.h"
 #include "sol_bg_effect.h"
 #include "sol_settings.h"
+#include "sol_ssh_config.h"
 #include "sol_system_manager.h"
 #include "sol_syntax.h"
 #include "sol_terminal.h"
@@ -365,6 +366,11 @@ static void sol_register_workspace_menu_items(SolUISystem *ui)
             .menu_id = "edit", .menu_label = "Edit",
             .item_id = "find-content", .label = "Search in Files...",
             .action = "find.grep", .menu_order = 300, .item_order = 50,
+        },
+        {
+            .menu_id = "view", .menu_label = "View",
+            .item_id = "ssh-connect", .label = "Connect via SSH...",
+            .action = "ssh.connect", .menu_order = 400, .item_order = 30,
         },
     };
     for (size_t i = 0u; i < sizeof(items) / sizeof(items[0]); ++i) {
@@ -984,6 +990,39 @@ static bool sol_on_tree_file_open(const char *path, void *user_data)
     return sol_open_path_in_active_leaf(app, path);
 }
 
+/*
+ * SSH connect-dialog callback: fired once when the user confirms a
+ * connection attempt in the connect window (sol_ssh_window.h).
+ *
+ * The terminal-over-SSH transport (sol_terminal_manager_new_ssh_tab,
+ * backed by the vendored libssh2) is not wired up yet — this currently
+ * surfaces a clear "not yet available" popup rather than silently
+ * discarding the user's Connect click, so the dialog visibly does
+ * something meaningful in the interim. Replace the popup with an
+ * actual sol_terminal_manager_new_ssh_tab(app->terminal_mgr, conn,
+ * password) call once that backend lands.
+ *
+ * conn       The confirmed connection profile.
+ * password   Password typed for this attempt (only meaningful when
+ *            conn->auth == SOL_SSH_AUTH_PASSWORD); never persisted.
+ * user_data  The SolAppContext.
+ */
+static void sol_on_ssh_connect(const SolSshConnection *conn,
+                               const char *password, void *user_data)
+{
+    (void)password;
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !conn) return;
+
+    char message[512];
+    snprintf(message, sizeof(message),
+             "SSH connections aren't wired up yet — \"%s\" (%s@%s:%u) was "
+             "saved but not connected.",
+             conn->name, conn->user[0] ? conn->user : "?", conn->host,
+             (unsigned)conn->port);
+    sol_show_error(app, message);
+}
+
 /* File-picker callbacks. */
 static void sol_on_picker_file_chosen(const char *path, void *user_data)
 {
@@ -1363,6 +1402,12 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
     if (strcmp(p->action, "buffer.open") == 0) {
         sol_file_picker_open(app->instance, SOL_FILE_PICKER_FILE, NULL,
                              sol_on_picker_file_chosen, app);
+        return true;
+    }
+
+    /* ---- ssh.connect : open the SSH connect dialog. */
+    if (strcmp(p->action, "ssh.connect") == 0) {
+        sol_ui_system_open_ssh_window(app->ui, sol_on_ssh_connect, app);
         return true;
     }
 

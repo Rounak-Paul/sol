@@ -368,6 +368,24 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
 /* Open the settings window. No-op if one is already open. */
 void sol_ui_system_open_settings_window(SolUISystem *ui);
 
+/* Forward declarations — include sol_ssh_config.h / sol_ssh_window.h for
+ * the full types. */
+typedef struct SolSshConnection SolSshConnection;
+typedef void (*SolSshConnectCallback)(const SolSshConnection *conn,
+                                      const char             *password,
+                                      void                   *user_data);
+
+/*
+ * Open the SSH connect dialog. No-op if one is already open.
+ *
+ * ui          The UI system owning the instance.
+ * on_connect  Called once when the user confirms a connection attempt.
+ * user_data   Passed unchanged to on_connect.
+ */
+void sol_ui_system_open_ssh_window(SolUISystem *ui,
+                                   SolSshConnectCallback on_connect,
+                                   void *user_data);
+
 /* Re-generate and apply the stylesheet with the current appearance overlay
  * from the attached SolSettings.  Call after modifying any appearance field
  * in settings to make the change take effect immediately. */
