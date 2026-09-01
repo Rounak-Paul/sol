@@ -39,7 +39,7 @@
 #define SOL_TEXT_LINE_HEIGHT_PX 20
 
 /* Approximate UI chrome above/below the buffer pane in CSS pixels.
-   Title bar (~30) + status bar (22) + tabs row (28) + buffer-text-col
+   Title bar (~30) + status bar (22) + tabs row (19) + buffer-text-col
    vertical padding (16) + small fudge. Only used to estimate the
    visible line count for the scrollbar thumb — over-estimating is
    safe (we just over-render and clip). */
