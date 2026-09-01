@@ -34,3 +34,9 @@
 [submodule "plugins/sol-plugin-cmake/vendors/tree-sitter-cmake"]
 	path = plugins/sol-plugin-cmake/vendors/tree-sitter-cmake
 	url = https://github.com/Rounak-Paul/tree-sitter-cmake.git
+[submodule "vendors/mbedtls"]
+	path = vendors/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "vendors/libssh2"]
+	path = vendors/libssh2
+	url = https://github.com/libssh2/libssh2.git
