@@ -34,6 +34,7 @@
 
 #include "sol_buffer.h"
 #include "sol_config.h"
+#include "sol_crash.h"
 #include "sol_event.h"
 #include "sol_file_picker.h"
 #include "sol_file_watcher.h"
@@ -1825,6 +1826,15 @@ static void sol_run_deferred_init(SolAppContext *app, int argc, char **argv)
 
 int main(int argc, char **argv)
 {
+    /* Installed before any other subsystem so a fault during their own
+       init is still caught and reported, not just faults after startup
+       completes. */
+#ifdef SOL_BUILD_VERSION
+    sol_crash_install("Sol", SOL_BUILD_VERSION);
+#else
+    sol_crash_install("Sol", NULL);
+#endif
+
     SolAppContext app;
     memset(&app, 0, sizeof(app));
 
@@ -1839,6 +1849,7 @@ int main(int argc, char **argv)
     app.buffers = sol_system_buffers(app.systems);
     app.jobs    = sol_system_jobs(app.systems);
     app.input   = sol_system_input(app.systems);
+    sol_crash_track_events(app.events);
 
     /* CLI: `./sol <path>` — file → open buffer; dir → mount tree root. */
     const char *cli_path =

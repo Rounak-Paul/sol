@@ -1,3 +1,23 @@
+# Short build identifier embedded in crash reports (see sol_crash.c) so a
+# report names the exact commit it came from. Falls back to "unknown"
+# outside a git checkout (e.g. a source tarball) rather than failing
+# configure.
+find_package(Git QUIET)
+set(SOL_BUILD_VERSION "unknown")
+if(Git_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE SOL_BUILD_VERSION_OUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE SOL_GIT_RESULT
+    )
+    if(SOL_GIT_RESULT EQUAL 0 AND SOL_BUILD_VERSION_OUT)
+        set(SOL_BUILD_VERSION "${SOL_BUILD_VERSION_OUT}")
+    endif()
+endif()
+
 file(GLOB_RECURSE SOL_SOURCES CONFIGURE_DEPENDS src/*.c)
 
 set(SOL_PLATFORM_SOURCES)
@@ -24,6 +44,8 @@ target_include_directories(sol PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/vendors/tree-sitter/lib/include
 )
+
+target_compile_definitions(sol PRIVATE SOL_BUILD_VERSION="${SOL_BUILD_VERSION}")
 
 target_link_libraries(sol PRIVATE
     causality Threads::Threads ${CMAKE_DL_LIBS} tree_sitter_runtime
