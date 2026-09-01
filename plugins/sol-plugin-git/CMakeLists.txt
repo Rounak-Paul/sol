@@ -24,6 +24,14 @@ if(APPLE)
     target_link_options(sol_plugin_git PRIVATE -undefined dynamic_lookup)
 endif()
 
+# The Visual Studio generator does not propagate COMPILE_LANGUAGE generator
+# expressions from a directory-scoped add_compile_options — see the same
+# fix on the `sol` target in ../../sol/CMakeLists.txt. plugin.c includes
+# <stdatomic.h>, which MSVC gates behind this flag.
+if(MSVC)
+    target_compile_options(sol_plugin_git PRIVATE /experimental:c11atomics)
+endif()
+
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     add_executable(sol_git_plugin_tests
         tests/test_git_model.c

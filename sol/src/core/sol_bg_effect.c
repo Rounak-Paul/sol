@@ -5,6 +5,8 @@
 
 #include "sol_bg_effect.h"
 
+#include "sol_platform.h"
+
 #include <causality.h>
 #include <ca_gpu.h>
 #include <math.h>
@@ -190,9 +192,7 @@ struct SolBgEffectRegistry {
 /* Return monotonic time in seconds for animation timing. */
 static double get_monotonic_sec(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+    return (double)sol_platform_now_monotonic_ns() * 1e-9;
 }
 
 /*

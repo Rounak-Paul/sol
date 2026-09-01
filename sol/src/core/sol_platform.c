@@ -906,7 +906,15 @@ bool sol_platform_map_file_readonly(const char *path, SolMappedFile *out_file, c
     memset(out_file, 0, sizeof(*out_file));
 
 #if defined(_WIN32)
-    HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    /* A heap copy, not a mapped view: see the SolMappedFile comment in
+       sol_platform.h for why — a live MapViewOfFile section blocks other
+       handles from touching the file for as long as it's mapped, which
+       broke reload-from-disk (and any external overwrite of an open file)
+       on Windows. Share read/write/delete too, so this handle itself
+       never blocks a concurrent writer while the read is in flight. */
+    HANDLE file = CreateFileA(path, GENERIC_READ,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         if (out_error) {
             *out_error = "CreateFileA() failed";
@@ -924,35 +932,39 @@ bool sol_platform_map_file_readonly(const char *path, SolMappedFile *out_file, c
     }
 
     if (size.QuadPart <= 0) {
-        out_file->file_handle = (void *)file;
-        out_file->mapping_handle = NULL;
+        CloseHandle(file);
         out_file->data = NULL;
         out_file->size_bytes = 0u;
         return true;
     }
 
-    HANDLE mapping = CreateFileMappingA(file, NULL, PAGE_READONLY, 0, 0, NULL);
-    if (!mapping) {
+    uint8_t *buffer = (uint8_t *)malloc((size_t)size.QuadPart);
+    if (!buffer) {
         CloseHandle(file);
         if (out_error) {
-            *out_error = "CreateFileMappingA() failed";
+            *out_error = "out of memory";
         }
         return false;
     }
 
-    void *view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-    if (!view) {
-        CloseHandle(mapping);
-        CloseHandle(file);
-        if (out_error) {
-            *out_error = "MapViewOfFile() failed";
+    size_t total_read = 0u;
+    while (total_read < (size_t)size.QuadPart) {
+        const size_t remaining = (size_t)size.QuadPart - total_read;
+        const DWORD want = remaining > 0x7FFFFFFFu ? 0x7FFFFFFFu : (DWORD)remaining;
+        DWORD got = 0u;
+        if (!ReadFile(file, buffer + total_read, want, &got, NULL) || got == 0u) {
+            free(buffer);
+            CloseHandle(file);
+            if (out_error) {
+                *out_error = "ReadFile() failed";
+            }
+            return false;
         }
-        return false;
+        total_read += got;
     }
+    CloseHandle(file);
 
-    out_file->file_handle = (void *)file;
-    out_file->mapping_handle = (void *)mapping;
-    out_file->data = (const uint8_t *)view;
+    out_file->data = buffer;
     out_file->size_bytes = (size_t)size.QuadPart;
     return true;
 #else
@@ -1005,15 +1017,7 @@ void sol_platform_unmap_file(SolMappedFile *mapped_file)
     }
 
 #if defined(_WIN32)
-    if (mapped_file->data) {
-        UnmapViewOfFile((const void *)mapped_file->data);
-    }
-    if (mapped_file->mapping_handle) {
-        CloseHandle((HANDLE)mapped_file->mapping_handle);
-    }
-    if (mapped_file->file_handle) {
-        CloseHandle((HANDLE)mapped_file->file_handle);
-    }
+    free((void *)mapped_file->data);
 #else
     if (mapped_file->mapping_base && mapped_file->size_bytes > 0u) {
         munmap(mapped_file->mapping_base, mapped_file->size_bytes);

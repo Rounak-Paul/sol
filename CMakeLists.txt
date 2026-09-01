@@ -15,11 +15,25 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
     enable_testing()
 endif()
 
-# MSVC runtime library
+# MSVC runtime library — always the Release DLL CRT, even in Debug config.
+# The LunarG Vulkan SDK ships shaderc_combined.lib built only against the
+# Release CRT, with no debug variant; a Debug-CRT (/MDd) build fails to link
+# with LNK2038 CRT mismatches against it (and against causality.lib, which
+# forces the same override — see vendors/causality/causality/CMakeLists.txt).
+# Debug configs still compile at -Od with full debug symbols — only /MDd's
+# extra iterator/heap-debug checks are unavailable.
 if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
-    add_compile_options($<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+
+    # Match POSIX's much larger default thread stack (commonly 8 MiB on
+    # Linux/macOS) instead of MSVC's 1 MiB default. Unoptimized (/Od) Debug
+    # builds give every local its own stack slot rather than reusing space
+    # across sibling scopes, so a function with many locals or many
+    # expansions of a macro that declares one (e.g. the test suites' SOL_RUN)
+    # can end up with a multi-hundred-KB single-frame prologue allocation
+    # that is routine under Linux/macOS's default but overflows Windows'.
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:8388608")
 endif()
 
 # Output directories

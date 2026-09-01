@@ -1221,18 +1221,21 @@ static void vt_esc_dispatch(SolTerminal *term, uint8_t final)
    than emit partial/garbage clipboard content. `out` may alias `in`. */
 static size_t vt_base64_decode(const char *in, size_t len, char *out, size_t out_cap)
 {
-    static const int8_t T[256] = {
-        ['A']=0,  ['B']=1,  ['C']=2,  ['D']=3,  ['E']=4,  ['F']=5,  ['G']=6,  ['H']=7,
-        ['I']=8,  ['J']=9,  ['K']=10, ['L']=11, ['M']=12, ['N']=13, ['O']=14, ['P']=15,
-        ['Q']=16, ['R']=17, ['S']=18, ['T']=19, ['U']=20, ['V']=21, ['W']=22, ['X']=23,
-        ['Y']=24, ['Z']=25, ['a']=26, ['b']=27, ['c']=28, ['d']=29, ['e']=30, ['f']=31,
-        ['g']=32, ['h']=33, ['i']=34, ['j']=35, ['k']=36, ['l']=37, ['m']=38, ['n']=39,
-        ['o']=40, ['p']=41, ['q']=42, ['r']=43, ['s']=44, ['t']=45, ['u']=46, ['v']=47,
-        ['w']=48, ['x']=49, ['y']=50, ['z']=51, ['0']=52, ['1']=53, ['2']=54, ['3']=55,
-        ['4']=56, ['5']=57, ['6']=58, ['7']=59, ['8']=60, ['9']=61, ['+']=62, ['/']=63,
-        [0 ... '+'-1]=-1, ['+'+1 ... '/'-1]=-1, ['9'+1 ... 'A'-1]=-1,
-        ['Z'+1 ... 'a'-1]=-1, ['z'+1 ... 255]=-1,
-    };
+    /* Built once on first call: standard base64 alphabet, everything else -1.
+       (Not the GNU `[lo ... hi] = val` designated-range syntax MSVC rejects.) */
+    static int8_t T[256];
+    static bool   T_ready = false;
+    if (!T_ready) {
+        for (int i = 0; i < 256; ++i) T[i] = -1;
+        for (int i = 0; i < 26; ++i) {
+            T['A' + i] = (int8_t)i;
+            T['a' + i] = (int8_t)(26 + i);
+        }
+        for (int i = 0; i < 10; ++i) T['0' + i] = (int8_t)(52 + i);
+        T['+'] = 62;
+        T['/'] = 63;
+        T_ready = true;
+    }
     size_t out_len = 0;
     uint32_t acc = 0;
     int bits = 0;
@@ -1748,7 +1751,7 @@ static void *sol_terminal_reader_thread(void *arg)
     return NULL;
 }
 
-static bool sol_terminal_start_pty(SolTerminal *term)
+static bool sol_terminal_start_pty(SolTerminal *term, const char *cwd)
 {
     HMODULE hKernel = LoadLibraryA("kernel32.dll");
     if (!hKernel) return false;
@@ -1818,8 +1821,15 @@ static bool sol_terminal_start_pty(SolTerminal *term)
 
     /* Use cmd.exe as the default shell on Windows. */
     wchar_t cmdline[] = L"cmd.exe";
+    wchar_t cwd_wide[MAX_PATH];
+    LPCWSTR cwd_arg = NULL;
+    if (cwd && *cwd) {
+        if (MultiByteToWideChar(CP_UTF8, 0, cwd, -1, cwd_wide, MAX_PATH) > 0) {
+            cwd_arg = cwd_wide;
+        }
+    }
     if (!CreateProcessW(NULL, cmdline, NULL, NULL, FALSE,
-                        EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+                        EXTENDED_STARTUPINFO_PRESENT, NULL, cwd_arg,
                         &si.StartupInfo, &pi)) {
         DeleteProcThreadAttributeList(pAttrList);
         HeapFree(GetProcessHeap(), 0, pAttrList);

@@ -15,6 +15,7 @@ target_include_directories(sol_plugin_bfx PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/sol/include
     ${CMAKE_SOURCE_DIR}/vendors/causality/causality/include
+    ${Vulkan_INCLUDE_DIRS}
 )
 
 if(APPLE)

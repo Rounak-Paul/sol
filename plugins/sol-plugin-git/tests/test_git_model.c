@@ -1,6 +1,7 @@
 #include "git_plugin.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int g_failures = 0;
@@ -23,25 +24,31 @@ static void test_status_core_records(void)
         "1 .M N... 100644 100644 100644 abcdef0 abcdef0 src/main.c\0"
         "1 A. N... 000000 100644 100644 0000000 abcdef1 new file.txt\0"
         "? notes/todo.txt\0";
-    GitSnapshot snapshot;
-    memset(&snapshot, 0, sizeof(snapshot));
-    snprintf(snapshot.root, sizeof(snapshot.root), "/repo");
+    /* Heap-allocated: GitSnapshot embeds GIT_MAX_FILES (512) entries with two
+       GIT_PATH_CAP (4096-byte) paths each, ~4.2 MB total — comfortably inside
+       Linux/macOS's 8 MB default thread stack but well past Windows' 1 MB
+       default, where a stack-local instance reliably overflows. */
+    GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(GitSnapshot));
+    CHECK(snapshot);
+    if (!snapshot) return;
+    snprintf(snapshot->root, sizeof(snapshot->root), "/repo");
     char error[GIT_ERROR_CAP] = {0};
 
     CHECK(git_model_parse_status(status, sizeof(status) - 1u,
-                                 &snapshot, error, sizeof(error)));
-    CHECK(snapshot.repository);
-    CHECK(strcmp(snapshot.root, "/repo") == 0);
-    CHECK(strcmp(snapshot.branch, "main") == 0);
-    CHECK(strcmp(snapshot.upstream, "origin/main") == 0);
-    CHECK(snapshot.ahead == 2);
-    CHECK(snapshot.behind == 1);
-    CHECK(snapshot.file_count == 3u);
-    CHECK(snapshot.staged_count == 1u);
-    CHECK(snapshot.unstaged_count == 2u);
-    CHECK(snapshot.untracked_count == 1u);
-    CHECK(strcmp(snapshot.files[0].path, "src/main.c") == 0);
-    CHECK(strcmp(snapshot.files[1].path, "new file.txt") == 0);
+                                 snapshot, error, sizeof(error)));
+    CHECK(snapshot->repository);
+    CHECK(strcmp(snapshot->root, "/repo") == 0);
+    CHECK(strcmp(snapshot->branch, "main") == 0);
+    CHECK(strcmp(snapshot->upstream, "origin/main") == 0);
+    CHECK(snapshot->ahead == 2);
+    CHECK(snapshot->behind == 1);
+    CHECK(snapshot->file_count == 3u);
+    CHECK(snapshot->staged_count == 1u);
+    CHECK(snapshot->unstaged_count == 2u);
+    CHECK(snapshot->untracked_count == 1u);
+    CHECK(strcmp(snapshot->files[0].path, "src/main.c") == 0);
+    CHECK(strcmp(snapshot->files[1].path, "new file.txt") == 0);
+    free(snapshot);
 }
 
 /* Verify rename records consume their second NUL-delimited path. */
@@ -51,17 +58,19 @@ static void test_status_rename_record(void)
         "# branch.head feature/rename\0"
         "2 R. N... 100644 100644 100644 abcdef0 abcdef1 R100 renamed file.c\0"
         "old file.c\0";
-    GitSnapshot snapshot;
-    memset(&snapshot, 0, sizeof(snapshot));
+    GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(GitSnapshot));
+    CHECK(snapshot);
+    if (!snapshot) return;
     char error[GIT_ERROR_CAP] = {0};
 
     CHECK(git_model_parse_status(status, sizeof(status) - 1u,
-                                 &snapshot, error, sizeof(error)));
-    CHECK(snapshot.file_count == 1u);
-    CHECK(snapshot.staged_count == 1u);
-    CHECK(snapshot.files[0].kind == GIT_FILE_RENAMED);
-    CHECK(strcmp(snapshot.files[0].path, "renamed file.c") == 0);
-    CHECK(strcmp(snapshot.files[0].original_path, "old file.c") == 0);
+                                 snapshot, error, sizeof(error)));
+    CHECK(snapshot->file_count == 1u);
+    CHECK(snapshot->staged_count == 1u);
+    CHECK(snapshot->files[0].kind == GIT_FILE_RENAMED);
+    CHECK(strcmp(snapshot->files[0].path, "renamed file.c") == 0);
+    CHECK(strcmp(snapshot->files[0].original_path, "old file.c") == 0);
+    free(snapshot);
 }
 
 /* Verify detached and unmerged records are represented safely. */
@@ -70,31 +79,35 @@ static void test_status_detached_and_unmerged(void)
     static const char status[] =
         "# branch.head (detached)\0"
         "u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflict.txt\0";
-    GitSnapshot snapshot;
-    memset(&snapshot, 0, sizeof(snapshot));
+    GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(GitSnapshot));
+    CHECK(snapshot);
+    if (!snapshot) return;
     char error[GIT_ERROR_CAP] = {0};
 
     CHECK(git_model_parse_status(status, sizeof(status) - 1u,
-                                 &snapshot, error, sizeof(error)));
-    CHECK(snapshot.detached);
-    CHECK(strcmp(snapshot.branch, "detached") == 0);
-    CHECK(snapshot.file_count == 1u);
-    CHECK(snapshot.files[0].kind == GIT_FILE_UNMERGED);
-    CHECK(snapshot.staged_count == 1u);
-    CHECK(snapshot.unstaged_count == 1u);
+                                 snapshot, error, sizeof(error)));
+    CHECK(snapshot->detached);
+    CHECK(strcmp(snapshot->branch, "detached") == 0);
+    CHECK(snapshot->file_count == 1u);
+    CHECK(snapshot->files[0].kind == GIT_FILE_UNMERGED);
+    CHECK(snapshot->staged_count == 1u);
+    CHECK(snapshot->unstaged_count == 1u);
+    free(snapshot);
 }
 
 /* Verify malformed records fail without partially trusting the input. */
 static void test_status_rejects_malformed_record(void)
 {
     static const char status[] = "1 malformed\0";
-    GitSnapshot snapshot;
-    memset(&snapshot, 0, sizeof(snapshot));
+    GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(GitSnapshot));
+    CHECK(snapshot);
+    if (!snapshot) return;
     char error[GIT_ERROR_CAP] = {0};
 
     CHECK(!git_model_parse_status(status, sizeof(status) - 1u,
-                                  &snapshot, error, sizeof(error)));
+                                  snapshot, error, sizeof(error)));
     CHECK(error[0] != '\0');
+    free(snapshot);
 }
 
 /* Verify the portable subprocess layer can resolve and capture Git itself. */
@@ -150,16 +163,22 @@ static void test_process_tracked_diff(void)
     if (root_result.exit_code != 0) return;
     repo_root[strcspn(repo_root, "\r\n")] = '\0';
 
-    char status_output[65536];
+    /* Heap-allocated: 64 KB + 1 MB of stack buffers in this one frame would
+       overflow Windows' 1 MB default thread stack (fine under Linux/macOS's
+       8 MB default — see the GitSnapshot comment in test_status_core_records
+       for the same pattern). */
+    char *status_output = (char *)malloc(65536u);
+    CHECK(status_output);
+    if (!status_output) return;
     const char *status_argv[] = {
         "git", "status", "--porcelain=v2", "-z", "--untracked-files=all", NULL
     };
     GitProcessResult status_result = git_process_run(repo_root, status_argv,
                                                      status_output,
-                                                     sizeof(status_output),
+                                                     65536u,
                                                      10000u);
     CHECK(status_result.exit_code == 0);
-    if (status_result.exit_code != 0) return;
+    if (status_result.exit_code != 0) { free(status_output); return; }
 
     const char *modified_path = NULL;
     const char *cursor = status_output;
@@ -185,22 +204,27 @@ static void test_process_tracked_diff(void)
 
     if (!modified_path) {
         printf("test_process_tracked_diff: no modified files, skipping\n");
+        free(status_output);
         return;
     }
 
-    char diff_output[1048576];
+    char *diff_output = (char *)malloc(1048576u);
+    CHECK(diff_output);
+    if (!diff_output) { free(status_output); return; }
     const char *diff_argv[] = {
         "git", "diff", "--no-ext-diff", "--", modified_path, NULL
     };
     GitProcessResult diff_result = git_process_run(repo_root, diff_argv,
                                                    diff_output,
-                                                   sizeof(diff_output),
+                                                   1048576u,
                                                    30000u);
     printf("test_process_tracked_diff: repo_root='%s' path='%s' exit=%d len=%zu\n",
            repo_root, modified_path, diff_result.exit_code,
            diff_result.output_len);
     CHECK(diff_result.exit_code == 0);
     CHECK(diff_result.output_len > 0u);
+    free(diff_output);
+    free(status_output);
 }
 
 /* Verify Git can render a complete patch for a file absent from the index. */

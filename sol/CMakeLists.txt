@@ -8,7 +8,17 @@ endif()
 add_executable(sol ${SOL_SOURCES} ${SOL_PLATFORM_SOURCES})
 
 # Export symbols so plugin modules can resolve sol symbols at load time.
-set_target_properties(sol PROPERTIES ENABLE_EXPORTS ON)
+# On ELF/Mach-O every process-wide symbol is naturally visible, so
+# ENABLE_EXPORTS (which produces the .exp/.lib import archive plugins link
+# against on Windows) is enough there. MSVC, unlike GNU/Apple linkers, does
+# not export any symbol unless it is explicitly __declspec(dllexport)'d or
+# listed in a .def file — none of sol's own sol_* functions are decorated
+# that way, so without WINDOWS_EXPORT_ALL_SYMBOLS the generated sol.lib
+# would be missing them and every plugin link would fail with LNK2019.
+set_target_properties(sol PROPERTIES
+    ENABLE_EXPORTS ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
+)
 
 target_include_directories(sol PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -20,6 +30,28 @@ target_link_libraries(sol PRIVATE
     VulkanMemoryAllocator Vulkan::Vulkan
     ${CAUSALITY_LINUX_DEPS}
 )
+
+# causality's CA_API macro resolves to dllimport on Windows unless
+# causality_EXPORTS is defined, on the assumption that consumers link
+# against a shared Quasar.dll that re-exports causality's symbols (see
+# vendors/causality/causality/include/ca_api.h). sol instead links the
+# static causality archive straight into the executable with no DLL
+# boundary in between, so it needs causality_EXPORTS too — otherwise MSVC
+# emits calls through a nonexistent import thunk (__imp_ca_*) and the link
+# fails. Harmless on non-Windows, where CA_API ignores the macro either way.
+if(WIN32)
+    target_compile_definitions(sol PRIVATE causality_EXPORTS)
+endif()
+
+# The Visual Studio generator does not propagate COMPILE_LANGUAGE generator
+# expressions (e.g. $<$<COMPILE_LANGUAGE:C>:...>) from a directory-scoped
+# add_compile_options — the flag silently never reaches cl.exe. Apply it
+# directly on the target instead. Needed here because main.c, sol_job.c,
+# sol_terminal.c, sol_file_watcher.c, and search_window.c include
+# <stdatomic.h>, which MSVC gates behind this flag.
+if(MSVC)
+    target_compile_options(sol PRIVATE /experimental:c11atomics)
+endif()
 
 # sol_file_watcher.c uses FSEvents (macOS) / inotify (Linux, libc — no
 # extra link) / ReadDirectoryChangesW (Windows, kernel32 — already linked).
@@ -172,6 +204,11 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     )
     target_compile_definitions(sol_command_flow_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_command_flow_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
+    if(WIN32)
+        # See the causality_EXPORTS comment on the `sol` target above: this
+        # target also links the static causality archive directly.
+        target_compile_definitions(sol_command_flow_tests PRIVATE causality_EXPORTS)
+    endif()
     add_test(NAME sol_command_flow_tests COMMAND sol_command_flow_tests)
 
     # ---- Integration tests (event+buffer+text-buffer end-to-end) -------
@@ -220,5 +257,15 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     )
     target_compile_definitions(sol_plugin_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
+    if(WIN32)
+        # See the causality_EXPORTS comment on the `sol` target above: this
+        # target also links the static causality archive directly.
+        target_compile_definitions(sol_plugin_tests PRIVATE causality_EXPORTS)
+    endif()
+    if(MSVC)
+        # See the /experimental:c11atomics comment on the `sol` target
+        # above: this target compiles sol_job.c, which needs it too.
+        target_compile_options(sol_plugin_tests PRIVATE /experimental:c11atomics)
+    endif()
     add_test(NAME sol_plugin_tests COMMAND sol_plugin_tests)
 endif()

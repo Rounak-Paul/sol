@@ -34,14 +34,27 @@ typedef struct SolDirectoryIter {
     char *base_path;
 } SolDirectoryIter;
 
-/* A read-only memory-mapped file opened by sol_platform_map_file_readonly. */
+/*
+ * A read-only view of a file's contents opened by sol_platform_map_file_readonly.
+ *
+ * On POSIX this is a true mmap(MAP_PRIVATE) view: cheap even for large files,
+ * and — the property callers like sol_rope_from_file rely on to hold this
+ * open for a chunk's whole lifetime — later writes or renames to the path
+ * elsewhere never disturb it, since the mapping is decoupled from the
+ * directory entry once open() succeeds. On Windows a CreateFileMapping +
+ * MapViewOfFile section does not decouple the same way: as long as the view
+ * is mapped, other handles cannot truncate, replace, or delete the file
+ * (sharing violation), which breaks any editor workflow where the open file
+ * gets overwritten from elsewhere (a save from another tool, `git checkout`,
+ * a formatter). So on Windows this is instead a plain heap copy of the
+ * file's bytes, read once up front and independent of the file afterward —
+ * the same POSIX-visible behavior, at the cost of the zero-copy win for
+ * very large files.
+ */
 typedef struct SolMappedFile {
     const uint8_t *data;
     size_t size_bytes;
-#if defined(_WIN32)
-    void *file_handle;
-    void *mapping_handle;
-#else
+#if !defined(_WIN32)
     void *mapping_base;
 #endif
 } SolMappedFile;
