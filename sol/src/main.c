@@ -37,6 +37,7 @@
 #include "sol_config.h"
 #include "sol_event.h"
 #include "sol_file_picker.h"
+#include "sol_file_watcher.h"
 #include "sol_input.h"
 #include "sol_input_router.h"
 #include "sol_job.h"
@@ -155,7 +156,25 @@ typedef struct SolAppContext {
     char                  file_clipboard_path[4096];
     bool                  file_clipboard_cut;
     SolSettings           settings;
+    SolSubscriptionToken  text_edited_token;
+    /* Autosave debounce: bumped to (edit time + delay) on every text edit
+       while autosave is enabled; the frame loop sweeps all dirty buffers
+       once this deadline passes. 0 means no autosave is pending. A single
+       shared deadline (rather than a per-buffer table) keeps this O(1) to
+       maintain — a burst of edits across many buffers just pushes the
+       sweep out, and the sweep saves everything dirty at that point. */
+    uint64_t              autosave_deadline_ns;
+    SolFileWatcher        *watcher;
+    /* Status-bar segment showing "external changes not loaded" while at
+       least one dirty buffer has a pending external change. Removed once
+       no buffer needs the warning anymore. */
+    SolUIStatusToken       external_change_status;
 } SolAppContext;
+
+/* Debounce interval: a dirty buffer is saved this long after its last
+   edit, provided no further edit arrives first. Chosen to avoid writing
+   to disk on every keystroke while still feeling near-immediate. */
+#define SOL_AUTOSAVE_DEBOUNCE_NS 1500000000ull
 
 typedef struct SolDeletePathRequest {
     SolAppContext *app;
@@ -169,7 +188,14 @@ typedef struct SolDeletePathRequest {
 static bool sol_set_explorer_root(SolAppContext *app, const char *path)
 {
     if (!app || !app->ui) return false;
-    return sol_ui_system_set_file_tree_root(app->ui, path);
+    const bool ok = sol_ui_system_set_file_tree_root(app->ui, path);
+    if (ok && app->watcher) {
+        /* A failed watch (permission denied, OS resource limit, etc.)
+           does not fail the explorer-root change — live updates are a
+           convenience on top of an otherwise fully-usable explorer. */
+        (void)sol_file_watcher_set_root(app->watcher, path);
+    }
+    return ok;
 }
 
 static int sol_active_buffer_viewport_lines(SolAppContext *app, SolTextBuffer *tb)
@@ -252,6 +278,37 @@ static void sol_register_terminal_command_defaults(SolUISystem *ui)
             .sequence_length = 2u,
         });
     }
+}
+
+/*
+ * Register default save command flows.
+ *
+ * Registered in code (not just via bindings.conf) so leader-b-s /
+ * leader-b-shift+s work immediately even for users with a pre-existing
+ * bindings.conf from before these actions existed — that file is only
+ * auto-seeded with new defaults when it doesn't exist yet.
+ *
+ * ui  The UI system to register flows with.
+ */
+static void sol_register_buffer_save_command_defaults(SolUISystem *ui)
+{
+    if (!ui) return;
+    const SolKeyCode save_sequence[] = { 'B', 'S' };
+    (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "buffer.save",
+        .label  = "Save buffer",
+        .sequence = save_sequence,
+        .sequence_length = 2u,
+    });
+    const SolKeyCode save_all_sequence[] = { 'B', 'S' };
+    const SolModifierMask save_all_mods[] = { SOL_MOD_NONE, SOL_MOD_SHIFT };
+    (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "buffer.save_all",
+        .label  = "Save all buffers",
+        .sequence = save_all_sequence,
+        .step_modifiers = save_all_mods,
+        .sequence_length = 2u,
+    });
 }
 
 /* Register mouse-accessible title-bar entries for built-in workspace views. */
@@ -537,6 +594,140 @@ static void sol_show_error(SolAppContext *app, const char *message)
         .buttons = CA_POPUP_BUTTONS_OK,
         .replace_active = true,
     });
+}
+
+/*
+ * Recompute the aggregated "external changes not loaded" status-bar
+ * warning from scratch by scanning every open buffer's
+ * external-change-pending flag, adding/updating/removing the segment as
+ * needed. Called after every watcher drain and after every save, so the
+ * warning always reflects exactly the set of buffers still unreconciled,
+ * never stale and never left behind after the user saves over a conflict.
+ *
+ * app  The application context.
+ */
+static void sol_refresh_external_change_status(SolAppContext *app)
+{
+    if (!app || !app->buffers || !app->ui) return;
+
+    char names[400] = "External changes not loaded (unsaved edits kept):";
+    size_t len = strlen(names);
+    bool any = false;
+
+    const size_t count = sol_buffer_count(app->buffers);
+    for (size_t i = 0u; i < count; ++i) {
+        const SolBufferId id = sol_buffer_at(app->buffers, i);
+        SolBuffer *buf = sol_buffer_get(app->buffers, id);
+        SolTextBuffer *tb = sol_text_buffer_state(buf);
+        if (!tb || !sol_text_buffer_has_external_change(tb)) continue;
+
+        any = true;
+        const char *name = sol_buffer_name(buf);
+        int written = snprintf(names + len, sizeof(names) - len,
+                               " %s;", name ? name : "?");
+        if (written > 0) {
+            const size_t w = (size_t)written;
+            len += (w < sizeof(names) - len) ? w : sizeof(names) - len - 1u;
+        }
+    }
+
+    if (any) {
+        if (app->external_change_status == SOL_UI_STATUS_TOKEN_INVALID) {
+            app->external_change_status = sol_ui_system_add_status_segment(
+                app->ui, names, "status-bar-warning");
+        } else {
+            sol_ui_system_update_status_segment(
+                app->ui, app->external_change_status, names);
+        }
+    } else if (app->external_change_status != SOL_UI_STATUS_TOKEN_INVALID) {
+        sol_ui_system_remove_status_segment(app->ui, app->external_change_status);
+        app->external_change_status = SOL_UI_STATUS_TOKEN_INVALID;
+    }
+}
+
+/*
+ * Save the active text buffer to its source path.
+ *
+ * Reports an error popup (e.g. no path yet, or a write failure) rather
+ * than failing silently, since save is a user-initiated action whose
+ * outcome the user needs to know. On success bumps the buffer system's
+ * revision signal so the tab strip's dirty indicator redraws.
+ *
+ * app  The application context.
+ * Returns  true if the active buffer was saved.
+ */
+static bool sol_save_active_buffer(SolAppContext *app)
+{
+    if (!app || !app->buffers) return false;
+    SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
+    if (!tb) return false;
+
+    const char *err = NULL;
+    if (!sol_text_buffer_save(tb, &err)) {
+        char message[512];
+        snprintf(message, sizeof(message), "Could not save file: %s",
+                 err ? err : "unknown error");
+        sol_show_error(app, message);
+        return false;
+    }
+    sol_buffer_touch(app->buffers, sol_buffer_active_buffer(app->buffers));
+    sol_refresh_external_change_status(app);
+    return true;
+}
+
+/*
+ * Save every dirty text buffer to disk.
+ *
+ * Does not stop at the first failure — every dirty buffer that can be
+ * saved is saved, and any failures are reported together in a single
+ * popup, so one locked or unwritable file never blocks the rest.
+ *
+ * app  The application context.
+ * Returns  true if at least one buffer was successfully saved (false
+ *          when there was nothing dirty to save, or every save failed).
+ */
+static bool sol_save_all_dirty_buffers(SolAppContext *app)
+{
+    if (!app || !app->buffers) return false;
+
+    size_t saved = 0u;
+    size_t failed = 0u;
+    char failure_summary[512] = "Could not save:";
+    size_t failure_len = strlen(failure_summary);
+
+    const size_t count = sol_buffer_count(app->buffers);
+    for (size_t i = 0u; i < count; ++i) {
+        const SolBufferId id = sol_buffer_at(app->buffers, i);
+        SolBuffer *buf = sol_buffer_get(app->buffers, id);
+        SolTextBuffer *tb = sol_text_buffer_state(buf);
+        if (!tb || !sol_text_buffer_is_dirty(tb)) continue;
+
+        const char *err = NULL;
+        if (sol_text_buffer_save(tb, &err)) {
+            sol_buffer_touch(app->buffers, id);
+            saved++;
+        } else {
+            failed++;
+            const char *name = sol_buffer_name(buf);
+            int n = snprintf(failure_summary + failure_len,
+                             sizeof(failure_summary) - failure_len,
+                             " %s (%s);", name ? name : "?",
+                             err ? err : "unknown error");
+            if (n > 0) {
+                const size_t written = (size_t)n;
+                failure_len += (written < sizeof(failure_summary) - failure_len)
+                    ? written : sizeof(failure_summary) - failure_len - 1u;
+            }
+        }
+    }
+
+    if (failed > 0u) {
+        sol_show_error(app, failure_summary);
+    }
+    if (saved > 0u) {
+        sol_refresh_external_change_status(app);
+    }
+    return saved > 0u;
 }
 
 static bool sol_context_create_file(SolAppContext *app,
@@ -939,6 +1130,139 @@ static bool sol_focus_buffer_by_index(SolBufferSystem *buffers, size_t index)
     return sol_buffer_set_active_leaf_buffer(buffers, id);
 }
 
+/*
+ * Subscriber for SOL_EVENT_TEXT_EDITED that drives autosave debouncing.
+ *
+ * Pushes the shared autosave deadline out to (this edit's timestamp +
+ * debounce) whenever autosave is enabled, so the frame loop's sweep
+ * (see sol_run_autosave_sweep) only fires once edits settle rather than
+ * on every keystroke. A no-op while autosave is off, so toggling it off
+ * cleanly stops any pending sweep from ever triggering.
+ *
+ * event      The SOL_EVENT_TEXT_EDITED event.
+ * user_data  The SolAppContext.
+ * Returns    false always — this handler never marks the event handled,
+ *            so other subscribers (syntax highlighting, etc.) still run.
+ */
+static bool sol_on_text_edited_for_autosave(const SolEvent *event, void *user_data)
+{
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !app->settings.autosave_enabled) return false;
+    app->autosave_deadline_ns = event->timestamp_ns + SOL_AUTOSAVE_DEBOUNCE_NS;
+    return false;
+}
+
+/*
+ * Save every dirty buffer once the autosave debounce deadline has passed.
+ *
+ * Called once per frame from the main loop. Cheap no-op in the common
+ * case (deadline unset, or not yet reached). Reuses
+ * sol_save_all_dirty_buffers so autosave shares the exact same
+ * crash-safe atomic-write path as manual Save/Save All — it is a
+ * scheduled caller of that path, not a separate save implementation.
+ *
+ * app  The application context.
+ */
+static void sol_run_autosave_sweep(SolAppContext *app)
+{
+    if (!app || app->autosave_deadline_ns == 0u) return;
+    if (!app->settings.autosave_enabled) {
+        app->autosave_deadline_ns = 0u;
+        return;
+    }
+    if (sol_platform_now_monotonic_ns() < app->autosave_deadline_ns) return;
+
+    app->autosave_deadline_ns = 0u;
+    (void)sol_save_all_dirty_buffers(app);
+}
+
+/*
+ * React to one external filesystem change for a path that matches an
+ * open text buffer's source_path.
+ *
+ * Conflict policy (mirrors VS Code): a clean buffer is silently reloaded
+ * from disk — the user has nothing to lose and the on-disk version is
+ * simply newer. A dirty buffer is left completely untouched; its
+ * content is never overwritten by an external change the user didn't
+ * initiate. The caller (sol_drain_file_watcher) surfaces a status-bar
+ * warning for any buffer this function leaves dirty-and-stale so the
+ * user knows to reconcile manually (re-save or close-and-reopen).
+ *
+ * app  The application context.
+ * id   Id of the buffer whose source_path matched the changed path.
+ * Returns  true if the buffer was reloaded (i.e. it was clean).
+ */
+static bool sol_handle_external_change_for_buffer(SolAppContext *app, SolBufferId id)
+{
+    SolBuffer *buf = sol_buffer_get(app->buffers, id);
+    SolTextBuffer *tb = sol_text_buffer_state(buf);
+    if (!tb) return false;
+    if (sol_text_buffer_is_dirty(tb)) return false;
+
+    const char *err = NULL;
+    if (!sol_text_buffer_reload_from_disk(tb, &err)) {
+        /* Read failure (e.g. file briefly missing mid-write elsewhere) —
+           leave the in-memory content exactly as it was; nothing to warn
+           about since no edits are at risk. */
+        return false;
+    }
+    sol_buffer_touch(app->buffers, id);
+    sol_ui_system_invalidate_buffer_area(app->ui);
+    return true;
+}
+
+/*
+ * Drain the file watcher's queued events once per frame and react.
+ *
+ * Always refreshes the explorer tree (once per drained batch, not per
+ * event) when any event falls under the watched root. For events under
+ * an open buffer's path: reloads clean buffers, and tracks dirty ones
+ * that were left stale so a single aggregated status-bar warning can be
+ * shown/hidden — never a blocking popup, since an external change is
+ * not something the user needs to act on immediately.
+ *
+ * app  The application context.
+ */
+static void sol_drain_file_watcher(SolAppContext *app)
+{
+    if (!app || !app->watcher || !app->buffers) return;
+
+    SolFileWatchEvent events[32];
+    const size_t n = sol_file_watcher_poll(app->watcher, events, 32u);
+    if (n == 0u) return;
+
+    const char *root = sol_ui_system_file_tree_root(app->ui);
+    bool any_under_root = false;
+    for (size_t i = 0u; i < n; ++i) {
+        if (sol_path_starts_with_dir(events[i].path, root ? root : "")) {
+            any_under_root = true;
+            break;
+        }
+    }
+    if (any_under_root) {
+        sol_refresh_explorer(app);
+    }
+
+    bool any_new_conflict = false;
+    for (size_t i = 0u; i < n; ++i) {
+        const SolBufferId id = sol_text_buffer_find_by_path(app->buffers, events[i].path);
+        if (id == 0u) continue;   /* no open buffer for this path */
+
+        if (!sol_handle_external_change_for_buffer(app, id)) {
+            SolBuffer *buf = sol_buffer_get(app->buffers, id);
+            SolTextBuffer *tb = sol_text_buffer_state(buf);
+            if (tb && sol_text_buffer_is_dirty(tb)) {
+                sol_text_buffer_set_external_change_pending(tb);
+                any_new_conflict = true;
+            }
+        }
+    }
+
+    if (any_new_conflict) {
+        sol_refresh_external_change_status(app);
+    }
+}
+
 static bool sol_toggle_explorer_focus(SolAppContext *app)
 {
     if (!app || !app->ui || !app->buffers) return false;
@@ -1024,6 +1348,19 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         const SolBufferId id = sol_buffer_active_buffer(app->buffers);
         if (id == 0u) return false;
         return sol_buffer_close(app->buffers, id);
+    }
+
+    /* ---- buffer.save : write the active text buffer to its source path. */
+    if (strcmp(p->action, "buffer.save") == 0) {
+        return sol_save_active_buffer(app);
+    }
+
+    /* ---- buffer.save_all : write every dirty text buffer to disk.
+       Saves everything that can be saved rather than stopping at the
+       first failure, so one locked/unwritable file doesn't block the
+       rest from being saved. */
+    if (strcmp(p->action, "buffer.save_all") == 0) {
+        return sol_save_all_dirty_buffers(app);
     }
 
     /* ---- buffer.focus.* */
@@ -1447,6 +1784,15 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Created before any explorer-root change (CLI dir arg or cwd
+       fallback below) so sol_set_explorer_root can attach the watcher
+       to the very first root, not just later folder-open actions. */
+    app.watcher = sol_file_watcher_create();
+    if (!app.watcher) {
+        fprintf(stderr, "[sol] warning: file watcher creation failed; "
+                        "explorer/buffers will not live-update on external changes\n");
+    }
+
     /* Now safe to open the CLI file (renderer is wired up). */
     if (cli_path && !cli_is_dir) {
         if (!sol_open_path_in_active_leaf(&app, cli_path)) {
@@ -1495,8 +1841,17 @@ int main(int argc, char **argv)
             .user_data  = &app,
         });
 
+    app.text_edited_token = sol_event_bus_subscribe(app.events,
+        &(SolEventSubscriptionDesc){
+            .event_name = SOL_EVENT_TEXT_EDITED,
+            .priority   = 0,
+            .handler    = sol_on_text_edited_for_autosave,
+            .user_data  = &app,
+        });
+
     sol_register_search_command_defaults(app.ui);
     sol_register_terminal_command_defaults(app.ui);
+    sol_register_buffer_save_command_defaults(app.ui);
     app.command_flows_loaded = sol_config_load_bindings(app.ui);
     if (app.command_flows_loaded < 0) {
         fprintf(stderr, "sol: failed to load key bindings from ~/.sol/bindings.conf\n");
@@ -1629,6 +1984,8 @@ int main(int argc, char **argv)
         sol_ui_system_pre_tick(app.ui);
         if (!ca_instance_tick(instance)) break;
         sol_system_pump_events(app.systems, 128u);
+        sol_drain_file_watcher(&app);
+        sol_run_autosave_sweep(&app);
         sol_system_end_frame(app.systems);
     }
 
@@ -1638,8 +1995,17 @@ int main(int argc, char **argv)
     if (app.command_token != 0u) {
         sol_event_bus_unsubscribe(app.events, app.command_token);
     }
+    if (app.text_edited_token != 0u) {
+        sol_event_bus_unsubscribe(app.events, app.text_edited_token);
+    }
     sol_system_unregister_service(app.systems, "ca.window.primary");
     sol_system_unregister_service(app.systems, "ca.instance");
+
+    /* Stop the watcher's background thread before anything its drain
+       path touches (event bus, buffers, UI) is torn down — same
+       ordering requirement as the terminal manager's PTY reader below. */
+    sol_file_watcher_destroy(app.watcher);
+    app.watcher = NULL;
 
     sol_input_router_destroy(app.router);
     /* Plugins must quiesce and unregister while the UI, syntax registry, and

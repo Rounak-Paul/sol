@@ -315,6 +315,14 @@ SolUIMenuItemToken sol_ui_system_register_menu_item(
 void sol_ui_system_unregister_menu_item(SolUISystem *ui,
                                         SolUIMenuItemToken token);
 
+/* Force the title-bar menu tree to rebuild from current state. Call
+ * after externally mutating something a hardcoded menu item's label
+ * reads directly (e.g. the Autosave toggle reading
+ * sol_ui_system_set_settings's attached SolSettings), since that state
+ * lives outside the menu-item registry and won't trigger a rebuild on
+ * its own. */
+void sol_ui_system_refresh_title_bar_menus(SolUISystem *ui);
+
 /* Per-frame tick — drives async UI work owned by the UI system
  * (currently: reaping closed file-picker windows). Safe to call
  * even when nothing async is in flight. */

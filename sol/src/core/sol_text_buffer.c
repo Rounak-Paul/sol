@@ -78,6 +78,20 @@ struct SolTextBuffer {
     TbEditRecord          undo_stack[TB_UNDO_MAX];
     int                   undo_top;
     int                   undo_end;
+
+    /* True when the rope has changed since the last successful save,
+       load, or external reload. Set by every edit primitive (via
+       tb_publish_edit); cleared by save/reload paths. */
+    bool                  dirty;
+
+    /* True when an external filesystem change to source_path arrived
+       while this buffer was dirty, so the on-disk content and the
+       in-memory content have diverged in a way the host hasn't shown
+       the user yet. Owned entirely by the host's conflict-notification
+       logic (set when it decides not to reload a dirty buffer, cleared
+       once the buffer is saved or reloaded) — the text-buffer module
+       itself never reads or acts on this flag. */
+    bool                  external_change_pending;
 };
 
 /*
@@ -94,7 +108,13 @@ struct SolTextBuffer {
 static void tb_publish_edit(const SolTextBuffer *tb, size_t at,
                             size_t removed, size_t inserted)
 {
-    if (!tb || !tb->events) return;
+    if (!tb) return;
+    /* Cast away const: every edit primitive calls this immediately after
+       mutating the rope through a non-const tb, so the buffer is never
+       actually const at the call site — the const param just documents
+       that this function doesn't touch cursor/selection/undo state. */
+    ((SolTextBuffer *)tb)->dirty = true;
+    if (!tb->events) return;
     /* Re-parse so the highlight spans stay in sync with the rope. */
     if (tb->highlighter)
         sol_syntax_highlight_reparse(tb->highlighter, tb->rope);
@@ -826,6 +846,222 @@ SolRope *sol_text_buffer_rope(SolBuffer *buffer)
 const char *sol_text_buffer_source_path(const SolTextBuffer *tb)
 {
     return tb ? tb->source_path : NULL;
+}
+
+/*
+ * Report whether a buffer has unsaved edits.
+ *
+ * tb  The text buffer.
+ * Returns  true if the buffer has changed since the last save/load/reload.
+ */
+bool sol_text_buffer_is_dirty(const SolTextBuffer *tb)
+{
+    return tb ? tb->dirty : false;
+}
+
+/*
+ * Report whether this buffer has an unreconciled external change.
+ *
+ * tb  The text buffer.
+ * Returns  true if an external filesystem change arrived while the
+ *          buffer was dirty and hasn't been reconciled since.
+ */
+bool sol_text_buffer_has_external_change(const SolTextBuffer *tb)
+{
+    return tb ? tb->external_change_pending : false;
+}
+
+/*
+ * Mark that an external filesystem change arrived for this buffer while
+ * it had unsaved edits, so the host can surface (and later retire) a
+ * single aggregated warning across every affected buffer.
+ *
+ * tb  The text buffer.
+ */
+void sol_text_buffer_set_external_change_pending(SolTextBuffer *tb)
+{
+    if (tb) tb->external_change_pending = true;
+}
+
+/*
+ * Stream a rope's full content out to an already-open file stream.
+ *
+ * Reads via sol_rope_read in fixed-size chunks rather than the zero-copy
+ * chunk iterator: the iterator's traversal stack has a bounded depth
+ * that a pathologically unbalanced tree (e.g. many sequential single-
+ * character inserts) can exceed, silently truncating the walk. Byte-
+ * offset reads have no such ceiling — correctness here matters far more
+ * than the extra copy, since a truncated save is silent data loss.
+ *
+ * rope  The rope to read.
+ * fp    Destination stream, positioned wherever the caller wants writes to start.
+ * Returns  true if the full rope was written successfully.
+ */
+static bool tb_write_rope_to_stream(const SolRope *rope, FILE *fp)
+{
+    uint8_t buf[65536];
+    const size_t total = sol_rope_byte_len(rope);
+    size_t offset = 0u;
+    while (offset < total) {
+        const size_t n = sol_rope_read(rope, offset, buf, sizeof(buf));
+        if (n == 0u) return false;   /* should be unreachable while offset < total */
+        if (fwrite(buf, 1u, n, fp) != n) return false;
+        offset += n;
+    }
+    return true;
+}
+
+/*
+ * Write bytes to a temp file beside dest_path, then atomically publish it.
+ *
+ * Shared by sol_text_buffer_save and sol_text_buffer_save_as. On any
+ * failure the temp file is removed and dest_path is left untouched, so a
+ * crash or write error can never leave a partially-written file in place.
+ *
+ * rope       The rope whose content should become dest_path's content.
+ * dest_path  Final destination path.
+ * out_error  If non-NULL, receives a static error string on failure.
+ * Returns    true on success.
+ */
+static bool tb_atomic_write(const SolRope *rope, const char *dest_path,
+                            const char **out_error)
+{
+    char tmp_path[4160];
+    const int n = snprintf(tmp_path, sizeof(tmp_path), "%s.sol%d.tmp",
+                           dest_path, (int)(uintptr_t)rope & 0xFFFFFF);
+    if (n < 0 || (size_t)n >= sizeof(tmp_path)) {
+        if (out_error) *out_error = "path too long";
+        return false;
+    }
+
+    FILE *fp = fopen(tmp_path, "wb");
+    if (!fp) {
+        if (out_error) *out_error = "cannot create temp file";
+        return false;
+    }
+    const bool wrote_ok = tb_write_rope_to_stream(rope, fp);
+    const bool flush_ok = wrote_ok && (fflush(fp) == 0);
+    const int close_rc = fclose(fp);
+    if (!wrote_ok || !flush_ok || close_rc != 0) {
+        (void)remove(tmp_path);
+        if (out_error) *out_error = "write failed";
+        return false;
+    }
+
+    if (!sol_platform_replace_file(tmp_path, dest_path)) {
+        (void)remove(tmp_path);
+        if (out_error) *out_error = "cannot replace destination file";
+        return false;
+    }
+    return true;
+}
+
+bool sol_text_buffer_save(SolTextBuffer *tb, const char **out_error)
+{
+    if (!tb) {
+        if (out_error) *out_error = "no buffer";
+        return false;
+    }
+    if (!tb->source_path) {
+        if (out_error) *out_error = "buffer has no file path — use Save As";
+        return false;
+    }
+    if (!tb_atomic_write(tb->rope, tb->source_path, out_error)) return false;
+    tb->dirty = false;
+    tb->external_change_pending = false;
+    return true;
+}
+
+bool sol_text_buffer_save_as(SolTextBuffer *tb, const char *path,
+                             const char **out_error)
+{
+    if (!tb || !path || !path[0]) {
+        if (out_error) *out_error = "no buffer or path";
+        return false;
+    }
+    if (!tb_atomic_write(tb->rope, path, out_error)) return false;
+
+    char *new_path = tb_strdup(path);
+    if (!new_path) {
+        /* The write itself succeeded; only the path bookkeeping failed.
+           Keep the buffer pointed at its old path rather than losing
+           track of where the just-saved content actually landed. */
+        if (out_error) *out_error = "out of memory updating buffer path";
+        return false;
+    }
+    free(tb->source_path);
+    tb->source_path = new_path;
+    tb->dirty = false;
+    tb->external_change_pending = false;
+
+    /* Re-resolve syntax highlighting for the (possibly new) extension. */
+    sol_syntax_highlight_destroy(tb->highlighter);
+    tb->highlighter = NULL;
+    SolSyntaxRegistry *reg = sol_syntax_get_global_registry();
+    if (reg) {
+        const void *lang = sol_syntax_get_for_path(reg, tb->source_path);
+        if (lang) {
+            const char *query = sol_syntax_get_query_for_path(reg, tb->source_path);
+            tb->highlighter = sol_syntax_highlight_create(lang, query);
+            if (tb->highlighter)
+                sol_syntax_highlight_reparse(tb->highlighter, tb->rope);
+        }
+    }
+    return true;
+}
+
+bool sol_text_buffer_reload_from_disk(SolTextBuffer *tb, const char **out_error)
+{
+    if (!tb) {
+        if (out_error) *out_error = "no buffer";
+        return false;
+    }
+    if (!tb->source_path) {
+        if (out_error) *out_error = "buffer has no file path";
+        return false;
+    }
+
+    const char *err = NULL;
+    SolRope *new_rope = sol_rope_from_file(tb->source_path, &err);
+    if (!new_rope) {
+        if (out_error) *out_error = err ? err : "failed to read file";
+        return false;
+    }
+
+    sol_rope_destroy(tb->rope);
+    tb->rope = new_rope;
+
+    const size_t new_len = sol_rope_byte_len(new_rope);
+    if (tb->cursor_byte > new_len) tb->cursor_byte = new_len;
+    if (tb->sel_anchor_byte > new_len) tb->sel_anchor_byte = new_len;
+    tb->has_selection = false;
+    tb->preferred_col_cp = 0u;
+    if (tb->scroll_top_line < 0) tb->scroll_top_line = 0;
+
+    /* Old undo/redo records hold byte offsets and snippets keyed to the
+       rope we just destroyed — they no longer apply to anything. */
+    for (int i = 0; i < tb->undo_end; ++i) {
+        free(tb->undo_stack[i].old_bytes);
+        free(tb->undo_stack[i].new_bytes);
+    }
+    tb->undo_top = 0;
+    tb->undo_end = 0;
+
+    if (tb->highlighter) sol_syntax_highlight_reparse(tb->highlighter, tb->rope);
+
+    tb->dirty = false;
+    tb->external_change_pending = false;
+
+    if (tb->events) {
+        SolTextEditedPayload payload;
+        payload.buffer_id      = tb->self_id;
+        payload.byte_offset    = 0u;
+        payload.removed_bytes  = 0u;   /* whole-buffer replace; no single delta */
+        payload.inserted_bytes = new_len;
+        sol_event_publish(tb->events, SOL_EVENT_TEXT_EDITED,
+                          &payload, sizeof(payload), (void *)tb);
+    }
+    return true;
 }
 
 /* ------------------------------------------------------------------ */

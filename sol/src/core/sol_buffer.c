@@ -668,6 +668,12 @@ size_t sol_buffer_close_all(SolBufferSystem *system)
     return closed;
 }
 
+void sol_buffer_touch(SolBufferSystem *system, SolBufferId buffer_id)
+{
+    if (!sol_buffer_find(system, buffer_id)) return;
+    bump_rev(system);
+}
+
 SolBuffer *sol_buffer_get(SolBufferSystem *system, SolBufferId buffer_id)
 {
     return sol_buffer_find(system, buffer_id);

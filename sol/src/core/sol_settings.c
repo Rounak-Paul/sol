@@ -41,6 +41,7 @@ SolSettings sol_settings_defaults(void)
         .titlebar_blur    = SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT,
         .panel_opacity    = SOL_SETTINGS_PANEL_OPACITY_DEFAULT,
         .scrollbar_width  = SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT,
+        .autosave_enabled = false,
     };
     snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
     snprintf(s.bg_effect_id, sizeof(s.bg_effect_id), "%s",
@@ -133,6 +134,29 @@ static float jp_float(JP *j)
     memcpy(tmp, start, len);
     tmp[len] = '\0';
     return (float)strtod(tmp, NULL);
+}
+
+/*
+ * Parse a JSON boolean literal (`true` or `false`).
+ *
+ * j          Parser cursor.
+ * out_value  Receives the parsed value on success.
+ * Returns    false when the cursor isn't positioned at `true`/`false`.
+ */
+static bool jp_bool(JP *j, bool *out_value)
+{
+    jp_skip_ws(j);
+    if (strncmp(j->p, "true", 4) == 0) {
+        j->p += 4;
+        *out_value = true;
+        return true;
+    }
+    if (strncmp(j->p, "false", 5) == 0) {
+        j->p += 5;
+        *out_value = false;
+        return true;
+    }
+    return false;
 }
 
 /*
@@ -270,6 +294,32 @@ static void jp_parse_appearance(JP *j, SolSettings *s)
 }
 
 /*
+ * Parse editor-behavior object from JSON.
+ *
+ * j  Parser cursor positioned at editor object.
+ * s  Settings struct to populate.
+ */
+static void jp_parse_editor(JP *j, SolSettings *s)
+{
+    if (!jp_expect(j, '{')) return;
+    while (*j->p) {
+        jp_skip_ws(j);
+        if (*j->p == '}') { ++j->p; break; }
+        char key[64];
+        if (!jp_string(j, key, sizeof(key))) break;
+        if (!jp_expect(j, ':')) break;
+        if (strcmp(key, "autosave") == 0) {
+            bool v = false;
+            if (jp_bool(j, &v)) s->autosave_enabled = v;
+        } else {
+            jp_skip_value(j);
+        }
+        jp_skip_ws(j);
+        if (*j->p == ',') ++j->p;
+    }
+}
+
+/*
  * Parse top-level settings object from JSON.
  *
  * j  Parser cursor positioned at root object.
@@ -288,6 +338,8 @@ static void jp_parse_root(JP *j, SolSettings *s)
             jp_parse_theme(j, s);
         } else if (strcmp(key, "appearance") == 0) {
             jp_parse_appearance(j, s);
+        } else if (strcmp(key, "editor") == 0) {
+            jp_parse_editor(j, s);
         } else {
             jp_skip_value(j);
         }
@@ -396,6 +448,9 @@ bool sol_settings_save(const SolSettings *settings)
         "    \"titlebar_blur\": %.2f,\n"
         "    \"panel_opacity\": %.2f,\n"
         "    \"scrollbar_width\": %.2f\n"
+        "  },\n"
+        "  \"editor\": {\n"
+        "    \"autosave\": %s\n"
         "  }\n"
         "}\n",
         (double)settings->ui_scale,
@@ -408,7 +463,8 @@ bool sol_settings_save(const SolSettings *settings)
         (double)settings->panel_blur,
         (double)settings->titlebar_blur,
         (double)settings->panel_opacity,
-        (double)settings->scrollbar_width);
+        (double)settings->scrollbar_width,
+        settings->autosave_enabled ? "true" : "false");
 
     fclose(fp);
     return n > 0;

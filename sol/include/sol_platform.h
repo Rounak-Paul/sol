@@ -146,6 +146,24 @@ bool sol_platform_copy_path_recursive(const char *source_path, const char *dest_
  */
 bool sol_platform_move_path(const char *source_path, const char *dest_path);
 
+/*
+ * Atomically replace dest_path with temp_path, in a single filesystem
+ * operation. Intended for crash-safe file saves: write new content to a
+ * temp file in the same directory as the destination, then call this to
+ * publish it. On POSIX this is plain rename() (atomic when both paths
+ * are on the same filesystem). On Win32, rename() fails when the
+ * destination already exists, so this uses MoveFileExA with
+ * MOVEFILE_REPLACE_EXISTING instead. Unlike sol_platform_move_path,
+ * this never falls back to copy+delete — if the atomic replace fails,
+ * the destination is guaranteed unchanged and temp_path is left in
+ * place for the caller to clean up.
+ *
+ * temp_path   Existing file whose content should become dest_path.
+ * dest_path   Path to atomically replace (may or may not already exist).
+ * Returns     true on success.
+ */
+bool sol_platform_replace_file(const char *temp_path, const char *dest_path);
+
 /* Returns the number of logical CPU cores available to the process. */
 uint32_t sol_platform_cpu_count(void);
 

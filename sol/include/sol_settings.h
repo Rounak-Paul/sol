@@ -139,6 +139,12 @@ typedef struct SolSettings {
      * every scrollbar remains pill-shaped at every configured width.
      * Range: [SOL_SETTINGS_SCROLLBAR_WIDTH_MIN, SOL_SETTINGS_SCROLLBAR_WIDTH_MAX]. */
     float scrollbar_width;
+
+    /* ---- Editor ---- */
+    /* When true, dirty text buffers save themselves automatically a short
+     * debounce interval after the last edit. Default: false — saving
+     * remains an explicit user action unless opted in. */
+    bool autosave_enabled;
 } SolSettings;
 
 /* ------------------------------------------------------------------ */

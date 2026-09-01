@@ -21,6 +21,13 @@ target_link_libraries(sol PRIVATE
     ${CAUSALITY_LINUX_DEPS}
 )
 
+# sol_file_watcher.c uses FSEvents (macOS) / inotify (Linux, libc — no
+# extra link) / ReadDirectoryChangesW (Windows, kernel32 — already linked).
+if(APPLE)
+    find_library(SOL_CORESERVICES_FRAMEWORK CoreServices REQUIRED)
+    target_link_libraries(sol PRIVATE ${SOL_CORESERVICES_FRAMEWORK})
+endif()
+
 # ---- Tests --------------------------------------------------------------
 # The rope is self-contained (libc + POSIX mmap) and is the highest-risk
 # piece of new code, so it gets a dedicated unit-test executable wired

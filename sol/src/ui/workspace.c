@@ -46,6 +46,7 @@
 #include "sol_event.h"
 #include "sol_platform.h"
 #include "sol_settings.h"
+#include "sol_text_buffer.h"
 #include "style.h"
 
 #include <assert.h>
@@ -60,6 +61,9 @@ static void sol_ui_menu_open_file_action(void *user_data);
 static void sol_ui_menu_open_folder_action(void *user_data);
 static void sol_ui_menu_open_plugin_manager_action(void *user_data);
 static void sol_ui_menu_open_settings_action(void *user_data);
+static void sol_ui_menu_save_action(void *user_data);
+static void sol_ui_menu_save_all_action(void *user_data);
+static void sol_ui_menu_toggle_autosave_action(void *user_data);
 static bool sol_ui_dispatch_command(SolUISystem *ui,
                                     SolCommandFlowBinding *flow,
                                     const char *action,
@@ -646,9 +650,11 @@ static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
         const SolBufferId tab_id = sol_buffer_leaf_tab_at(
             ui->buffers, leaf_id, i);
         if (tab_id == 0u) continue;
-        const SolBuffer *tab_buf = sol_buffer_get_const(ui->buffers, tab_id);
+        SolBuffer *tab_buf = sol_buffer_get(ui->buffers, tab_id);
         if (!tab_buf) continue;
         const bool tab_active = (tab_id == active_bufid);
+        const SolTextBuffer *tab_tb = sol_text_buffer_state(tab_buf);
+        const bool tab_dirty = tab_tb && sol_text_buffer_is_dirty(tab_tb);
         SolPaneClickCtx *cb = sol_ui_acquire_pane_click_ctx(ui);
         if (cb) {
             cb->ui            = ui;
@@ -671,6 +677,13 @@ static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
             .style = tab_active ? "buffer-tab-text buffer-tab-text-active"
                                 : "buffer-tab-text",
         });
+        if (tab_dirty) {
+            ca_text(&(Ca_TextDesc){
+                .text  = "\xE2\x97\x8F",   /* U+25CF BLACK CIRCLE */
+                .style = tab_active ? "buffer-tab-dirty buffer-tab-dirty-active"
+                                    : "buffer-tab-dirty",
+            });
+        }
         /* Close button — separate ctx so its click doesn't fire the tab switch. */
         SolPaneClickCtx *close_cb = sol_ui_acquire_pane_click_ctx(ui);
         if (close_cb) {
@@ -2107,6 +2120,50 @@ static void sol_ui_menu_open_settings_action(void *user_data)
     sol_ui_system_open_settings_window((SolUISystem *)user_data);
 }
 
+/*
+ * Menu action handler for "Save" (Sol > Save).
+ *
+ * Routes through the same command registry as the leader-b-s chord.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
+static void sol_ui_menu_save_action(void *user_data)
+{
+    (void)sol_ui_system_invoke_command((SolUISystem *)user_data, "buffer.save");
+}
+
+/*
+ * Menu action handler for "Save All" (Sol > Save All).
+ *
+ * Routes through the same command registry as the leader-b-shift+s chord.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
+static void sol_ui_menu_save_all_action(void *user_data)
+{
+    (void)sol_ui_system_invoke_command((SolUISystem *)user_data, "buffer.save_all");
+}
+
+/*
+ * Menu action handler for the "Autosave" toggle (Sol > Autosave: On/Off).
+ *
+ * Flips the attached SolSettings' autosave_enabled flag, persists it
+ * immediately (same immediate-persist convention as the Settings
+ * window), and rebuilds the title-bar menu so the label reflects the
+ * new state. Causality menu items have no built-in checked/toggle
+ * rendering, so the on/off state is encoded directly in the label text.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
+static void sol_ui_menu_toggle_autosave_action(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->settings) return;
+    ui->settings->autosave_enabled = !ui->settings->autosave_enabled;
+    sol_settings_save(ui->settings);
+    sol_ui_system_refresh_title_bar_menus(ui);
+}
+
 /* Dispatch a command callback and publish its action on the command event bus. */
 static bool sol_ui_dispatch_command(SolUISystem *ui,
                                     SolCommandFlowBinding *flow,
@@ -2361,6 +2418,20 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
     (void)sol_ui_append_menu_build_item(&groups[0], "open-folder", "Open Folder...",
                                         sol_ui_menu_open_folder_action, ui,
                                         false, 30);
+    (void)sol_ui_append_menu_build_item(&groups[0], "save-separator", "",
+                                        NULL, NULL, true, 32);
+    (void)sol_ui_append_menu_build_item(&groups[0], "save", "Save",
+                                        sol_ui_menu_save_action, ui,
+                                        false, 34);
+    (void)sol_ui_append_menu_build_item(&groups[0], "save-all", "Save All",
+                                        sol_ui_menu_save_all_action, ui,
+                                        false, 36);
+    (void)sol_ui_append_menu_build_item(
+        &groups[0], "autosave",
+        (ui->settings && ui->settings->autosave_enabled)
+            ? "Autosave: On" : "Autosave: Off",
+        sol_ui_menu_toggle_autosave_action, ui,
+        false, 38);
     (void)sol_ui_append_menu_build_item(&groups[0], "settings-separator", "",
                                         NULL, NULL, true, 40);
     (void)sol_ui_append_menu_build_item(&groups[0], "settings", "Settings...",
@@ -2428,6 +2499,11 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
         };
     }
     ca_instance_set_app_menus(ui->instance, menus, (int)group_count);
+}
+
+void sol_ui_system_refresh_title_bar_menus(SolUISystem *ui)
+{
+    sol_ui_rebuild_title_bar_menus(ui);
 }
 
 /* Register a command-backed title-bar menu contribution. */

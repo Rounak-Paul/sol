@@ -554,6 +554,20 @@ bool sol_platform_move_path(const char *source_path, const char *dest_path)
     return true;
 }
 
+bool sol_platform_replace_file(const char *temp_path, const char *dest_path)
+{
+    if (!temp_path || !dest_path || temp_path[0] == '\0' ||
+        dest_path[0] == '\0' || strcmp(temp_path, dest_path) == 0) {
+        return false;
+    }
+
+#if defined(_WIN32)
+    return MoveFileExA(temp_path, dest_path, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+    return rename(temp_path, dest_path) == 0;
+#endif
+}
+
 /* Return the number of logical CPU cores available (at least 1). */
 uint32_t sol_platform_cpu_count(void)
 {

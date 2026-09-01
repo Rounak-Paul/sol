@@ -622,6 +622,155 @@ static void test_open_file(SolTestCtx *T)
     sol_buffer_system_destroy(sys);
 }
 
+/* ------------------------------------------------------------------ */
+/* Save / dirty / reload                                               */
+/* ------------------------------------------------------------------ */
+
+/* Build an absolute temp file path with the given content already
+   written to it, returning it in path (capacity path_max). */
+static bool make_temp_file(char *path, size_t path_max, const char *content)
+{
+#if defined(_WIN32)
+    char temp_dir[MAX_PATH];
+    if (GetTempPathA((DWORD)sizeof(temp_dir), temp_dir) == 0u ||
+        GetTempFileNameA(temp_dir, "sol", 0u, path) == 0u) {
+        return false;
+    }
+    (void)path_max;
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return false;
+    fwrite(content, 1u, strlen(content), fp);
+    fclose(fp);
+    return true;
+#else
+    if (path_max < sizeof("/tmp/sol_test_XXXXXX")) return false;
+    snprintf(path, path_max, "/tmp/sol_test_XXXXXX");
+    int fd = mkstemp(path);
+    if (fd < 0) return false;
+    write(fd, content, strlen(content));
+    close(fd);
+    return true;
+#endif
+}
+
+static void test_dirty_flag_lifecycle(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolTextBuffer *tb = open_empty_tb(sys);
+    SOL_CHECK_NOT_NULL(T, tb);
+    if (!tb) { sol_buffer_system_destroy(sys); return; }
+
+    SOL_CHECK(T, !sol_text_buffer_is_dirty(tb));
+    sol_text_buffer_insert_codepoint(tb, 'x');
+    SOL_CHECK(T, sol_text_buffer_is_dirty(tb));
+
+    /* No source_path yet, so save must fail cleanly and leave the flag set. */
+    const char *err = NULL;
+    SOL_CHECK(T, !sol_text_buffer_save(tb, &err));
+    SOL_CHECK_NOT_NULL(T, err);
+    SOL_CHECK(T, sol_text_buffer_is_dirty(tb));
+
+    char path[64];
+    SOL_CHECK(T, make_temp_file(path, sizeof(path), ""));
+    SOL_CHECK(T, sol_text_buffer_save_as(tb, path, &err));
+    SOL_CHECK(T, !sol_text_buffer_is_dirty(tb));
+    SOL_CHECK_STR(T, sol_text_buffer_source_path(tb), path);
+
+    sol_text_buffer_insert_codepoint(tb, 'y');
+    SOL_CHECK(T, sol_text_buffer_is_dirty(tb));
+    SOL_CHECK(T, sol_text_buffer_save(tb, &err));
+    SOL_CHECK(T, !sol_text_buffer_is_dirty(tb));
+
+    remove(path);
+    sol_buffer_system_destroy(sys);
+}
+
+static void test_save_writes_correct_bytes(SolTestCtx *T)
+{
+    char path[64];
+    SOL_CHECK(T, make_temp_file(path, sizeof(path), "old content\n"));
+
+    SolBufferSystem *sys = make_system();
+    const char *err = NULL;
+    SolBufferId id = sol_text_buffer_open_file(sys, path, "tmpfile", NULL, &err);
+    SOL_CHECK_NOT_NULL(T, sol_buffer_get(sys, id));
+    SolTextBuffer *tb = sol_text_buffer_state(sol_buffer_get(sys, id));
+    SOL_CHECK_NOT_NULL(T, tb);
+    if (!tb) { remove(path); sol_buffer_system_destroy(sys); return; }
+
+    /* Replace content entirely via delete-all + insert, then save. */
+    sol_text_buffer_select_all(tb);
+    sol_text_buffer_delete_selection(tb);
+    const char *new_text = "brand new saved content";
+    for (const char *p = new_text; *p; ++p) {
+        sol_text_buffer_insert_codepoint(tb, (uint32_t)(unsigned char)*p);
+    }
+    SOL_CHECK(T, sol_text_buffer_save(tb, &err));
+    SOL_CHECK(T, !sol_text_buffer_is_dirty(tb));
+
+    /* Read the file back directly (bypassing the buffer) to prove the
+       bytes on disk actually changed, and that no stray .solNNN.tmp file
+       was left behind next to it. */
+    FILE *fp = fopen(path, "rb");
+    SOL_CHECK_NOT_NULL(T, fp);
+    if (fp) {
+        char buf[128] = {0};
+        size_t n = fread(buf, 1u, sizeof(buf) - 1u, fp);
+        buf[n] = '\0';
+        SOL_CHECK_STR(T, buf, new_text);
+        fclose(fp);
+    }
+
+    char tmp_glob_check[192];
+    snprintf(tmp_glob_check, sizeof(tmp_glob_check), "%s.sol0.tmp", path);
+    FILE *stray = fopen(tmp_glob_check, "rb");
+    SOL_CHECK(T, stray == NULL);
+    if (stray) fclose(stray);
+
+    remove(path);
+    sol_buffer_system_destroy(sys);
+}
+
+static void test_reload_from_disk_clamps_cursor(SolTestCtx *T)
+{
+    char path[64];
+    SOL_CHECK(T, make_temp_file(path, sizeof(path), "0123456789"));
+
+    SolBufferSystem *sys = make_system();
+    const char *err = NULL;
+    SolBufferId id = sol_text_buffer_open_file(sys, path, "tmpfile", NULL, &err);
+    SolTextBuffer *tb = sol_text_buffer_state(sol_buffer_get(sys, id));
+    SOL_CHECK_NOT_NULL(T, tb);
+    if (!tb) { remove(path); sol_buffer_system_destroy(sys); return; }
+
+    sol_text_buffer_set_cursor_byte(tb, 9);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_byte(tb), 9);
+
+    /* Shrink the on-disk file out from under the (clean) buffer, then
+       reload — the cursor must clamp into the new, shorter content
+       rather than pointing past the end of the rope. */
+    FILE *fp = fopen(path, "wb");
+    SOL_CHECK_NOT_NULL(T, fp);
+    if (fp) {
+        fwrite("ab", 1u, 2u, fp);
+        fclose(fp);
+    }
+
+    SOL_CHECK(T, sol_text_buffer_reload_from_disk(tb, &err));
+    SOL_CHECK(T, sol_text_buffer_cursor_byte(tb) <= 2u);
+    SOL_CHECK(T, !sol_text_buffer_has_selection(tb));
+    SOL_CHECK(T, !sol_text_buffer_is_dirty(tb));
+    SOL_CHECK(T, !sol_text_buffer_can_undo(tb));
+    SOL_CHECK(T, !sol_text_buffer_can_redo(tb));
+
+    char l0[16];
+    sol_text_buffer_copy_line(tb, 0, l0, sizeof(l0));
+    SOL_CHECK_STR(T, l0, "ab");
+
+    remove(path);
+    sol_buffer_system_destroy(sys);
+}
+
 static void test_null_safety(SolTestCtx *T)
 {
     SOL_CHECK_EQ_SZ(T, sol_text_buffer_line_count(NULL), 1);
@@ -705,6 +854,9 @@ int main(void)
     SOL_RUN(s, test_find_by_path);
     SOL_RUN(s, test_event_text_edited);
     SOL_RUN(s, test_open_file);
+    SOL_RUN(s, test_dirty_flag_lifecycle);
+    SOL_RUN(s, test_save_writes_correct_bytes);
+    SOL_RUN(s, test_reload_from_disk_clamps_cursor);
     SOL_RUN(s, test_null_safety);
 
     run_benchmarks();

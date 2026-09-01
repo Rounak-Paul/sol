@@ -106,6 +106,82 @@ SolRope *sol_text_buffer_rope(SolBuffer *buffer);
 /* Returns the source path registered with the text buffer, or NULL if none. */
 const char *sol_text_buffer_source_path(const SolTextBuffer *tb);
 
+/* Returns true when the buffer has edits not yet reflected on disk. */
+bool sol_text_buffer_is_dirty(const SolTextBuffer *tb);
+
+/*
+ * Returns true when an external filesystem change to this buffer's file
+ * arrived while it was dirty and hasn't been reconciled since (by a
+ * save, Save As, or manual reload). Cleared automatically by
+ * sol_text_buffer_save, sol_text_buffer_save_as, and
+ * sol_text_buffer_reload_from_disk.
+ */
+bool sol_text_buffer_has_external_change(const SolTextBuffer *tb);
+
+/*
+ * Record that an external filesystem change arrived for this buffer
+ * while it had unsaved edits. Purely a host-owned notification flag —
+ * this module never reads or acts on it itself. Intended for a host's
+ * file-watcher integration to call when it deliberately declines to
+ * reload a dirty buffer, so it can later show/hide one aggregated
+ * warning by querying sol_text_buffer_has_external_change across all
+ * open buffers instead of tracking its own parallel state.
+ *
+ * tb  The text buffer.
+ */
+void sol_text_buffer_set_external_change_pending(SolTextBuffer *tb);
+
+/*
+ * Write the buffer's content to its source_path.
+ *
+ * Uses a write-to-temp-file-then-atomic-replace sequence (see
+ * sol_platform_replace_file) so a crash or power loss mid-write can
+ * never corrupt the on-disk file — it is left either fully intact or
+ * fully replaced. On success clears the dirty flag. On failure, the
+ * on-disk file and the buffer's dirty flag are both left unchanged.
+ *
+ * tb         The text buffer. Must have a non-NULL source_path — use
+ *            sol_text_buffer_save_as for buffers with no path yet.
+ * out_error  If non-NULL, receives a static error string on failure.
+ * Returns    true on success.
+ */
+bool sol_text_buffer_save(SolTextBuffer *tb, const char **out_error);
+
+/*
+ * Write the buffer's content to an explicit path and adopt it as the
+ * buffer's new source_path on success ("Save As" semantics). Also used
+ * to give a first path to a previously-untitled buffer.
+ *
+ * Same crash-safety guarantee as sol_text_buffer_save.
+ *
+ * tb         The text buffer.
+ * path       Destination path.
+ * out_error  If non-NULL, receives a static error string on failure.
+ * Returns    true on success.
+ */
+bool sol_text_buffer_save_as(SolTextBuffer *tb, const char *path,
+                             const char **out_error);
+
+/*
+ * Reload the buffer's content from its source_path, discarding the
+ * current in-memory rope and replacing it with a freshly-read one.
+ *
+ * Intended for the case where an external process changed the file on
+ * disk and the buffer had no unsaved edits (callers MUST check
+ * sol_text_buffer_is_dirty first — this function does not check, since
+ * the caller's conflict policy decides what "dirty" should do).
+ *
+ * Cursor, selection, and scroll position are clamped to the new content's
+ * bounds. The undo/redo history is cleared, since existing records
+ * reference byte offsets into a rope that no longer exists. Clears the
+ * dirty flag on success.
+ *
+ * tb         The text buffer. Must have a non-NULL source_path.
+ * out_error  If non-NULL, receives a static error string on failure.
+ * Returns    true on success; the buffer is left unchanged on failure.
+ */
+bool sol_text_buffer_reload_from_disk(SolTextBuffer *tb, const char **out_error);
+
 /* Returns the syntax highlighter attached to this buffer, or NULL when no language was matched. */
 typedef struct SolSyntaxHighlighter SolSyntaxHighlighter;
 SolSyntaxHighlighter *sol_text_buffer_highlighter(const SolTextBuffer *tb);

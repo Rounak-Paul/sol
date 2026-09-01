@@ -167,6 +167,19 @@ bool sol_buffer_close(SolBufferSystem *system, SolBufferId buffer_id);
 /* Close every live buffer. Returns the number successfully closed. */
 size_t sol_buffer_close_all(SolBufferSystem *system);
 
+/*
+ * Bump the buffer system's revision signal without otherwise mutating
+ * any buffer. Used by callers that change buffer-owned state through a
+ * side channel the buffer system doesn't know about (e.g. a text
+ * buffer's dirty flag flipping on save) so reactive UI builders that
+ * subscribe to the revision signal re-run and reflect the change.
+ *
+ * system     The buffer system.
+ * buffer_id  Unused today beyond validating the buffer still exists;
+ *            reserved so a future per-buffer signal can target it.
+ */
+void sol_buffer_touch(SolBufferSystem *system, SolBufferId buffer_id);
+
 /* Close one pane's tab, destroying the buffer only when no pane retains it. */
 bool sol_buffer_close_leaf_tab(SolBufferSystem *system,
                                SolBufferNodeId leaf_id,
