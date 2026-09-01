@@ -34,8 +34,6 @@ SolSettings sol_settings_defaults(void)
     SolSettings s = {
         .ui_scale         = SOL_SETTINGS_UI_SCALE_DEFAULT,
         .bg_opacity       = SOL_SETTINGS_BG_OPACITY_DEFAULT,
-        .bg_blur          = SOL_SETTINGS_BG_BLUR_DEFAULT,
-        .buffer_blur      = SOL_SETTINGS_BUFFER_BLUR_DEFAULT,
         .corner_radius    = SOL_SETTINGS_CORNER_RADIUS_DEFAULT,
         .panel_blur       = SOL_SETTINGS_PANEL_BLUR_DEFAULT,
         .titlebar_blur    = SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT,
@@ -234,18 +232,6 @@ static void jp_parse_theme(JP *j, SolSettings *s)
                 v >= SOL_SETTINGS_BG_OPACITY_MIN &&
                 v <= SOL_SETTINGS_BG_OPACITY_MAX)
                 s->bg_opacity = v;
-        } else if (strcmp(key, "bg_blur") == 0) {
-            float v = jp_float(j);
-            if (!isnan(v) &&
-                v >= SOL_SETTINGS_BG_BLUR_MIN &&
-                v <= SOL_SETTINGS_BG_BLUR_MAX)
-                s->bg_blur = v;
-        } else if (strcmp(key, "buffer_blur") == 0) {
-            float v = jp_float(j);
-            if (!isnan(v) &&
-                v >= SOL_SETTINGS_BUFFER_BLUR_MIN &&
-                v <= SOL_SETTINGS_BUFFER_BLUR_MAX)
-                s->buffer_blur = v;
         } else {
             jp_skip_value(j);
         }
@@ -438,9 +424,7 @@ bool sol_settings_save(const SolSettings *settings)
         "    \"scale\": %.2f,\n"
         "    \"style\": \"%s\",\n"
         "    \"effect\": \"%s\",\n"
-        "    \"opacity\": %.2f,\n"
-        "    \"bg_blur\": %.2f,\n"
-        "    \"buffer_blur\": %.2f\n"
+        "    \"opacity\": %.2f\n"
         "  },\n"
         "  \"appearance\": {\n"
         "    \"corner_radius\": %.2f,\n"
@@ -457,8 +441,6 @@ bool sol_settings_save(const SolSettings *settings)
         esc_theme,
         esc_id,
         (double)settings->bg_opacity,
-        (double)settings->bg_blur,
-        (double)settings->buffer_blur,
         (double)settings->corner_radius,
         (double)settings->panel_blur,
         (double)settings->titlebar_blur,

@@ -134,17 +134,19 @@ typedef struct BuiltinEffect {
     uint32_t fps;
 } BuiltinEffect;
 
+#define BFX_ANIMATION_FPS 15u
+
 static const BuiltinEffect k_effects[] = {
-    { "com.sol.bfx.particles", "Particles", k_particles_frag, 30u },
-    { "com.sol.bfx.waves", "Waves", k_waves_frag, 30u },
-    { "com.sol.bfx.matrix", "Matrix Rain", k_matrix_frag, 24u },
-    { "com.sol.bfx.aurora", "Aurora", k_aurora_frag, 30u },
-    { "com.sol.bfx.starfield", "Starfield", k_starfield_frag, 30u },
-    { "com.sol.bfx.metaballs", "Metaballs", k_metaballs_frag, 30u },
-    { "com.sol.bfx.flowfield", "Flow Field", k_flowfield_frag, 24u },
-    { "com.sol.bfx.fireflies", "Fireflies", k_fireflies_frag, 30u },
-    { "com.sol.bfx.circuit", "Circuit", k_circuit_frag, 24u },
-    { "com.sol.bfx.voronoi", "Voronoi", k_voronoi_frag, 24u },
+    { "com.sol.bfx.particles", "Particles", k_particles_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.waves", "Waves", k_waves_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.matrix", "Matrix Rain", k_matrix_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.aurora", "Aurora", k_aurora_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.starfield", "Starfield", k_starfield_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.metaballs", "Metaballs", k_metaballs_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.flowfield", "Flow Field", k_flowfield_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.fireflies", "Fireflies", k_fireflies_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.circuit", "Circuit", k_circuit_frag, BFX_ANIMATION_FPS },
+    { "com.sol.bfx.voronoi", "Voronoi", k_voronoi_frag, BFX_ANIMATION_FPS },
 };
 
 /* Register every built-in animated background. */

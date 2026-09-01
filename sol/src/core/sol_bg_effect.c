@@ -22,7 +22,7 @@
 #define SOL_BG_EFFECT_MAX     32
 #define SOL_BG_EFFECT_ID_MAX  63
 #define SOL_BG_EFFECT_NAME_MAX 127
-#define SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD 1.45f
+#define SOL_BG_EFFECT_RENDER_SCALE_DIVISOR 2u
 
 /* ------------------------------------------------------------------ */
 /* Vertex shader — generates a full-screen triangle from gl_VertexIndex */
@@ -43,104 +43,26 @@ typedef struct {
     float accent_r, accent_g, accent_b, _pad1;
 } BgPushConst;
 
-/* Push constants for the blur passes. */
-typedef struct {
-    float inv_w, inv_h;
-    float region_x, region_y;
-    float region_w, region_h;
-    float corner_radius;
-    float _pad0;
-} BlurPushConst;
 
-/* ------------------------------------------------------------------ */
-/* Shader-mode GPU state                                               */
-/* ------------------------------------------------------------------ */
+typedef struct {
+    VkImage        image;
+    VkDeviceMemory memory;
+    VkImageView    view;
+    uint32_t       width;
+    uint32_t       height;
+    VkFormat       format;
+    VkImageLayout  layout;
+} BgRenderTarget;
 
 typedef struct {
     VkPipelineLayout pipeline_layout;
     VkPipeline       pipeline;
     VkFormat         built_for_format;  /* swapchain format pipeline was compiled for */
+    BgRenderTarget   targets[CA_FRAMES_IN_FLIGHT];
     bool             initialized;
 } BgShaderGPU;
 
 /* ------------------------------------------------------------------ */
-/* Blur GPU state — separable Gaussian, shared across all effects      */
-/* ------------------------------------------------------------------ */
-
-typedef struct {
-    /* Scratch image (same format/size as swapchain) */
-    VkImage        scratch_image;
-    VkDeviceMemory scratch_mem;
-    VkImageView    scratch_view;
-
-    /* Sampler for reading source image in blur passes */
-    VkSampler      sampler;
-
-    /* Descriptor layout + pool + two sets (one per pass) */
-    VkDescriptorSetLayout desc_layout;
-    VkDescriptorPool      desc_pool;
-    VkDescriptorSet       desc_set_h;   /* H-pass reads swapchain */
-    VkDescriptorSet       desc_set_v;   /* V-pass reads scratch   */
-
-    /* Pipeline layout + two pipelines */
-    VkPipelineLayout pipeline_layout;
-    VkPipeline       pipeline_h;
-    VkPipeline       pipeline_v;
-
-    /* Dimensions the scratch was allocated for */
-    uint32_t    width;
-    uint32_t    height;
-    VkFormat    format;
-    bool        initialized;
-} BlurGPU;
-
-typedef struct {
-    Ca_Window *window;
-    BlurGPU    frames[CA_FRAMES_IN_FLIGHT];
-} AuxWindowBlurGPU;
-
-static void blur_destroy(BlurGPU *blur, VkDevice device);
-
-/* GLSL for horizontal blur pass — samples source bound at set 0, binding 0 */
-static const char k_blur_h_frag[] =
-    "#version 450\n"
-    "layout(set=0,binding=0) uniform sampler2D src;\n"
-    "layout(push_constant) uniform PC { float inv_w; float inv_h; } pc;\n"
-    "layout(location=0) in  vec2 v_uv;\n"
-    "layout(location=0) out vec4 out_color;\n"
-    /* 9-tap Gaussian kernel (sigma ~2.5), horizontal */
-    "void main() {\n"
-    "    float w[9] = float[](0.0542,0.0816,0.1065,0.1213,0.1283,0.1213,0.1065,0.0816,0.0542);\n"
-    "    vec4 c = vec4(0.0);\n"
-    "    for(int i=0;i<9;i++) c += w[i] * texture(src, v_uv + vec2((float(i)-4.0)*pc.inv_w, 0.0));\n"
-    "    out_color = c;\n"
-    "}\n";
-
-static const char k_blur_v_frag[] =
-    "#version 450\n"
-    "layout(set=0,binding=0) uniform sampler2D src;\n"
-    "layout(push_constant) uniform PC {\n"
-    "    float inv_w; float inv_h; float region_x; float region_y;\n"
-    "    float region_w; float region_h; float corner_radius; float _pad0;\n"
-    "} pc;\n"
-    "layout(location=0) in  vec2 v_uv;\n"
-    "layout(location=0) out vec4 out_color;\n"
-    /* 9-tap Gaussian kernel (sigma ~2.5), vertical */
-    "void main() {\n"
-    "    vec2 half_size = vec2(pc.region_w, pc.region_h) * 0.5;\n"
-    "    float radius = min(pc.corner_radius, min(half_size.x, half_size.y));\n"
-    "    vec2 center = vec2(pc.region_x, pc.region_y) + half_size;\n"
-    "    vec2 q = abs(gl_FragCoord.xy - center) - (half_size - vec2(radius));\n"
-    "    float distance = length(max(q, vec2(0.0)))\n"
-    "                   + min(max(q.x, q.y), 0.0) - radius;\n"
-    "    float coverage = 1.0 - smoothstep(-0.75, 0.75, distance);\n"
-    "    if (coverage < 0.001) discard;\n"
-    "    float w[9] = float[](0.0542,0.0816,0.1065,0.1213,0.1283,0.1213,0.1065,0.0816,0.0542);\n"
-    "    vec4 c = vec4(0.0);\n"
-    "    for(int i=0;i<9;i++) c += w[i] * texture(src, v_uv + vec2(0.0, (float(i)-4.0)*pc.inv_h));\n"
-    "    out_color = vec4(c.rgb, coverage);\n"
-    "}\n";
-
 /* ------------------------------------------------------------------ */
 /* Entry                                                               */
 /* ------------------------------------------------------------------ */
@@ -176,11 +98,6 @@ struct SolBgEffectRegistry {
     float         background_r, background_g, background_b;
     float         primary_r, primary_g, primary_b;
     float         accent_r, accent_g, accent_b;
-    int           blur_passes;  /* how many separable blur iterations (0 = off) */
-    BlurGPU       blur[CA_FRAMES_IN_FLIGHT];
-    Ca_DynArray   aux_blur;     /* AuxWindowBlurGPU, one entry per auxiliary window */
-    SolBgEffectBlurRegion blur_regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
-    size_t        blur_region_count;
     void        (*on_change)(void *user_data);
     void         *on_change_data;
 };
@@ -193,35 +110,6 @@ struct SolBgEffectRegistry {
 static double get_monotonic_sec(void)
 {
     return (double)sol_platform_now_monotonic_ns() * 1e-9;
-}
-
-/*
- * Return the frame-local blur resources reserved for an auxiliary window,
- * allocating a new per-window entry the first time a window is seen.
- *
- * The returned pointer is only valid until the next call, because the entry
- * array may reallocate when it grows. Callers use it within a single render
- * callback, which never reserves a second window.
- *
- * reg         Owning registry.
- * window      Auxiliary window requesting blur resources.
- * frame_slot  In-flight frame index.
- * Returns  Frame-local blur resources, or NULL on invalid input or OOM.
- */
-static BlurGPU *aux_blur_for_window(SolBgEffectRegistry *reg,
-                                    Ca_Window *window,
-                                    uint32_t frame_slot)
-{
-    if (!reg || !window || frame_slot >= CA_FRAMES_IN_FLIGHT) return NULL;
-    for (size_t i = 0; i < reg->aux_blur.count; ++i) {
-        AuxWindowBlurGPU *entry = ca_dyn_array_at(&reg->aux_blur, i);
-        if (entry->window == window) return &entry->frames[frame_slot];
-    }
-    if (!ca_dyn_array_insert_zeroed(&reg->aux_blur, reg->aux_blur.count, 1))
-        return NULL;
-    AuxWindowBlurGPU *entry = ca_dyn_array_back(&reg->aux_blur);
-    entry->window = window;
-    return &entry->frames[frame_slot];
 }
 
 /* Notify the registry observer after externally visible state changes. */
@@ -377,10 +265,116 @@ static bool gpu_build_pipeline(BgShaderGPU *gpu, Ca_Instance *instance,
     return true;
 }
 
+/* Release the reduced-resolution render target owned by one in-flight frame. */
+static void bg_target_destroy(BgRenderTarget *target, VkDevice device)
+{
+    if (!target) return;
+    if (target->view != VK_NULL_HANDLE)
+        vkDestroyImageView(device, target->view, NULL);
+    if (target->image != VK_NULL_HANDLE)
+        vkDestroyImage(device, target->image, NULL);
+    if (target->memory != VK_NULL_HANDLE)
+        vkFreeMemory(device, target->memory, NULL);
+    memset(target, 0, sizeof(*target));
+}
+
+/* Allocate one device-local target used to shade a background below native resolution. */
+static bool bg_target_build(BgRenderTarget *target, Ca_Instance *instance,
+                            VkFormat format, uint32_t width, uint32_t height)
+{
+    if (!target || !instance || width == 0u || height == 0u) return false;
+    VkDevice device = ca_gpu_device(instance);
+    VkImageCreateInfo image_ci = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent = { width, height, 1u },
+        .mipLevels = 1u,
+        .arrayLayers = 1u,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (vkCreateImage(device, &image_ci, NULL, &target->image) != VK_SUCCESS)
+        goto fail;
+
+    VkMemoryRequirements requirements;
+    vkGetImageMemoryRequirements(device, target->image, &requirements);
+    uint32_t memory_type = ca_gpu_find_memory_type(
+        instance, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memory_type == UINT32_MAX) goto fail;
+    VkMemoryAllocateInfo allocation = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memory_type,
+    };
+    if (vkAllocateMemory(device, &allocation, NULL, &target->memory) != VK_SUCCESS)
+        goto fail;
+    if (vkBindImageMemory(device, target->image, target->memory, 0) != VK_SUCCESS)
+        goto fail;
+
+    VkImageViewCreateInfo view_ci = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = target->image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1u,
+            .layerCount = 1u,
+        },
+    };
+    if (vkCreateImageView(device, &view_ci, NULL, &target->view) != VK_SUCCESS)
+        goto fail;
+    target->width = width;
+    target->height = height;
+    target->format = format;
+    target->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    return true;
+
+fail:
+    bg_target_destroy(target, device);
+    return false;
+}
+
+/* Record a precise image-layout transition for the background composition target. */
+static void bg_image_barrier(VkCommandBuffer cmd, VkImage image,
+                             VkImageLayout old_layout, VkImageLayout new_layout,
+                             VkPipelineStageFlags2 src_stage,
+                             VkAccessFlags2 src_access,
+                             VkPipelineStageFlags2 dst_stage,
+                             VkAccessFlags2 dst_access)
+{
+    VkImageMemoryBarrier2 barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask = src_stage,
+        .srcAccessMask = src_access,
+        .dstStageMask = dst_stage,
+        .dstAccessMask = dst_access,
+        .oldLayout = old_layout,
+        .newLayout = new_layout,
+        .image = image,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1u,
+            .layerCount = 1u,
+        },
+    };
+    VkDependencyInfo dependency = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 1u,
+        .pImageMemoryBarriers = &barrier,
+    };
+    vkCmdPipelineBarrier2(cmd, &dependency);
+}
+
 static void gpu_destroy(BgShaderGPU *gpu, VkDevice device)
 {
     if (!gpu) return;
     vkDeviceWaitIdle(device);
+    for (uint32_t i = 0u; i < CA_FRAMES_IN_FLIGHT; ++i)
+        bg_target_destroy(&gpu->targets[i], device);
     if (gpu->pipeline        != VK_NULL_HANDLE)
         vkDestroyPipeline(device, gpu->pipeline, NULL);
     if (gpu->pipeline_layout != VK_NULL_HANDLE)
@@ -388,474 +382,36 @@ static void gpu_destroy(BgShaderGPU *gpu, VkDevice device)
     memset(gpu, 0, sizeof(*gpu));
 }
 
-/* ------------------------------------------------------------------ */
-/* Blur GPU helpers                                                    */
-/* ------------------------------------------------------------------ */
-
-/*
- * Build a single blur pipeline (horizontal or vertical) using dynamic rendering.
- * Reads from a combined-image-sampler at (set=0, binding=0).
- *
- * layout     Pre-built pipeline layout (shared between H and V pipelines).
- * device     Vulkan device.
- * instance   Causality instance (for ca_shader_compile).
- * format     Target image format.
- * frag_glsl  Blur fragment shader source.
- * out        Output pipeline handle.
- * Returns    true on success.
- */
-static bool blur_build_pipeline(VkPipelineLayout layout, VkDevice device,
-                                Ca_Instance *instance, VkFormat format,
-                                const char *frag_glsl, bool blend_output,
-                                VkPipeline *out)
+/* Activate an entry and initialize raw-mode effects when required. */
+static bool entry_activate(SolBgEffectRegistry *reg, BgEntry *entry)
 {
-    VkShaderModule vert = ca_shader_compile(device, k_fullscreen_vert,
-                                            VK_SHADER_STAGE_VERTEX_BIT);
-    VkShaderModule frag = ca_shader_compile(device, frag_glsl,
-                                            VK_SHADER_STAGE_FRAGMENT_BIT);
-    if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
-        if (vert != VK_NULL_HANDLE) vkDestroyShaderModule(device, vert, NULL);
-        if (frag != VK_NULL_HANDLE) vkDestroyShaderModule(device, frag, NULL);
-        return false;
-    }
-
-    VkPipelineShaderStageCreateInfo stages[2] = {
-        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-          .stage = VK_SHADER_STAGE_VERTEX_BIT,   .module = vert, .pName = "main" },
-        { .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-          .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = frag, .pName = "main" },
-    };
-    VkPipelineVertexInputStateCreateInfo   vi  = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
-    VkPipelineInputAssemblyStateCreateInfo ia  = { .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
-    VkPipelineViewportStateCreateInfo      vps = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1 };
-    VkPipelineRasterizationStateCreateInfo rst = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .polygonMode = VK_POLYGON_MODE_FILL, .cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, .lineWidth = 1.0f };
-    VkPipelineMultisampleStateCreateInfo   ms  = { .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT };
-    VkPipelineColorBlendAttachmentState bla = {
-        .blendEnable = blend_output ? VK_TRUE : VK_FALSE,
-        .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-        .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .colorBlendOp = VK_BLEND_OP_ADD,
-        .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-        .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .alphaBlendOp = VK_BLEND_OP_ADD,
-        .colorWriteMask = 0xf,
-    };
-    VkPipelineColorBlendStateCreateInfo    bl  = { .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1, .pAttachments = &bla };
-    VkDynamicState                         dyn_s[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo       dyn = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, .dynamicStateCount = 2, .pDynamicStates = dyn_s };
-    VkPipelineRenderingCreateInfo          dri = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 1, .pColorAttachmentFormats = &format };
-
-    VkGraphicsPipelineCreateInfo gp_ci = {
-        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &dri,
-        .stageCount = 2, .pStages = stages,
-        .pVertexInputState = &vi, .pInputAssemblyState = &ia,
-        .pViewportState = &vps, .pRasterizationState = &rst,
-        .pMultisampleState = &ms, .pColorBlendState = &bl,
-        .pDynamicState = &dyn, .layout = layout, .renderPass = VK_NULL_HANDLE,
-    };
-    VkResult r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gp_ci, NULL, out);
-    vkDestroyShaderModule(device, vert, NULL);
-    vkDestroyShaderModule(device, frag, NULL);
-    return r == VK_SUCCESS;
-}
-
-/*
- * Allocate scratch image, sampler, descriptor sets and blur pipelines.
- * Called lazily on first render when blur_passes > 0.
- *
- * blur      BlurGPU state to populate.
- * instance  Causality instance.
- * format    Swapchain format.
- * width     Swapchain pixel width.
- * height    Swapchain pixel height.
- * Returns   true on success.
- */
-static bool blur_build(BlurGPU *blur, Ca_Instance *instance,
-                       VkFormat format, uint32_t width, uint32_t height)
-{
-    VkDevice device = ca_gpu_device(instance);
-
-    /* Scratch image */
-    VkImageCreateInfo img_ci = {
-        .sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .imageType     = VK_IMAGE_TYPE_2D,
-        .format        = format,
-        .extent        = { width, height, 1 },
-        .mipLevels     = 1,
-        .arrayLayers   = 1,
-        .samples       = VK_SAMPLE_COUNT_1_BIT,
-        .tiling        = VK_IMAGE_TILING_OPTIMAL,
-        .usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-    };
-    if (vkCreateImage(device, &img_ci, NULL, &blur->scratch_image) != VK_SUCCESS)
-        goto fail;
-
-    VkMemoryRequirements mem_req;
-    vkGetImageMemoryRequirements(device, blur->scratch_image, &mem_req);
-    uint32_t mem_type = ca_gpu_find_memory_type(instance, mem_req.memoryTypeBits,
-                                                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VkMemoryAllocateInfo alloc = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-                                   .allocationSize = mem_req.size,
-                                   .memoryTypeIndex = mem_type };
-    if (vkAllocateMemory(device, &alloc, NULL, &blur->scratch_mem) != VK_SUCCESS)
-        goto fail;
-    if (vkBindImageMemory(device, blur->scratch_image, blur->scratch_mem, 0) != VK_SUCCESS)
-        goto fail;
-
-    VkImageViewCreateInfo view_ci = {
-        .sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .image    = blur->scratch_image,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format   = format,
-        .subresourceRange = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 },
-    };
-    if (vkCreateImageView(device, &view_ci, NULL, &blur->scratch_view) != VK_SUCCESS)
-        goto fail;
-
-    /* Sampler — linear filter, clamp to edge */
-    VkSamplerCreateInfo smp_ci = {
-        .sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter    = VK_FILTER_LINEAR,
-        .minFilter    = VK_FILTER_LINEAR,
-        .mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-    };
-    if (vkCreateSampler(device, &smp_ci, NULL, &blur->sampler) != VK_SUCCESS)
-        goto fail;
-
-    /* Descriptor layout — one combined-image-sampler at binding 0 */
-    VkDescriptorSetLayoutBinding binding = {
-        .binding         = 0,
-        .descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1,
-        .stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT,
-    };
-    VkDescriptorSetLayoutCreateInfo dsl_ci = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1, .pBindings = &binding,
-    };
-    if (vkCreateDescriptorSetLayout(device, &dsl_ci, NULL, &blur->desc_layout) != VK_SUCCESS)
-        goto fail;
-
-    /* Descriptor pool — 2 sets (one per pass) */
-    VkDescriptorPoolSize pool_size = { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 2 };
-    VkDescriptorPoolCreateInfo pool_ci = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 2, .poolSizeCount = 1, .pPoolSizes = &pool_size,
-    };
-    if (vkCreateDescriptorPool(device, &pool_ci, NULL, &blur->desc_pool) != VK_SUCCESS)
-        goto fail;
-
-    VkDescriptorSetLayout layouts[2] = { blur->desc_layout, blur->desc_layout };
-    VkDescriptorSetAllocateInfo alloc_ds = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = blur->desc_pool, .descriptorSetCount = 2, .pSetLayouts = layouts,
-    };
-    VkDescriptorSet sets[2];
-    if (vkAllocateDescriptorSets(device, &alloc_ds, sets) != VK_SUCCESS)
-        goto fail;
-    blur->desc_set_h = sets[0];
-    blur->desc_set_v = sets[1];
-
-    /* Pipeline layout — descriptor set + push constant */
-    VkPushConstantRange pc_range = { .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-                                     .size = sizeof(BlurPushConst) };
-    VkPipelineLayoutCreateInfo pl_ci = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1, .pSetLayouts = &blur->desc_layout,
-        .pushConstantRangeCount = 1, .pPushConstantRanges = &pc_range,
-    };
-    if (vkCreatePipelineLayout(device, &pl_ci, NULL, &blur->pipeline_layout) != VK_SUCCESS)
-        goto fail;
-
-    if (!blur_build_pipeline(blur->pipeline_layout, device, instance, format,
-                             k_blur_h_frag, false, &blur->pipeline_h))
-        goto fail;
-    if (!blur_build_pipeline(blur->pipeline_layout, device, instance, format,
-                             k_blur_v_frag, true, &blur->pipeline_v))
-        goto fail;
-
-    blur->width  = width;
-    blur->height = height;
-    blur->format = format;
-    blur->initialized = true;
-    return true;
-
-fail:
-    blur_destroy(blur, device);
-    return false;
-}
-
-/*
- * Destroy all blur GPU resources.
- *
- * blur    BlurGPU state to destroy.
- * device  Vulkan device.
- */
-static void blur_destroy(BlurGPU *blur, VkDevice device)
-{
-    if (!blur) return;
-    vkDeviceWaitIdle(device);
-    if (blur->pipeline_h    != VK_NULL_HANDLE) vkDestroyPipeline(device, blur->pipeline_h, NULL);
-    if (blur->pipeline_v    != VK_NULL_HANDLE) vkDestroyPipeline(device, blur->pipeline_v, NULL);
-    if (blur->pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, blur->pipeline_layout, NULL);
-    if (blur->desc_pool     != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
-    if (blur->desc_layout   != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
-    if (blur->sampler       != VK_NULL_HANDLE) vkDestroySampler(device, blur->sampler, NULL);
-    if (blur->scratch_view  != VK_NULL_HANDLE) vkDestroyImageView(device, blur->scratch_view, NULL);
-    if (blur->scratch_image != VK_NULL_HANDLE) vkDestroyImage(device, blur->scratch_image, NULL);
-    if (blur->scratch_mem   != VK_NULL_HANDLE) vkFreeMemory(device, blur->scratch_mem, NULL);
-    memset(blur, 0, sizeof(*blur));
-}
-
-/* Write the frame-local descriptor sets before recording any blur draw. */
-static void blur_update_descriptors(BlurGPU *blur, VkDevice device,
-                                    VkImageView swapchain_view)
-{
-    VkDescriptorImageInfo h_img = { .sampler = blur->sampler,
-                                    .imageView = swapchain_view,
-                                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkDescriptorImageInfo v_img = { .sampler = blur->sampler,
-                                    .imageView = blur->scratch_view,
-                                    .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-    VkWriteDescriptorSet writes[2] = {
-        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = blur->desc_set_h,
-          .dstBinding = 0, .descriptorCount = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &h_img },
-        { .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = blur->desc_set_v,
-          .dstBinding = 0, .descriptorCount = 1,
-          .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &v_img },
-    };
-    vkUpdateDescriptorSets(device, 2, writes, 0, NULL);
-}
-
-/*
- * Execute one separable Gaussian blur iteration on the swapchain image.
- * On entry:  swapchain is COLOR_ATTACHMENT_OPTIMAL, scratch is any layout.
- * On exit:   swapchain is COLOR_ATTACHMENT_OPTIMAL (ready for UI pass).
- *
- * blur           Initialized BlurGPU state.
- * device         Vulkan device (needed for descriptor writes).
- * cmd            Recording command buffer.
- * swapchain_img  The VkImage backing the swapchain view (for barriers).
- * swapchain_view VkImageView for the swapchain.
- * first_pass     true on the very first call (scratch layout is UNDEFINED).
- */
-static void blur_execute(BlurGPU *blur, VkDevice device, VkCommandBuffer cmd,
-                         VkImage swapchain_img, VkImageView swapchain_view,
-                         const SolBgEffectBlurRegion *regions,
-                         size_t region_count, uint32_t pass_index,
-                         bool first_pass)
-{
-    VkImageSubresourceRange subres = {
-        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1
-    };
-    VkViewport    vp = { 0.0f, 0.0f, (float)blur->width, (float)blur->height, 0.0f, 1.0f };
-    BlurPushConst pc = {
-        .inv_w = SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->width,
-        .inv_h = SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD / (float)blur->height,
-    };
-
-    /* Sample radius in texels: the 9-tap kernel reaches
-       ±4 * SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD from the source texel. The
-       H-pass scissor is padded by this much on BOTH axes: horizontally so
-       its own horizontal taps stay fed from the region's own content, and
-       vertically — even though the H-pass itself only samples
-       horizontally — because the V-pass immediately after samples
-       vertically from these exact scratch rows, reaching this same ±4
-       texels above and below the region's top/bottom edge. Padding only
-       the horizontal axis left the top and bottom few rows of scratch
-       outside the region unwritten (DONT_CARE garbage) on every pass after
-       the first, which the V-pass then blended into the region's top/
-       bottom edge as a dark horizontal band. */
-    const int32_t sample_pad =
-        (int32_t)(4.0f * SOL_BG_EFFECT_BLUR_SAMPLE_SPREAD + 1.0f);
-
-    /* --- H-pass barriers --- */
-    /* Swapchain: COLOR_ATTACHMENT_OPTIMAL → SHADER_READ_ONLY_OPTIMAL */
-    VkImageMemoryBarrier2 b0 = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-        .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .image = swapchain_img, .subresourceRange = subres,
-    };
-    /* Scratch: UNDEFINED (first) or SHADER_READ (subsequent) → COLOR_ATTACHMENT */
-    VkImageMemoryBarrier2 b1 = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask  = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-        .srcAccessMask = VK_ACCESS_2_NONE,
-        .dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        .oldLayout = first_pass ? VK_IMAGE_LAYOUT_UNDEFINED
-                                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .image = blur->scratch_image, .subresourceRange = subres,
-    };
-    VkImageMemoryBarrier2 barr_h[2] = { b0, b1 };
-    VkDependencyInfo dep_h = { .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                               .imageMemoryBarrierCount = 2, .pImageMemoryBarriers = barr_h };
-    vkCmdPipelineBarrier2(cmd, &dep_h);
-
-    /* H-pass draw — scoped to each active region's footprint (padded by the
-       kernel's sample reach on both axes — see sample_pad above), never the
-       full screen. Blurring the whole
-       swapchain unconditionally would, on iterated passes, re-sample pixels
-       the previous V-pass left untouched just outside a region's rounded
-       corner (V-pass discards there, preserving crisp background) and smear
-       that hard sharp/blurred boundary sideways into the scratch buffer —
-       which the next V-pass then composites again, leaving a visible
-       rectangular fringe hugging the rounded corner. Restricting the H-pass
-       to the region (plus sampling headroom) keeps every pass's source data
-       within content the mask is actually allowed to touch. */
-    VkRenderingAttachmentInfo h_att = {
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = blur->scratch_view, .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    };
-    VkRenderingInfo h_ri = { .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                             .renderArea = { {0,0}, {blur->width, blur->height} },
-                             .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &h_att };
-    vkCmdBeginRendering(cmd, &h_ri);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blur->pipeline_h);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            blur->pipeline_layout, 0, 1, &blur->desc_set_h, 0, NULL);
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdPushConstants(cmd, blur->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-    for (size_t i = 0; i < region_count; ++i) {
-        const SolBgEffectBlurRegion *region = &regions[i];
-        if (region->passes <= pass_index) continue;
-        int32_t x = (int32_t)(region->x * (float)blur->width) - sample_pad;
-        int32_t y = (int32_t)(region->y * (float)blur->height) - sample_pad;
-        int32_t right = (int32_t)((region->x + region->width) * (float)blur->width + 0.999f) + sample_pad;
-        int32_t bottom = (int32_t)((region->y + region->height) * (float)blur->height + 0.999f) + sample_pad;
-        if (x < 0) x = 0;
-        if (y < 0) y = 0;
-        if (right > (int32_t)blur->width) right = (int32_t)blur->width;
-        if (bottom > (int32_t)blur->height) bottom = (int32_t)blur->height;
-        if (right <= x || bottom <= y) continue;
-        VkRect2D h_scissor = {
-            .offset = { x, y },
-            .extent = { (uint32_t)(right - x), (uint32_t)(bottom - y) },
-        };
-        vkCmdSetScissor(cmd, 0, 1, &h_scissor);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-    }
-    vkCmdEndRendering(cmd);
-
-    /* --- V-pass barriers --- */
-    /* Scratch: COLOR_ATTACHMENT → SHADER_READ */
-    VkImageMemoryBarrier2 b2 = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-        .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .image = blur->scratch_image, .subresourceRange = subres,
-    };
-    /* Swapchain: SHADER_READ → COLOR_ATTACHMENT */
-    VkImageMemoryBarrier2 b3 = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-        .srcStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-        .srcAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
-        .dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .image = swapchain_img, .subresourceRange = subres,
-    };
-    VkImageMemoryBarrier2 barr_v[2] = { b2, b3 };
-    VkDependencyInfo dep_v = { .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                               .imageMemoryBarrierCount = 2, .pImageMemoryBarriers = barr_v };
-    vkCmdPipelineBarrier2(cmd, &dep_v);
-
-    /* V-pass draw */
-    VkRenderingAttachmentInfo v_att = {
-        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-        .imageView = swapchain_view, .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-    };
-    VkRenderingInfo v_ri = { .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-                             .renderArea = { {0,0}, {blur->width, blur->height} },
-                             .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &v_att };
-    vkCmdBeginRendering(cmd, &v_ri);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, blur->pipeline_v);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                            blur->pipeline_layout, 0, 1, &blur->desc_set_v, 0, NULL);
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdPushConstants(cmd, blur->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-    for (size_t i = 0; i < region_count; ++i) {
-        const SolBgEffectBlurRegion *region = &regions[i];
-        if (region->passes <= pass_index) continue;
-        uint32_t x = (uint32_t)(region->x * (float)blur->width);
-        uint32_t y = (uint32_t)(region->y * (float)blur->height);
-        uint32_t right = (uint32_t)((region->x + region->width) * (float)blur->width + 0.999f);
-        uint32_t bottom = (uint32_t)((region->y + region->height) * (float)blur->height + 0.999f);
-        if (right > blur->width) right = blur->width;
-        if (bottom > blur->height) bottom = blur->height;
-        if (right <= x || bottom <= y) continue;
-        pc.region_x = (float)x;
-        pc.region_y = (float)y;
-        pc.region_w = (float)(right - x);
-        pc.region_h = (float)(bottom - y);
-        pc.corner_radius = region->corner_radius * (float)blur->height;
-        VkRect2D region_scissor = {
-            .offset = { (int32_t)x, (int32_t)y },
-            .extent = { right - x, bottom - y },
-        };
-        vkCmdSetScissor(cmd, 0, 1, &region_scissor);
-        vkCmdPushConstants(cmd, blur->pipeline_layout,
-                           VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-    }
-    vkCmdEndRendering(cmd);
-    /* Swapchain is COLOR_ATTACHMENT_OPTIMAL — ready for the UI pass. */
-}
-
-/* ------------------------------------------------------------------ */
-/* Entry activate / deactivate                                         */
-/* ------------------------------------------------------------------ */
-
-static bool entry_activate(SolBgEffectRegistry *reg, BgEntry *e)
-{
-    if (e->fragment_glsl) {
-        /* Shader mode: GPU pipeline built lazily on first render call. */
-        return true;
-    }
-
-    SolBgEffectCtx ctx = {
+    if (entry->fragment_glsl) return true;
+    SolBgEffectCtx context = {
         .instance = reg->instance,
         .time_sec = get_monotonic_sec() - reg->start_sec,
     };
-    if (e->init && !e->init(&ctx, e->user_data)) return false;
-    e->raw_initialized = true;
+    if (entry->init && !entry->init(&context, entry->user_data)) return false;
+    entry->raw_initialized = true;
     return true;
 }
 
-static void entry_deactivate(SolBgEffectRegistry *reg, BgEntry *e)
+/* Release shader or raw-mode resources when an entry stops being active. */
+static void entry_deactivate(SolBgEffectRegistry *reg, BgEntry *entry)
 {
-    if (e->fragment_glsl) {
-        if (e->gpu.initialized)
-            gpu_destroy(&e->gpu, ca_gpu_device(reg->instance));
-    } else {
-        if (e->raw_initialized) {
-            SolBgEffectCtx ctx = {
-                .instance = reg->instance,
-                .time_sec = get_monotonic_sec() - reg->start_sec,
-            };
-            if (e->destroy) e->destroy(&ctx, e->user_data);
-            e->raw_initialized = false;
-        }
+    if (entry->fragment_glsl) {
+        if (entry->gpu.initialized)
+            gpu_destroy(&entry->gpu, ca_gpu_device(reg->instance));
+        return;
     }
+    if (!entry->raw_initialized) return;
+    SolBgEffectCtx context = {
+        .instance = reg->instance,
+        .time_sec = get_monotonic_sec() - reg->start_sec,
+    };
+    if (entry->destroy) entry->destroy(&context, entry->user_data);
+    entry->raw_initialized = false;
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Public API — lifecycle                                              */
@@ -872,10 +428,6 @@ SolBgEffectRegistry *sol_bg_effect_registry_create(Ca_Instance *instance)
     if (!instance) return NULL;
     SolBgEffectRegistry *reg = (SolBgEffectRegistry *)calloc(1, sizeof(*reg));
     if (!reg) return NULL;
-    if (!ca_dyn_array_init(&reg->aux_blur, sizeof(AuxWindowBlurGPU))) {
-        free(reg);
-        return NULL;
-    }
     reg->instance   = instance;
     reg->active_idx = -1;
     reg->opacity    = 1.0f;
@@ -888,7 +440,6 @@ SolBgEffectRegistry *sol_bg_effect_registry_create(Ca_Instance *instance)
     reg->accent_r   = 0.655f;
     reg->accent_g   = 0.545f;
     reg->accent_b   = 0.980f;
-    reg->blur_passes = 4;
     reg->start_sec  = get_monotonic_sec();
     return reg;
 }
@@ -906,14 +457,6 @@ void sol_bg_effect_registry_destroy(SolBgEffectRegistry *reg)
     for (int i = 0; i < reg->count; ++i)
         if (reg->entries[i].in_use)
             free(reg->entries[i].fragment_glsl);
-    for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i)
-        blur_destroy(&reg->blur[i], ca_gpu_device(reg->instance));
-    for (size_t w = 0; w < reg->aux_blur.count; ++w) {
-        AuxWindowBlurGPU *entry = ca_dyn_array_at(&reg->aux_blur, w);
-        for (uint32_t i = 0; i < CA_FRAMES_IN_FLIGHT; ++i)
-            blur_destroy(&entry->frames[i], ca_gpu_device(reg->instance));
-    }
-    ca_dyn_array_destroy(&reg->aux_blur);
     free(reg);
 }
 
@@ -1150,67 +693,6 @@ void sol_bg_effect_set_theme_colors(SolBgEffectRegistry *reg,
     reg->accent_b = clamp_color_channel(accent_b);
 }
 
-/* Return the configured maximum number of localized blur iterations. */
-uint32_t sol_bg_effect_blur_passes(const SolBgEffectRegistry *reg)
-{
-    return reg && reg->blur_passes > 0 ? (uint32_t)reg->blur_passes : 0u;
-}
-
-/* Replace the normalized regions receiving backdrop blur. */
-void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
-                                    const SolBgEffectBlurRegion *regions,
-                                    size_t count)
-{
-    if (!reg) return;
-    if (!regions) count = 0;
-    if (count > SOL_BG_EFFECT_MAX_BLUR_REGIONS)
-        count = SOL_BG_EFFECT_MAX_BLUR_REGIONS;
-
-    SolBgEffectBlurRegion next[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
-    size_t next_count = 0;
-    for (size_t i = 0; i < count; ++i) {
-        float left = regions[i].x;
-        float top = regions[i].y;
-        float right = regions[i].x + regions[i].width;
-        float bottom = regions[i].y + regions[i].height;
-        if (!isfinite(left) || !isfinite(top) ||
-            !isfinite(right) || !isfinite(bottom))
-            continue;
-        if (left < 0.0f) left = 0.0f;
-        if (top < 0.0f) top = 0.0f;
-        if (right > 1.0f) right = 1.0f;
-        if (bottom > 1.0f) bottom = 1.0f;
-        if (right <= left || bottom <= top) continue;
-        float corner_radius = regions[i].corner_radius;
-        if (!isfinite(corner_radius) || corner_radius < 0.0f)
-            corner_radius = 0.0f;
-        if (corner_radius > 1.0f) corner_radius = 1.0f;
-        next[next_count++] = (SolBgEffectBlurRegion){
-            .x = left,
-            .y = top,
-            .width = right - left,
-            .height = bottom - top,
-            .corner_radius = corner_radius,
-            .passes = regions[i].passes > (uint32_t)reg->blur_passes
-                          ? (uint32_t)reg->blur_passes
-                          : regions[i].passes,
-        };
-    }
-
-    bool changed = reg->blur_region_count != next_count;
-    for (size_t i = 0; !changed && i < next_count; ++i) {
-        const SolBgEffectBlurRegion *a = &reg->blur_regions[i];
-        const SolBgEffectBlurRegion *b = &next[i];
-        changed = a->x != b->x || a->y != b->y ||
-                  a->width != b->width || a->height != b->height ||
-                  a->corner_radius != b->corner_radius || a->passes != b->passes;
-    }
-    if (!changed) return;
-    memcpy(reg->blur_regions, next, next_count * sizeof(next[0]));
-    reg->blur_region_count = next_count;
-    fire_change(reg);
-}
-
 /* ------------------------------------------------------------------ */
 /* Public API — change callback                                        */
 /* ------------------------------------------------------------------ */
@@ -1234,9 +716,9 @@ void sol_bg_effect_set_change_callback(SolBgEffectRegistry *reg,
 
 /*
  * Per-frame background render callback matching Ca_BgRenderFn.
- * Renders directly into the swapchain image before the UI pass.
- * If blur_passes > 0, applies separable Gaussian blur for a frosted-glass base.
- * Registered via ca_window_set_bg_render; called by Causality each frame.
+ * Renders before the UI pass. The primary shader-mode window is shaded into a
+ * half-resolution target and linearly composed into the swapchain; Causality
+ * owns all CSS backdrop filtering after this callback returns.
  *
  * cmd              Command buffer already recording (outside any render pass).
  * window           Window owning the target swapchain.
@@ -1258,7 +740,7 @@ static bool bg_effect_render(VkCommandBuffer cmd,
                              uint32_t width,
                              uint32_t height,
                              void *user_data,
-                             bool apply_blur)
+                             bool is_primary_window)
 {
     SolBgEffectRegistry *reg = (SolBgEffectRegistry *)user_data;
     if (!reg || reg->active_idx < 0 || width == 0 || height == 0) return false;
@@ -1277,36 +759,43 @@ static bool bg_effect_render(VkCommandBuffer cmd,
             e->gpu.initialized = true;
         }
 
-        /* Lazy-build or rebuild blur GPU resources when dimensions change. */
-        SolBgEffectBlurRegion aux_region = {0};
-        const SolBgEffectBlurRegion *blur_regions = reg->blur_regions;
-        size_t blur_region_count = reg->blur_region_count;
-        BlurGPU *blur = NULL;
-        if (apply_blur && frame_slot < CA_FRAMES_IN_FLIGHT) {
-            blur = &reg->blur[frame_slot];
-        } else if (!apply_blur && window) {
-            blur_region_count = 0;
-            blur = aux_blur_for_window(reg, window, frame_slot);
+        const bool use_reduced_target = is_primary_window &&
+            frame_slot < CA_FRAMES_IN_FLIGHT &&
+            (image_usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0u;
+        const uint32_t render_width = use_reduced_target
+            ? (width + SOL_BG_EFFECT_RENDER_SCALE_DIVISOR - 1u) /
+                  SOL_BG_EFFECT_RENDER_SCALE_DIVISOR
+            : width;
+        const uint32_t render_height = use_reduced_target
+            ? (height + SOL_BG_EFFECT_RENDER_SCALE_DIVISOR - 1u) /
+                  SOL_BG_EFFECT_RENDER_SCALE_DIVISOR
+            : height;
+        BgRenderTarget *target = use_reduced_target
+            ? &e->gpu.targets[frame_slot]
+            : NULL;
+        if (target && (target->image == VK_NULL_HANDLE ||
+                       target->width != render_width ||
+                       target->height != render_height ||
+                       target->format != format)) {
+            VkDevice device = ca_gpu_device(reg->instance);
+            bg_target_destroy(target, device);
+            if (!bg_target_build(target, reg->instance, format,
+                                 render_width, render_height))
+                return false;
         }
-        if (blur && reg->blur_passes > 0 && blur_region_count > 0 &&
-            (image_usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
-            bool needs_blur_init = !blur->initialized;
-            bool dims_changed    = blur->initialized &&
-                                   (blur->width != width ||
-                                    blur->height != height ||
-                                    blur->format != format);
-            if (needs_blur_init || dims_changed) {
-                VkDevice dev = ca_gpu_device(reg->instance);
-                if (blur->initialized) blur_destroy(blur, dev);
-                if (!blur_build(blur, reg->instance, format, width, height))
-                    reg->blur_passes = 0; /* Disable blur on failure — degrade gracefully */
-            }
+        if (target && target->layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+            bg_image_barrier(cmd, target->image, target->layout,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            target->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         }
 
-        /* Render bg shader directly into swapchain. */
+        VkImageView output_view = target ? target->view : swapchain_view;
         VkRenderingAttachmentInfo color_att = {
             .sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView   = swapchain_view,
+            .imageView   = output_view,
             .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .loadOp      = VK_ATTACHMENT_LOAD_OP_CLEAR,
             .storeOp     = VK_ATTACHMENT_STORE_OP_STORE,
@@ -1319,7 +808,7 @@ static bool bg_effect_render(VkCommandBuffer cmd,
         };
         VkRenderingInfo ri = {
             .sType                = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea           = { {0, 0}, {width, height} },
+            .renderArea           = { {0, 0}, {render_width, render_height} },
             .layerCount           = 1,
             .colorAttachmentCount = 1,
             .pColorAttachments    = &color_att,
@@ -1327,13 +816,13 @@ static bool bg_effect_render(VkCommandBuffer cmd,
         vkCmdBeginRendering(cmd, &ri);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, e->gpu.pipeline);
 
-        VkViewport vk_vp  = { 0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f };
-        VkRect2D   scissor = { {0, 0}, {width, height} };
+        VkViewport vk_vp  = { 0.0f, 0.0f, (float)render_width, (float)render_height, 0.0f, 1.0f };
+        VkRect2D   scissor = { {0, 0}, {render_width, render_height} };
         vkCmdSetViewport(cmd, 0, 1, &vk_vp);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         BgPushConst pc = {
-            t, (float)width, (float)height, reg->opacity,
+            t, (float)render_width, (float)render_height, reg->opacity,
             reg->primary_r, reg->primary_g, reg->primary_b, 0.0f,
             reg->accent_r, reg->accent_g, reg->accent_b, 0.0f,
         };
@@ -1342,19 +831,59 @@ static bool bg_effect_render(VkCommandBuffer cmd,
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRendering(cmd);
 
-        /* Apply separable Gaussian blur for frosted-glass. */
-        if (blur && reg->blur_passes > 0 && blur->initialized &&
-            blur_region_count > 0 &&
-            (image_usage & VK_IMAGE_USAGE_SAMPLED_BIT) != 0) {
-            VkDevice dev = ca_gpu_device(reg->instance);
-            blur_update_descriptors(blur, dev, swapchain_view);
-            for (int i = 0; i < reg->blur_passes; ++i)
-                blur_execute(blur, dev, cmd, swapchain_image, swapchain_view,
-                             blur_regions, blur_region_count,
-                             (uint32_t)i, i == 0);
+        if (target) {
+            bg_image_barrier(cmd, target->image,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                             VK_ACCESS_2_TRANSFER_READ_BIT);
+            bg_image_barrier(cmd, swapchain_image,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                             VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            VkImageBlit2 region = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+                .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u },
+                .srcOffsets = { {0, 0, 0}, {(int32_t)render_width, (int32_t)render_height, 1} },
+                .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0u, 0u, 1u },
+                .dstOffsets = { {0, 0, 0}, {(int32_t)width, (int32_t)height, 1} },
+            };
+            VkBlitImageInfo2 blit = {
+                .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+                .srcImage = target->image,
+                .srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                .dstImage = swapchain_image,
+                .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .regionCount = 1u,
+                .pRegions = &region,
+                .filter = VK_FILTER_LINEAR,
+            };
+            vkCmdBlitImage2(cmd, &blit);
+            bg_image_barrier(cmd, swapchain_image,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                             VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            bg_image_barrier(cmd, target->image,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                             VK_ACCESS_2_TRANSFER_READ_BIT,
+                             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            target->layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         }
+
     } else {
-        if (!apply_blur) return false;
+        if (!is_primary_window) return false;
         if (!e->raw_initialized || !e->render) return false;
         SolBgEffectCtx ctx = {
             .instance = reg->instance,
@@ -1377,7 +906,7 @@ static bool bg_effect_render(VkCommandBuffer cmd,
     return true;
 }
 
-/* Render the active effect with the primary window's localized blur regions. */
+/* Render the active effect for the primary workspace window. */
 bool sol_bg_effect_on_render(VkCommandBuffer cmd,
                              Ca_Window *window,
                              VkImage swapchain_image,
@@ -1394,7 +923,7 @@ bool sol_bg_effect_on_render(VkCommandBuffer cmd,
                             true);
 }
 
-/* Render the same shader state into an auxiliary window without rebuilding blur resources. */
+/* Render the active shader directly into an auxiliary window. */
 bool sol_bg_effect_on_render_aux(VkCommandBuffer cmd,
                                  Ca_Window *window,
                                  VkImage swapchain_image,

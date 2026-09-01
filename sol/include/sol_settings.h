@@ -62,18 +62,6 @@
 #define SOL_SETTINGS_TITLEBAR_BLUR_MAX     40.0f
 #define SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT 12.0f
 
-/* Background-effect blur passes for chrome regions (titlebar/statusbar/sidebar).
- * Integer 0–4; stored as float for slider compatibility. */
-#define SOL_SETTINGS_BG_BLUR_MIN     0.0f
-#define SOL_SETTINGS_BG_BLUR_MAX     4.0f
-#define SOL_SETTINGS_BG_BLUR_DEFAULT 3.0f
-
-/* Background-effect blur passes for the centre buffer area.  The editor stays
- * deliberately sharper than chrome so text remains crisp. */
-#define SOL_SETTINGS_BUFFER_BLUR_MIN     0.0f
-#define SOL_SETTINGS_BUFFER_BLUR_MAX     2.0f
-#define SOL_SETTINGS_BUFFER_BLUR_DEFAULT 1.0f
-
 #define SOL_SETTINGS_PANEL_OPACITY_MIN     0.0f
 #define SOL_SETTINGS_PANEL_OPACITY_MAX     1.0f
 #define SOL_SETTINGS_PANEL_OPACITY_DEFAULT 1.0f
@@ -108,14 +96,6 @@ typedef struct SolSettings {
     /* Global background effect opacity [SOL_SETTINGS_BG_OPACITY_MIN, SOL_SETTINGS_BG_OPACITY_MAX].
      * Applied as the alpha/intensity of the rendered effect. */
     float bg_opacity;
-
-    /* Background-effect blur passes for chrome (titlebar/statusbar/sidebar).
-     * Range: [SOL_SETTINGS_BG_BLUR_MIN, SOL_SETTINGS_BG_BLUR_MAX]. */
-    float bg_blur;
-
-    /* Background-effect blur passes for the centre buffer area.
-     * Range: [SOL_SETTINGS_BUFFER_BLUR_MIN, SOL_SETTINGS_BUFFER_BLUR_MAX]. */
-    float buffer_blur;
 
     /* ---- Appearance overlay ---- */
     /* Corner radius (px) applied to panels, cards, buttons, inputs, etc.

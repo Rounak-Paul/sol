@@ -357,24 +357,6 @@ SW_MAKE_SLIDER_CB(sw_on_scrollbar_width_change,  scrollbar_width)
 
 #undef SW_MAKE_SLIDER_CB
 
-void sol_ui_system_sync_blur(SolUISystem *ui);
-
-static void sw_on_bg_blur_change(Ca_Slider *sl, void *user_data)
-{
-    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
-    w->settings->bg_blur = ca_slider_get(sl);
-    sol_ui_system_sync_blur(w->ui);
-    sol_settings_save(w->settings);
-}
-
-static void sw_on_buffer_blur_change(Ca_Slider *sl, void *user_data)
-{
-    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
-    w->settings->buffer_blur = ca_slider_get(sl);
-    sol_ui_system_sync_blur(w->ui);
-    sol_settings_save(w->settings);
-}
-
 /* ------------------------------------------------------------------ */
 /* Content builder                                                     */
 /* ------------------------------------------------------------------ */
@@ -459,31 +441,6 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
         .max         = SOL_SETTINGS_BG_OPACITY_MAX,
         .value       = w->settings->bg_opacity,
         .on_change   = sw_on_opacity_change,
-        .change_data = w,
-        .style       = "sw-slider",
-    });
-    ca_div_end();
-
-    /* ---- Blur passes rows ---- */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
-    ca_text(&(Ca_TextDesc){ .text = "Chrome Blur", .style = "sw-setting-label" });
-    ca_slider(&(Ca_SliderDesc){
-        .min         = SOL_SETTINGS_BG_BLUR_MIN,
-        .max         = SOL_SETTINGS_BG_BLUR_MAX,
-        .value       = w->settings->bg_blur,
-        .on_change   = sw_on_bg_blur_change,
-        .change_data = w,
-        .style       = "sw-slider",
-    });
-    ca_div_end();
-
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
-    ca_text(&(Ca_TextDesc){ .text = "Buffer Blur", .style = "sw-setting-label" });
-    ca_slider(&(Ca_SliderDesc){
-        .min         = SOL_SETTINGS_BUFFER_BLUR_MIN,
-        .max         = SOL_SETTINGS_BUFFER_BLUR_MAX,
-        .value       = w->settings->buffer_blur,
-        .on_change   = sw_on_buffer_blur_change,
         .change_data = w,
         .style       = "sw-slider",
     });

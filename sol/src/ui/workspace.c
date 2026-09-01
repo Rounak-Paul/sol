@@ -189,92 +189,12 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     return true;
 }
 
-/* Append one resolved div rectangle to the localized rounded blur region list. */
-static void sol_ui_append_panel_blur_region(
-    SolBgEffectBlurRegion regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS],
-    size_t *count,
-    const Ca_Div *panel,
-    float window_w,
-    float window_h,
-    float corner_radius,
-    uint32_t passes)
-{
-    if (!regions || !count || !panel || *count >= SOL_BG_EFFECT_MAX_BLUR_REGIONS ||
-        window_w <= 0.0f || window_h <= 0.0f)
-        return;
-    float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
-    ca_div_screen_rect(panel, &x, &y, &width, &height);
-    if (width <= 0.0f || height <= 0.0f) return;
-    regions[(*count)++] = (SolBgEffectBlurRegion){
-        .x = x / window_w,
-        .y = y / window_h,
-        .width = width / window_w,
-        .height = height / window_h,
-        .corner_radius = corner_radius / window_h,
-        .passes = passes,
-    };
-}
-
 /* Return the configured logical radius shared by every floating workspace panel. */
 static float sol_ui_panel_corner_radius(const SolUISystem *ui)
 {
     return ui && ui->settings
         ? ui->settings->corner_radius
         : SOL_UI_PANEL_RADIUS_PX;
-}
-
-/* Synchronize rounded glass blur with the resolved panel rectangles. */
-static void sol_ui_sync_bg_blur_regions(SolUISystem *ui)
-{
-    if (!ui || !ui->bg_effects || ui->window_w <= 0 || ui->window_h <= 0)
-        return;
-
-    const float window_w = (float)ui->window_w;
-    const float window_h = (float)ui->window_h;
-    const float ui_scale = sol_ui_system_scale(ui);
-    const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
-    const float title_px = ca_window_get_title_bar_height(ui->primary_window);
-    const uint32_t max_passes    = sol_bg_effect_blur_passes(ui->bg_effects);
-    const uint32_t chrome_passes = ui->settings
-        ? (uint32_t)(ui->settings->bg_blur    + 0.5f) : max_passes;
-    const uint32_t buffer_passes = ui->settings
-        ? (uint32_t)(ui->settings->buffer_blur + 0.5f) : max_passes;
-    const float panel_radius = ui->settings
-        ? ui->settings->corner_radius * scale
-        : SOL_UI_PANEL_RADIUS_PX * scale;
-    SolBgEffectBlurRegion regions[SOL_BG_EFFECT_MAX_BLUR_REGIONS];
-    size_t count = 0;
-
-    if (title_px > 0.0f) {
-        regions[count++] = (SolBgEffectBlurRegion){
-            .x = 0.0f, .y = 0.0f, .width = 1.0f, .height = title_px / window_h,
-            .corner_radius = 0.0f,
-            .passes = chrome_passes,
-        };
-    }
-
-    sol_ui_append_panel_blur_region(regions, &count, ui->status_bar_host,
-                                    window_w, window_h, panel_radius,
-                                    chrome_passes);
-    sol_ui_append_panel_blur_region(regions, &count, ui->tree_panel_host,
-                                    window_w, window_h, panel_radius,
-                                    chrome_passes);
-
-    for (size_t i = 0u; i < ui->glass_panel_count; ++i) {
-        sol_ui_append_panel_blur_region(regions, &count,
-                                        ui->glass_panel_hosts[i],
-                                        window_w, window_h, panel_radius,
-                                        buffer_passes);
-    }
-
-    sol_ui_append_panel_blur_region(regions, &count, ui->term_panel_host,
-                                    window_w, window_h, panel_radius,
-                                    buffer_passes);
-    sol_ui_append_panel_blur_region(regions, &count, ui->command_panel_host,
-                                    window_w, window_h, panel_radius,
-                                    chrome_passes);
-
-    sol_bg_effect_set_blur_regions(ui->bg_effects, regions, count);
 }
 
 /* ------------------------------------------------------------------ */
@@ -307,7 +227,6 @@ void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible)
     if (!ui) return;
     if (ui->file_tree_visible == visible) return;
     ui->file_tree_visible = visible;
-    sol_ui_sync_bg_blur_regions(ui);
     if (ui->sig_file_tree_visible) {
         ca_signal_set_bool(ui->sig_file_tree_visible, visible);
     }
@@ -976,7 +895,6 @@ static void sol_ui_on_panel_resize(float ratio, void *user_data)
     SolUISystem *ui = (SolUISystem *)user_data;
     if (ui) {
         ui->tree_panel_ratio = ratio;
-        sol_ui_sync_bg_blur_regions(ui);
     }
 }
 
@@ -1257,7 +1175,6 @@ static void sol_ui_on_frame(void *user_data)
     if (!ui) {
         return;
     }
-    sol_ui_sync_bg_blur_regions(ui);
     /* Reap closed file-picker windows. Safe even when none are open.
        Reactive scheduling is owned by causality — nothing else to
        drive from here. */
@@ -2043,7 +1960,6 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height)
     }
     ui->window_w = width;
     ui->window_h = height;
-    sol_ui_sync_bg_blur_regions(ui);
     sol_ui_bump_u32(ui->sig_window_rev);
 }
 
@@ -2765,17 +2681,11 @@ void sol_ui_system_open_plugin_window(SolUISystem *ui)
  * ui       The UI system to update.
  * settings The settings object, or NULL to detach.
  */
-void sol_ui_system_sync_blur(SolUISystem *ui)
-{
-    sol_ui_sync_bg_blur_regions(ui);
-}
-
 void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
 {
     if (!ui) return;
     ui->settings = settings;
     sol_ui_system_apply_appearance(ui);
-    sol_ui_sync_bg_blur_regions(ui);
 }
 
 /*
@@ -2849,7 +2759,6 @@ void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg)
         ca_instance_set_bg_render(ui->instance, sol_bg_effect_on_render_aux, reg);
         ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
         if (sol_bg_effect_active_id(reg)) ca_instance_wake();
-        sol_ui_sync_bg_blur_regions(ui);
     } else {
         ca_window_set_bg_render(ui->primary_window, NULL, NULL);
         ca_instance_set_bg_render(ui->instance, NULL, NULL);
@@ -2956,7 +2865,6 @@ void sol_ui_system_unregister_side_panel(SolUISystem *ui,
     if (!panel) return;
     if (ui->active_side_panel == token) {
         ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
-        sol_ui_sync_bg_blur_regions(ui);
     }
     memset(panel, 0, sizeof(*panel));
     sol_ui_bump_u32(ui->sig_side_panel_rev);
@@ -2969,7 +2877,6 @@ bool sol_ui_system_show_side_panel(SolUISystem *ui,
     if (!sol_ui_find_side_panel(ui, token)) return false;
     if (ui->active_side_panel == token) return true;
     ui->active_side_panel = token;
-    sol_ui_sync_bg_blur_regions(ui);
     sol_ui_bump_u32(ui->sig_side_panel_rev);
     return true;
 }
@@ -2980,7 +2887,6 @@ void sol_ui_system_hide_side_panel(SolUISystem *ui,
 {
     if (!ui || ui->active_side_panel != token) return;
     ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
-    sol_ui_sync_bg_blur_regions(ui);
     sol_ui_bump_u32(ui->sig_side_panel_rev);
 }
 

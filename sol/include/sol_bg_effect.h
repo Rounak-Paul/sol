@@ -3,8 +3,9 @@
 
 /* sol_bg_effect.h — Background shader effect registry.
  *
- * Effects render directly into the swapchain image before the UI pass,
- * producing animated shader art visible through transparent UI elements.
+ * Shader-mode effects render into a reduced-resolution composition target before
+ * the UI pass and are linearly composed into the swapchain. This keeps animated
+ * background work below native UI resolution while preserving sharp UI content.
  *
  * Two registration modes:
  *
@@ -31,8 +32,8 @@
  *
  * Integration:
  *   Register sol_bg_effect_on_render with ca_window_set_bg_render.
- *   The swapchain calls it each frame; the UI composites on top with
- *   LOAD_OP_LOAD, letting semi-transparent panels reveal the background.
+ *   The swapchain calls it each frame; Causality composites CSS backdrop filters
+ *   and UI content on top, letting translucent panels reveal the background.
  */
 
 #ifndef SOL_BG_EFFECT_H
@@ -52,18 +53,7 @@ typedef struct Ca_Instance  Ca_Instance;
 typedef struct Ca_Window    Ca_Window;
 typedef struct SolBgEffectRegistry SolBgEffectRegistry;
 
-#define SOL_BG_EFFECT_MAX_BLUR_REGIONS 72
 #define SOL_BG_EFFECT_MAX_ANIMATION_FPS 240u
-
-/* Normalized swapchain rectangle receiving the frosted backdrop blur. */
-typedef struct SolBgEffectBlurRegion {
-    float x;
-    float y;
-    float width;
-    float height;
-    float corner_radius; /* normalized against swapchain height */
-    uint32_t passes;
-} SolBgEffectBlurRegion;
 
 /* ================================================================== */
 /* Raw-mode callback context                                           */
@@ -268,24 +258,6 @@ void sol_bg_effect_set_opacity(SolBgEffectRegistry *reg, float opacity);
  * reg  The registry.
  */
 float sol_bg_effect_opacity(const SolBgEffectRegistry *reg);
-
-/* Return the registry's configured maximum localized blur strength. */
-uint32_t sol_bg_effect_blur_passes(const SolBgEffectRegistry *reg);
-
-/*
- * Replace the normalized regions receiving backdrop blur.
- * Coordinates and corner_radius are normalized against swapchain width/height
- * and clamped to [0, 1]. The passes field controls local blur strength and is
- * clamped to the registry maximum.
- * Passing no regions preserves the shader unblurred across the complete window.
- *
- * reg      The registry.
- * regions  Region array, or NULL when count is zero.
- * count    Number of regions, capped at SOL_BG_EFFECT_MAX_BLUR_REGIONS.
- */
-void sol_bg_effect_set_blur_regions(SolBgEffectRegistry *reg,
-                                    const SolBgEffectBlurRegion *regions,
-                                    size_t count);
 
 /* ================================================================== */
 /* Theme colors                                                        */
