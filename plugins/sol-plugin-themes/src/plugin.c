@@ -150,9 +150,9 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
 {
     if (!theme || !out || capacity == 0u) return false;
     char chrome[32], panel[32], editor[32], raised[32], popup_bg[32], hover[32], selected[32];
-    const float surface_alpha = theme->light ? 0.74f : 0.64f;
-    const float editor_alpha = theme->light ? 0.68f : 0.54f;
-    if (!color_with_alpha(theme->background, theme->light ? 0.92f : 0.86f, chrome) ||
+    const float surface_alpha = theme->light ? 0.62f : 0.48f;
+    const float editor_alpha = theme->light ? 0.58f : 0.45f;
+    if (!color_with_alpha(theme->background, theme->light ? 0.78f : 0.68f, chrome) ||
         !color_with_alpha(theme->surface, surface_alpha, panel) ||
         !color_with_alpha(theme->surface, editor_alpha, editor) ||
         !color_with_alpha(theme->elevated, theme->light ? 0.88f : 0.78f, raised) ||
@@ -169,7 +169,8 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".ca-titlebar-menu-item:hover,.ca-titlebar-control:hover{background:%s;color:%s;}"
         ".ca-titlebar-close{color:%s;}.ca-titlebar-close:hover{background:%s;}"
         "splitter{background:transparent;color:%s;}"
-        ".status-bar,.term-panel,.term-filler,.term-viewport{background:%s;}"
+        ".status-bar,.term-panel{background:%s;}"
+        ".term-filler,.term-viewport{background:transparent;}"
         ".status-bar-text{color:%s;}"
         ".status-bar-badge-key{background:%s;}.status-bar-badge-command{background:%s;}"
         ".status-bar-badge-leader{background:%s;}",
@@ -188,8 +189,8 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".buffer-tab{background:transparent;}.buffer-tab:hover,.buffer-tab-close:hover{background:%s;}"
         ".buffer-tab-active{background:%s;}"
         ".buffer-tab-text{color:%s;}.buffer-tab-text-active{color:%s;}"
-        ".buffer-pane,.buffer-pane-active,.buffer-body{background:%s;}"
-        ".buffer-gutter-col,.buffer-scrollbar,.buffer-hscrollbar{background:%s;}"
+        ".buffer-pane,.buffer-pane-active{background:%s;}.buffer-body{background:transparent;}"
+        ".buffer-gutter-col,.buffer-scrollbar,.buffer-hscrollbar{background:transparent;}"
         ".buffer-gutter-line{color:%s;}"
         ".buffer-line,.buffer-body-text,.hl-plain{color:%s;}"
         ".buffer-selection{background:%s;}.buffer-caret{background:%s;}"
@@ -197,7 +198,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".buffer-scrollbar-thumb:hover,.buffer-hscrollbar-thumb:hover{background:%s;}",
         panel, theme->muted, hover, raised, theme->primary, theme->secondary,
         theme->text, panel, hover, selected, theme->muted, theme->text, editor,
-        chrome, theme->muted, theme->text, selected, theme->primary, selected,
+        theme->muted, theme->text, selected, theme->primary, selected,
         theme->primary);
 
     css_append(&css,
