@@ -181,6 +181,24 @@ typedef struct SolDeletePathRequest {
     char path[4096];
 } SolDeletePathRequest;
 
+/*
+ * Trampoline adapting ca_instance_wake() (no arguments) to
+ * SolFileWatcherWakeFn's void(*)(void*) signature, so the watcher's
+ * background thread can wake the main loop out of glfwWaitEvents()
+ * the moment it queues a new event — without this, an idle main loop
+ * would only drain the watcher (and thus refresh the explorer / reload
+ * buffers) the next time the user happened to move the mouse or type.
+ *
+ * user_data  Unused; the callback signature carries it for callers that
+ *            need per-instance context, which Sol's single Ca_Instance
+ *            does not.
+ */
+static void sol_on_file_watcher_wake(void *user_data)
+{
+    (void)user_data;
+    ca_instance_wake();
+}
+
 /* ------------------------------------------------------------------ */
 /* Buffer-open glue                                                    */
 /* ------------------------------------------------------------------ */
@@ -498,18 +516,23 @@ static bool sol_make_unique_copy_path(const char *dir,
     return sol_make_unique_child_path(dir, copy_stem, ext, out, out_size);
 }
 
+/*
+ * Re-scan the mounted explorer root after a filesystem change, without
+ * signalling "the root path itself changed."
+ *
+ * Uses sol_ui_system_refresh_file_tree rather than re-setting the root
+ * (which publishes SOL_EVENT_FILE_TREE_ROOT): every call site here is a
+ * content change under the same root (file/folder create, paste,
+ * delete, or an external change reported by the file watcher), never an
+ * actual "open a different folder" — republishing the root-changed
+ * event on each one caused subscribers that treat it as "discard and
+ * rebuild everything" (e.g. the git plugin's full re-discovery) to
+ * thrash on every single filesystem operation.
+ */
 static void sol_refresh_explorer(SolAppContext *app)
 {
     if (!app || !app->ui) return;
-    const char *root = sol_ui_system_file_tree_root(app->ui);
-    if (root) {
-        char root_copy[4096];
-        const size_t len = strlen(root);
-        if (len < sizeof(root_copy)) {
-            memcpy(root_copy, root, len + 1u);
-            (void)sol_ui_system_set_file_tree_root(app->ui, root_copy);
-        }
-    }
+    (void)sol_ui_system_refresh_file_tree(app->ui);
 }
 
 static bool sol_publish_command(SolAppContext *app, const char *action)
@@ -1149,6 +1172,15 @@ static bool sol_on_text_edited_for_autosave(const SolEvent *event, void *user_da
     SolAppContext *app = (SolAppContext *)user_data;
     if (!app || !app->settings.autosave_enabled) return false;
     app->autosave_deadline_ns = event->timestamp_ns + SOL_AUTOSAVE_DEBOUNCE_NS;
+    /* The main loop blocks in glfwWaitEvents() between input events, so
+       without this the debounce deadline would only ever be checked the
+       next time the user happens to move the mouse or press a key —
+       autosave would silently never fire while idle. This wakes the
+       loop once the debounce window elapses even with no further input. */
+    if (app->instance) {
+        ca_instance_request_frame_after(
+            app->instance, (double)SOL_AUTOSAVE_DEBOUNCE_NS / 1e9);
+    }
     return false;
 }
 
@@ -1791,6 +1823,8 @@ int main(int argc, char **argv)
     if (!app.watcher) {
         fprintf(stderr, "[sol] warning: file watcher creation failed; "
                         "explorer/buffers will not live-update on external changes\n");
+    } else {
+        sol_file_watcher_set_wake_callback(app.watcher, sol_on_file_watcher_wake, NULL);
     }
 
     /* Now safe to open the CLI file (renderer is wired up). */

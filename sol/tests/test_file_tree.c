@@ -75,6 +75,86 @@ static bool write_file_bytes(const char *path, const char *text)
     return ok;
 }
 
+/*
+ * Regression: sol_file_tree_refresh must NOT publish SOL_EVENT_FILE_TREE_ROOT
+ * (unlike sol_file_tree_set_root). It exists specifically for high-frequency
+ * callers like a filesystem watcher's drain loop, which re-scan the same
+ * root on every external change; publishing the root-changed event on every
+ * call caused subscribers that treat that event as "the workspace changed,
+ * discard and rebuild everything" (e.g. the git plugin re-running full
+ * discovery) to thrash continuously. This also verifies refresh picks up a
+ * newly-created file and preserves expansion state across the re-scan.
+ */
+static void test_refresh_does_not_publish_root_event(SolTestCtx *T)
+{
+    SolEventBusConfig ecfg = sol_event_bus_config_default();
+    SolEventBus *bus = sol_event_bus_create(&ecfg);
+    SOL_CHECK_NOT_NULL(T, bus);
+    if (!bus) return;
+
+    SolFileTree *tree = sol_file_tree_create();
+    SOL_CHECK_NOT_NULL(T, tree);
+    if (!tree) { sol_event_bus_destroy(bus); return; }
+    sol_file_tree_attach_event_bus(tree, bus);
+
+    RootEventLog log = {0};
+    sol_event_bus_subscribe(bus, &(SolEventSubscriptionDesc){
+        .event_name = SOL_EVENT_FILE_TREE_ROOT,
+        .handler    = root_event_handler,
+        .user_data  = &log,
+    });
+
+    char root[256];
+    snprintf(root, sizeof(root), "/tmp/sol_tree_refresh_%llu",
+             (unsigned long long)sol_test_now_ns());
+    char *sub_dir = sol_platform_path_join(root, "sub");
+    SOL_CHECK_NOT_NULL(T, sub_dir);
+    if (!sub_dir) { sol_file_tree_destroy(tree); sol_event_bus_destroy(bus); return; }
+    SOL_CHECK(T, sol_platform_mkdir_p(sub_dir));
+
+    SOL_CHECK(T, sol_file_tree_set_root(tree, root));
+    SOL_CHECK(T, log.count == 1);   /* set_root: exactly one root-changed event */
+
+    /* Find and expand the "sub" row so refresh has expansion state to
+       preserve, mirroring what a user who had a folder open would see. */
+    size_t sub_index = (size_t)-1;
+    for (size_t i = 0; i < sol_file_tree_visible_count(tree); ++i) {
+        const SolFileEntry *e = sol_file_tree_visible(tree, i);
+        if (e && e->is_dir && strcmp(e->name, "sub") == 0) { sub_index = i; break; }
+    }
+    SOL_CHECK(T, sub_index != (size_t)-1);
+    if (sub_index != (size_t)-1) {
+        SOL_CHECK(T, sol_file_tree_toggle(tree, sub_index));
+        const SolFileEntry *e = sol_file_tree_visible(tree, sub_index);
+        SOL_CHECK(T, e && e->expanded);
+    }
+
+    /* An external change lands on disk, then the watcher-style caller
+       re-scans via refresh — this must not touch the event bus. */
+    char *new_file = sol_platform_path_join(sub_dir, "new.txt");
+    SOL_CHECK(T, write_file_bytes(new_file, "hi"));
+    SOL_CHECK(T, sol_file_tree_refresh(tree));
+    SOL_CHECK(T, log.count == 1);   /* still 1 — refresh publishes nothing */
+
+    /* The new file is now visible, and "sub" is still expanded. */
+    bool found_new_file = false;
+    bool sub_still_expanded = false;
+    for (size_t i = 0; i < sol_file_tree_visible_count(tree); ++i) {
+        const SolFileEntry *e = sol_file_tree_visible(tree, i);
+        if (!e) continue;
+        if (!e->is_dir && strcmp(e->name, "new.txt") == 0) found_new_file = true;
+        if (e->is_dir && strcmp(e->name, "sub") == 0 && e->expanded) sub_still_expanded = true;
+    }
+    SOL_CHECK(T, found_new_file);
+    SOL_CHECK(T, sub_still_expanded);
+
+    free(new_file);
+    free(sub_dir);
+    sol_file_tree_destroy(tree);
+    sol_event_bus_destroy(bus);
+    (void)sol_platform_remove_path_recursive(root);
+}
+
 static bool read_file_bytes(const char *path, char *out, size_t out_size)
 {
     if (!out || out_size == 0u) return false;
@@ -145,6 +225,7 @@ int main(void)
     SolTestSuite suite;
     sol_suite_init(&suite, "sol_file_tree_tests");
     SOL_RUN(suite, test_root_clear_notifies_and_resets);
+    SOL_RUN(suite, test_refresh_does_not_publish_root_event);
     SOL_RUN(suite, test_platform_recursive_file_ops);
     return sol_suite_report(&suite);
 }

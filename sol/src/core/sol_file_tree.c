@@ -518,12 +518,64 @@ bool sol_file_tree_toggle(SolFileTree *tree, size_t index)
 }
 
 /*
- * Re-scan the root directory, discarding all cached node data.
+ * Recursively re-expand and load directories whose path is in
+ * saved_paths, mirroring what sol_file_tree_toggle would have produced
+ * one toggle at a time. Unlike rebuild_visible_recursive (which only
+ * lazy-loads nodes already marked expanded), this walks down through
+ * *unloaded* children to find matches, since after a full node-pool
+ * rebuild none of the previously-expanded child directories exist as
+ * nodes yet — their paths are only known from the saved snapshot.
  *
- * Equivalent to calling sol_file_tree_set_root with the existing root path.
+ * t             File tree being restored.
+ * node_idx      Directory node to consider expanding.
+ * saved_paths   Sorted-free list of full paths that were expanded before.
+ * saved_count   Number of entries in saved_paths.
+ */
+static void restore_expansion(SolFileTree *t, size_t node_idx,
+                              char **saved_paths, size_t saved_count)
+{
+    Node *n = &t->nodes[node_idx];
+    if (!n->is_dir) return;
+
+    bool was_expanded = false;
+    for (size_t j = 0; j < saved_count; ++j) {
+        if (strcmp(n->full_path, saved_paths[j]) == 0) { was_expanded = true; break; }
+    }
+    if (!was_expanded) return;
+
+    n->expanded = true;
+    if (!load_children(t, node_idx)) return;
+    n = &t->nodes[node_idx];   /* pool may have moved */
+
+    size_t child_count = n->child_count;
+    size_t *children    = n->children;
+    for (size_t i = 0; i < child_count; ++i) {
+        /* children[] is a separately-owned array unaffected by further
+           node-pool reallocs from recursive load_children calls below,
+           so this snapshot stays valid across the loop. */
+        restore_expansion(t, children[i], saved_paths, saved_count);
+    }
+}
+
+/*
+ * Re-scan the root directory to pick up external filesystem changes,
+ * preserving which directories were expanded and without publishing
+ * SOL_EVENT_FILE_TREE_ROOT.
+ *
+ * Deliberately distinct from sol_file_tree_set_root: that function's
+ * event means "the root path itself changed" (opening a different
+ * folder) and is meant to be rare — subscribers (e.g. the git plugin)
+ * treat it as a reason to discard and rebuild their own state from
+ * scratch. This function means "contents under the same root may have
+ * changed" and is meant to be called frequently (e.g. once per drained
+ * filesystem-watcher batch) without triggering that unrelated churn.
+ *
+ * Collapses to no cached state and no visible rows if the root can no
+ * longer be read (e.g. the directory was deleted out from under Sol).
  *
  * tree    File tree to refresh.
- * Returns true on success; false if no root is set or re-scan fails.
+ * Returns true on success; false if no root is set or the root path
+ *         cannot be re-read.
  */
 bool sol_file_tree_refresh(SolFileTree *tree)
 {
@@ -531,11 +583,78 @@ bool sol_file_tree_refresh(SolFileTree *tree)
         return false;
     }
 
+    /* Snapshot which directories were expanded, by path, since node
+       indices don't survive the rebuild below. */
+    size_t expanded_count = 0u;
+    for (size_t i = 0; i < tree->node_count; ++i) {
+        if (tree->nodes[i].is_dir && tree->nodes[i].expanded) expanded_count++;
+    }
+    char **expanded_paths = NULL;
+    if (expanded_count > 0u) {
+        expanded_paths = (char **)malloc(expanded_count * sizeof(char *));
+        if (!expanded_paths) return false;
+        size_t k = 0u;
+        for (size_t i = 0; i < tree->node_count; ++i) {
+            if (tree->nodes[i].is_dir && tree->nodes[i].expanded) {
+                expanded_paths[k] = xstrdup(tree->nodes[i].full_path);
+                if (!expanded_paths[k]) {
+                    for (size_t j = 0; j < k; ++j) free(expanded_paths[j]);
+                    free(expanded_paths);
+                    return false;
+                }
+                k++;
+            }
+        }
+    }
+
     char *root = xstrdup(tree->root_path);
     if (!root) {
+        for (size_t j = 0; j < expanded_count; ++j) free(expanded_paths[j]);
+        free(expanded_paths);
         return false;
     }
-    const bool ok = sol_file_tree_set_root(tree, root);
+
+    free_all_nodes(tree);
+    tree->root_index = 0u;
+    tree->visible_count = 0u;
+    free(tree->root_path);
+    tree->root_path = NULL;
+
+    bool ok = false;
+    SolPathInfo info;
+    if (sol_platform_get_path_info(root, &info) && info.is_directory) {
+        size_t root_idx = alloc_node(tree, root, root, true);
+        if (root_idx != (size_t)-1) {
+            tree->root_index = root_idx;
+            tree->root_path = root;
+            root = NULL;   /* ownership moved into the node/tree */
+            tree->nodes[root_idx].expanded = true;
+
+            /* Re-load and re-expand every directory that was expanded
+               before, by path. A directory that was deleted or renamed
+               just silently stays collapsed — nothing meaningful to
+               restore for it. */
+            if (!load_children(tree, tree->root_index)) {
+                /* Root itself failed to enumerate (e.g. permission
+                   revoked mid-session) — leave it as an empty, collapsed
+                   root rather than treating the whole refresh as fatal;
+                   the explorer just shows nothing until it recovers. */
+            } else {
+                Node *root_node = &tree->nodes[tree->root_index];
+                size_t child_count = root_node->child_count;
+                size_t *children   = root_node->children;
+                for (size_t i = 0; i < child_count; ++i) {
+                    restore_expansion(tree, children[i], expanded_paths, expanded_count);
+                }
+            }
+            rebuild_visible(tree);
+            ok = true;
+        }
+    }
+
     free(root);
+    for (size_t j = 0; j < expanded_count; ++j) free(expanded_paths[j]);
+    free(expanded_paths);
+    bump_rev(tree);
     return ok;
 }

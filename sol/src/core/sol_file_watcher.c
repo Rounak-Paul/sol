@@ -58,29 +58,35 @@ static void sol_fw_queue_destroy(SolFwQueue *q)
 }
 
 /* Push one event, coalescing with the most recent queued event for the
-   same path (a burst of writes to one file becomes a single CHANGED). */
-static void sol_fw_queue_push(SolFwQueue *q, SolFileWatchEventKind kind,
+   same path (a burst of writes to one file becomes a single CHANGED).
+   Returns true when the queue transitioned from empty to non-empty
+   (coalescing into an existing entry does not count), so the caller
+   knows whether a wake is actually needed — the main loop only needs
+   nudging when it might otherwise stay asleep with fresh work waiting. */
+static bool sol_fw_queue_push(SolFwQueue *q, SolFileWatchEventKind kind,
                               const char *path)
 {
-    if (!q || !path || !path[0]) return;
+    if (!q || !path || !path[0]) return false;
 
     pthread_mutex_lock(&q->mutex);
     for (size_t i = 0u; i < q->count; ++i) {
         if (strcmp(q->items[i].path, path) == 0) {
             q->items[i].kind = kind;   /* last write wins */
             pthread_mutex_unlock(&q->mutex);
-            return;
+            return false;
         }
     }
+    const bool was_empty = (q->count == 0u);
     if (q->count >= SOL_FW_QUEUE_CAPACITY) {
         q->overflowed = true;
         pthread_mutex_unlock(&q->mutex);
-        return;
+        return was_empty;
     }
     SolFileWatchEvent *slot = &q->items[q->count++];
     slot->kind = kind;
     snprintf(slot->path, sizeof(slot->path), "%s", path);
     pthread_mutex_unlock(&q->mutex);
+    return was_empty;
 }
 
 static size_t sol_fw_queue_drain(SolFwQueue *q, const char *root_for_overflow,
@@ -113,6 +119,16 @@ struct SolFileWatcher {
     char       root[SOL_FILE_WATCH_PATH_MAX];
     bool       active;
 
+    /* Set once from the main thread before/while the watch is active;
+       read from the background watch thread on every push. A plain
+       (non-atomic) pointer/function-pointer pair is safe here in
+       practice — sol_file_watcher_set_wake_callback is documented to be
+       called before or right after set_root, not concurrently raced
+       against an in-flight callback — but callers should still avoid
+       calling it while a watch is actively delivering events. */
+    SolFileWatcherWakeFn wake_fn;
+    void                 *wake_user_data;
+
 #if defined(__APPLE__)
     void *fsevent_stream;    /* FSEventStreamRef, opaque here to keep this
                                  header CoreFoundation-free */
@@ -135,6 +151,18 @@ struct SolFileWatcher {
     void        *dir_handle;   /* HANDLE, void* to avoid windows.h in the header */
 #endif
 };
+
+/* Push one event and, if that woke the queue from empty, fire the
+   registered wake callback (if any) so an idle-blocked main loop can be
+   nudged. Called only from the background watch thread. */
+static void sol_fw_push_and_wake(SolFileWatcher *watcher,
+                                 SolFileWatchEventKind kind, const char *path)
+{
+    const bool became_non_empty = sol_fw_queue_push(&watcher->queue, kind, path);
+    if (became_non_empty && watcher->wake_fn) {
+        watcher->wake_fn(watcher->wake_user_data);
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* macOS backend — FSEvents                                            */
@@ -159,7 +187,7 @@ static void sol_fw_fsevents_callback(ConstFSEventStreamRef stream,
         if (f & (kFSEventStreamEventFlagItemRemoved)) kind = SOL_FILE_WATCH_REMOVED;
         else if (f & kFSEventStreamEventFlagItemCreated) kind = SOL_FILE_WATCH_CREATED;
         else if (f & kFSEventStreamEventFlagItemRenamed) kind = SOL_FILE_WATCH_RENAMED;
-        sol_fw_queue_push(&watcher->queue, kind, paths[i]);
+        sol_fw_push_and_wake(watcher, kind, paths[i]);
     }
 }
 
@@ -314,7 +342,7 @@ static void *sol_fw_linux_reader_thread(void *arg)
                 if ((ev->mask & IN_ISDIR) && (ev->mask & (IN_CREATE | IN_MOVED_TO))) {
                     sol_fw_watch_recursive(watcher, full);
                 }
-                sol_fw_queue_push(&watcher->queue, kind, full);
+                sol_fw_push_and_wake(watcher, kind, full);
             }
             off += (ssize_t)(sizeof(struct inotify_event) + ev->len);
         }
@@ -426,8 +454,8 @@ static void *sol_fw_win32_reader_thread(void *arg)
                 narrow_name[wn] = '\0';
                 char full[SOL_FILE_WATCH_PATH_MAX];
                 snprintf(full, sizeof(full), "%s\\%s", watcher->root, narrow_name);
-                sol_fw_queue_push(&watcher->queue,
-                                  sol_fw_kind_from_win32(info->Action), full);
+                sol_fw_push_and_wake(watcher,
+                                    sol_fw_kind_from_win32(info->Action), full);
             }
 
             if (info->NextEntryOffset == 0u) break;
@@ -516,6 +544,15 @@ void sol_file_watcher_destroy(SolFileWatcher *watcher)
     }
     sol_fw_queue_destroy(&watcher->queue);
     free(watcher);
+}
+
+void sol_file_watcher_set_wake_callback(SolFileWatcher *watcher,
+                                        SolFileWatcherWakeFn fn,
+                                        void *user_data)
+{
+    if (!watcher) return;
+    watcher->wake_fn = fn;
+    watcher->wake_user_data = user_data;
 }
 
 bool sol_file_watcher_set_root(SolFileWatcher *watcher, const char *path)

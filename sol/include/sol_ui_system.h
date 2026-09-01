@@ -178,6 +178,17 @@ void sol_ui_system_on_window_resize(SolUISystem *ui, int width, int height);
 /* File tree integration. Calling set_file_tree_root with a directory
  * path mounts the left-side hierarchy panel. Pass NULL to hide it. */
 bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path);
+
+/* Re-scan the currently mounted root to pick up external filesystem
+ * changes (created/removed/renamed entries), preserving which
+ * directories are expanded. Unlike sol_ui_system_set_file_tree_root,
+ * this does NOT publish SOL_EVENT_FILE_TREE_ROOT — it is meant for
+ * frequent callers (e.g. a filesystem watcher's per-frame drain) where
+ * republishing a "root changed" event on every call would cause
+ * subscribers that treat that event as "discard and rebuild everything"
+ * (e.g. the git plugin's full re-discovery) to run far more often than
+ * intended. No-op (returns false) when no root is currently mounted. */
+bool sol_ui_system_refresh_file_tree(SolUISystem *ui);
 void sol_ui_system_set_file_tree_visible(SolUISystem *ui, bool visible);
 bool sol_ui_system_file_tree_visible(const SolUISystem *ui);
 /* Select the built-in file tree as the current left-sidebar content. */

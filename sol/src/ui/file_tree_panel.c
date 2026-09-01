@@ -119,6 +119,20 @@ bool sol_ui_system_set_file_tree_root(SolUISystem *ui, const char *path)
 }
 
 /*
+ * Re-scan the currently mounted root without publishing a root-changed
+ * event. See the header doc comment for why this is distinct from
+ * sol_ui_system_set_file_tree_root.
+ *
+ * ui  The UI system whose file tree should be re-scanned.
+ * Returns true on success; false when unavailable or no root is mounted.
+ */
+bool sol_ui_system_refresh_file_tree(SolUISystem *ui)
+{
+    if (!ui || !ui->file_tree) return false;
+    return sol_file_tree_refresh(ui->file_tree);
+}
+
+/*
  * Register the callback invoked when a file is opened from the tree panel.
  *
  * ui         The UI system to configure.

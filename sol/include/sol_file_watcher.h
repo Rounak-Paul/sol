@@ -47,12 +47,32 @@ typedef struct SolFileWatchEvent {
 } SolFileWatchEvent;
 
 /*
+ * Callback invoked from the watcher's background thread the moment a new
+ * event is queued. Intended solely to wake an event-driven main loop
+ * that would otherwise sleep until the next OS input event (e.g. via
+ * ca_instance_wake) — it must be safe to call from any thread and must
+ * not block or touch UI/buffer state itself (that state is only safe to
+ * touch from the thread that later calls sol_file_watcher_poll).
+ */
+typedef void (*SolFileWatcherWakeFn)(void *user_data);
+
+/*
  * Create an inactive file watcher.
  *
  * No background thread is started until sol_file_watcher_set_root is
  * called. Returns NULL on allocation failure.
  */
 SolFileWatcher *sol_file_watcher_create(void);
+
+/*
+ * Register a callback fired from the background watch thread whenever a
+ * new event is queued, so the caller can wake an idle-blocked event
+ * loop. Pass NULL to clear. May be called before or after
+ * sol_file_watcher_set_root.
+ */
+void sol_file_watcher_set_wake_callback(SolFileWatcher *watcher,
+                                        SolFileWatcherWakeFn fn,
+                                        void *user_data);
 
 /*
  * Stop watching, join the background thread, and free all resources.
