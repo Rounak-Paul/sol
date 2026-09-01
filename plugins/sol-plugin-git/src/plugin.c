@@ -43,6 +43,8 @@ typedef enum GitUiAction {
     GIT_UI_CHECKOUT,
     GIT_UI_CREATE_BRANCH,
     GIT_UI_INIT,
+    GIT_UI_SELECT_REPOSITORY,
+    GIT_UI_SELECT_WORKSPACE_REPOSITORY,
 } GitUiAction;
 
 typedef struct GitPlugin GitPlugin;
@@ -446,7 +448,8 @@ static void git_task_worker(void *user_data)
 
     switch (task->kind) {
         case GIT_TASK_DISCOVER:
-            success = git_model_discover(task->workspace_root,
+            success = git_model_discover(task->argument[0] ? task->argument
+                                                           : task->workspace_root,
                                          task->snapshot.root,
                                          sizeof(task->snapshot.root),
                                          task->error, sizeof(task->error));
@@ -706,7 +709,19 @@ static void git_consume_task(GitPlugin *plugin)
     if (!stale_repository && task->exit_code == 0) {
         plugin->error[0] = '\0';
         switch (task->kind) {
-            case GIT_TASK_DISCOVER:
+            case GIT_TASK_DISCOVER: {
+                const bool repository_changed =
+                    strcmp(plugin->snapshot.root, task->snapshot.root) != 0;
+                plugin->snapshot = task->snapshot;
+                if (repository_changed) {
+                    memset(&plugin->history, 0, sizeof(plugin->history));
+                    memset(&plugin->branches, 0, sizeof(plugin->branches));
+                    plugin->commit_message[0] = '\0';
+                    plugin->new_branch[0] = '\0';
+                    plugin->pending_discard[0] = '\0';
+                }
+                break;
+            }
             case GIT_TASK_REFRESH:
             case GIT_TASK_STAGE:
             case GIT_TASK_UNSTAGE:
@@ -954,6 +969,16 @@ static void git_on_action(Ca_Button *button, void *user_data)
         case GIT_UI_INIT:
             (void)git_start_task(plugin, GIT_TASK_INIT, NULL, false);
             break;
+        case GIT_UI_SELECT_REPOSITORY: {
+            char path[GIT_PATH_CAP];
+            if (git_absolute_path(plugin, context->value, path, sizeof(path))) {
+                (void)git_start_task(plugin, GIT_TASK_DISCOVER, path, false);
+            }
+            break;
+        }
+        case GIT_UI_SELECT_WORKSPACE_REPOSITORY:
+            (void)git_start_task(plugin, GIT_TASK_DISCOVER, NULL, false);
+            break;
     }
 }
 
@@ -1176,9 +1201,14 @@ static void git_render_changes(GitPlugin *plugin)
                 state = "Modified content";
                 style = "scm-submodule-modified";
             }
-            ca_div_begin(&(Ca_DivDesc){
+            GitActionContext *context = git_action_context(
+                plugin, GIT_UI_SELECT_REPOSITORY, submodule->path, false);
+            ca_btn_begin(&(Ca_BtnDesc){
                 .direction = CA_HORIZONTAL,
                 .style = "scm-submodule-row",
+                .on_click = context ? git_on_action : NULL,
+                .click_data = context,
+                .disabled = plugin->task_running || !context,
             });
             ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_REPO, .style = style });
             ca_div_begin(&(Ca_DivDesc){
@@ -1192,7 +1222,11 @@ static void git_render_changes(GitPlugin *plugin)
                      state);
             ca_text(&(Ca_TextDesc){ .text = details, .style = style });
             ca_div_end();
-            ca_div_end();
+            ca_btn_end();
+            char tooltip[GIT_PATH_CAP + 64u];
+            snprintf(tooltip, sizeof(tooltip), "Use %s as the active repository",
+                     submodule->path);
+            ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
         }
         if (plugin->snapshot.omitted_submodule_count > 0u) {
             char omitted[96];
@@ -1478,6 +1512,14 @@ static void git_panel_render(void *user_data)
         .style = "scm-branch-heading",
     });
     ca_div_end();
+    ca_text(&(Ca_TextDesc){ .text = plugin->snapshot.root,
+                             .style = "scm-repository-path" });
+    ca_tooltip(&(Ca_TooltipDesc){ .text = plugin->snapshot.root });
+    if (strcmp(plugin->snapshot.root, plugin->workspace_root) != 0) {
+        git_render_button(plugin, "Workspace Repository",
+                          GIT_UI_SELECT_WORKSPACE_REPOSITORY, NULL, false,
+                          plugin->task_running, "scm-section-action");
+    }
     if (plugin->snapshot.upstream[0]) {
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-upstream-row" });
         ca_text(&(Ca_TextDesc){ .text = plugin->snapshot.upstream, .style = "scm-upstream" });

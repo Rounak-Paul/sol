@@ -192,6 +192,16 @@ static void test_refresh_submodules(void)
             }
         }
         CHECK(found_causality);
+        char submodule_path[GIT_PATH_CAP];
+        char submodule_root[GIT_PATH_CAP] = {0};
+        int written = snprintf(submodule_path, sizeof(submodule_path),
+                               "%s/vendors/causality", root);
+        CHECK(written > 0 && (size_t)written < sizeof(submodule_path));
+        if (written > 0 && (size_t)written < sizeof(submodule_path)) {
+            CHECK(git_model_discover(submodule_path, submodule_root,
+                                     sizeof(submodule_root), error, sizeof(error)));
+            CHECK(strcmp(submodule_root, submodule_path) == 0);
+        }
     }
     free(snapshot);
 }

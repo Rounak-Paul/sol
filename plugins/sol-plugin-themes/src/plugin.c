@@ -240,7 +240,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
 
     css_append(&css,
         ".scm-toolbar,.scm-repository,.scm-commit-box,.scm-section-header,.term-header{background:%s;}"
-        ".scm-file-row:hover,.scm-commit-row:hover,.scm-branch-row:hover{background:%s;}"
+        ".scm-file-row:hover,.scm-commit-row:hover,.scm-branch-row:hover,.scm-submodule-row:hover{background:%s;}"
         ".scm-commit-input,.scm-branch-input{background:%s;color:%s;}"
         ".scm-branch-row-current,.term-tab-active{background:%s;color:%s;}"
         ".term-cursor-focused{background:%s;}"

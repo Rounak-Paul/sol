@@ -33,3 +33,10 @@ Follow-up: the initial UI integration was hidden by `git_render_changes()`'
 clean-tree early return. A clean parent repository with registered submodules
 therefore rendered only `No changes`; the empty state must apply only when both
 the file-change and submodule lists are empty.
+
+Submodules are separate repositories, so a parent-repository action cannot
+fetch, pull, push, commit, or switch a submodule branch. Clicking a submodule
+now discovers it as the active repository; all existing source-control actions
+therefore run at that submodule root. When selected, the panel shows the active
+repository path and offers a Workspace Repository control to return to the
+parent repository.
