@@ -864,6 +864,93 @@ static void git_render_icon_button(GitPlugin *plugin,
     if (tooltip) ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
 }
 
+/* Render a consistently sized repository-level remote action. */
+static void git_render_remote_action(GitPlugin *plugin,
+                                     const char *icon,
+                                     const char *tooltip,
+                                     GitUiAction action,
+                                     bool disabled,
+                                     bool ready)
+{
+    const bool pull_ready = ready && action == GIT_UI_PULL;
+    const bool push_ready = ready && action == GIT_UI_PUSH;
+    const char *button_style = pull_ready
+        ? "scm-remote-action scm-remote-action-pull-ready"
+        : (push_ready ? "scm-remote-action scm-remote-action-push-ready"
+                      : "scm-remote-action");
+    const char *icon_style = pull_ready
+        ? "scm-remote-action-icon scm-remote-action-icon-pull-ready"
+        : (push_ready ? "scm-remote-action-icon scm-remote-action-icon-push-ready"
+                      : "scm-remote-action-icon");
+    GitActionContext *context = git_action_context(plugin, action, NULL, false);
+    ca_btn_begin(&(Ca_BtnDesc){
+        .direction = CA_HORIZONTAL,
+        .width = 30.0f,
+        .height = 26.0f,
+        .on_click = context ? git_on_action : NULL,
+        .click_data = context,
+        .style = button_style,
+        .disabled = disabled || !context,
+    });
+    ca_text(&(Ca_TextDesc){ .text = icon, .style = icon_style });
+    ca_btn_end();
+    if (tooltip) ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
+}
+
+/* Return true when the current snapshot contains an unmerged file. */
+static bool git_snapshot_has_conflicts(const GitSnapshot *snapshot)
+{
+    if (!snapshot) return false;
+    for (size_t i = 0u; i < snapshot->file_count; ++i) {
+        if (snapshot->files[i].kind == GIT_FILE_UNMERGED) return true;
+    }
+    return false;
+}
+
+/* Render the persistent repository-state indicator in the panel header. */
+static void git_render_header_status(const GitPlugin *plugin)
+{
+    const char *icon = CA_ICON_NF_COD_CHECK;
+    const char *style = "scm-repository-status-icon scm-repository-status-clean";
+    char tooltip[160];
+    snprintf(tooltip, sizeof(tooltip), "Working tree clean");
+
+    if (!plugin || !plugin->snapshot.repository) {
+        icon = CA_ICON_NF_COD_SOURCE_CONTROL;
+        style = "scm-repository-status-icon scm-repository-status-muted";
+        snprintf(tooltip, sizeof(tooltip), "No repository open");
+    } else if (plugin->task_running) {
+        icon = CA_ICON_NF_COD_SYNC;
+        style = "scm-repository-status-icon scm-repository-status-busy";
+        snprintf(tooltip, sizeof(tooltip), "%s",
+                 plugin->activity[0] ? plugin->activity : "Git operation in progress");
+    } else if (plugin->error[0]) {
+        icon = CA_ICON_NF_COD_ERROR;
+        style = "scm-repository-status-icon scm-repository-status-error";
+        snprintf(tooltip, sizeof(tooltip), "%s", plugin->error);
+    } else if (git_snapshot_has_conflicts(&plugin->snapshot)) {
+        icon = CA_ICON_NF_COD_WARNING;
+        style = "scm-repository-status-icon scm-repository-status-error";
+        snprintf(tooltip, sizeof(tooltip), "Repository has merge conflicts");
+    } else if (plugin->snapshot.file_count > 0u) {
+        icon = CA_ICON_NF_COD_EDIT;
+        style = "scm-repository-status-icon scm-repository-status-changed";
+        snprintf(tooltip, sizeof(tooltip), "%zu staged, %zu unstaged, %zu untracked",
+                 plugin->snapshot.staged_count, plugin->snapshot.unstaged_count,
+                 plugin->snapshot.untracked_count);
+    } else if (plugin->snapshot.ahead > 0 || plugin->snapshot.behind > 0) {
+        icon = CA_ICON_NF_COD_SYNC;
+        style = "scm-repository-status-icon scm-repository-status-sync";
+        snprintf(tooltip, sizeof(tooltip), "%d incoming, %d outgoing commits",
+                 plugin->snapshot.behind, plugin->snapshot.ahead);
+    }
+
+    ca_div_begin(&(Ca_DivDesc){ .style = "scm-repository-status" });
+    ca_text(&(Ca_TextDesc){ .text = icon, .style = style });
+    ca_div_end();
+    ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
+}
+
 /* Dispatch all source-control panel click actions. */
 static void git_on_action(Ca_Button *button, void *user_data)
 {
@@ -1054,6 +1141,10 @@ static void git_render_file_row(GitPlugin *plugin,
         ca_tooltip(&(Ca_TooltipDesc){ .text = full_path });
     }
 
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .style = "scm-file-actions",
+    });
     git_render_icon_button(plugin, CA_ICON_NF_COD_GO_TO_FILE, "Open File",
                            GIT_UI_OPEN, file->path, false,
                            false, "scm-icon-action");
@@ -1072,6 +1163,7 @@ static void git_render_file_row(GitPlugin *plugin,
                                file->kind == GIT_FILE_UNTRACKED,
                                row_disabled, "scm-icon-action scm-icon-danger");
     }
+    ca_div_end();
 
     ca_btn_end();   /* scm-file-row */
 }
@@ -1278,9 +1370,13 @@ static unsigned git_graph_lane_span(const GitHistory *history)
  * simply paints on top, centered in its lane column. */
 static void git_render_graph_gutter(const GitCommitEntry *entry,
                                     unsigned lane_span,
-                                    float row_height)
+                                    float row_height,
+                                    float ui_scale)
 {
-    const float gutter_w = (float)lane_span * GIT_GRAPH_LANE_W;
+    const float lane_width = GIT_GRAPH_LANE_W * ui_scale;
+    const float line_width = GIT_GRAPH_LINE_W * ui_scale;
+    const float dot_size = GIT_GRAPH_DOT_SIZE * ui_scale;
+    const float gutter_w = (float)lane_span * lane_width;
     ca_div_begin(&(Ca_DivDesc){
         .width = gutter_w,
         .height = row_height,
@@ -1288,12 +1384,12 @@ static void git_render_graph_gutter(const GitCommitEntry *entry,
     });
     for (unsigned lane = 0u; lane < lane_span; ++lane) {
         if (!(entry->through_lanes & (1u << lane))) continue;
-        const float center_x = ((float)lane + 0.5f) * GIT_GRAPH_LANE_W;
+        const float center_x = ((float)lane + 0.5f) * lane_width;
         ca_div_begin(&(Ca_DivDesc){
             .position = CA_POSITION_ABSOLUTE,
-            .pos_x = center_x - GIT_GRAPH_LINE_W * 0.5f,
+            .pos_x = center_x - line_width * 0.5f,
             .pos_y = 0.0f,
-            .width = GIT_GRAPH_LINE_W,
+            .width = line_width,
             .height = row_height,
             .style = (int)lane == entry->lane
                 ? "scm-graph-line scm-graph-line-active" : "scm-graph-line",
@@ -1304,8 +1400,8 @@ static void git_render_graph_gutter(const GitCommitEntry *entry,
         const int parent_lane = entry->parent_lanes[parent];
         if (parent_lane < 0 || (unsigned)parent_lane >= lane_span ||
             entry->lane < 0 || (unsigned)entry->lane >= lane_span) continue;
-        const float from_x = ((float)entry->lane + 0.5f) * GIT_GRAPH_LANE_W;
-        const float to_x = ((float)parent_lane + 0.5f) * GIT_GRAPH_LANE_W;
+        const float from_x = ((float)entry->lane + 0.5f) * lane_width;
+        const float to_x = ((float)parent_lane + 0.5f) * lane_width;
         const float from_y = row_height * 0.5f;
         const float to_y = row_height;
         const float dx = to_x - from_x;
@@ -1315,9 +1411,9 @@ static void git_render_graph_gutter(const GitCommitEntry *entry,
         Ca_Div *connector = ca_div_begin(&(Ca_DivDesc){
             .position = CA_POSITION_ABSOLUTE,
             .pos_x = (from_x + to_x - length) * 0.5f,
-            .pos_y = (from_y + to_y - GIT_GRAPH_LINE_W) * 0.5f,
+            .pos_y = (from_y + to_y - line_width) * 0.5f,
             .width = length,
-            .height = GIT_GRAPH_LINE_W,
+            .height = line_width,
             .style = "scm-graph-connector",
         });
         ca_div_set_transform(connector, atan2f(dy, dx) * 57.2957795f,
@@ -1325,14 +1421,14 @@ static void git_render_graph_gutter(const GitCommitEntry *entry,
         ca_div_end();
     }
     if ((unsigned)entry->lane < lane_span) {
-        const float center_x = ((float)entry->lane + 0.5f) * GIT_GRAPH_LANE_W;
+        const float center_x = ((float)entry->lane + 0.5f) * lane_width;
         ca_div_begin(&(Ca_DivDesc){
             .position = CA_POSITION_ABSOLUTE,
-            .pos_x = center_x - GIT_GRAPH_DOT_SIZE * 0.5f,
-            .pos_y = (row_height - GIT_GRAPH_DOT_SIZE) * 0.5f,
-            .width = GIT_GRAPH_DOT_SIZE,
-            .height = GIT_GRAPH_DOT_SIZE,
-            .corner_radius = GIT_GRAPH_DOT_SIZE * 0.5f,
+            .pos_x = center_x - dot_size * 0.5f,
+            .pos_y = (row_height - dot_size) * 0.5f,
+            .width = dot_size,
+            .height = dot_size,
+            .corner_radius = dot_size * 0.5f,
             .style = entry->parent_count > 1u
                 ? "scm-graph-dot scm-graph-dot-merge" : "scm-graph-dot",
         });
@@ -1354,7 +1450,9 @@ static void git_render_history(GitPlugin *plugin)
         return;
     }
     const unsigned lane_span = git_graph_lane_span(&plugin->history);
-    const float row_height = 46.0f;
+    const float ui_scale = sol_ui_system_scale(sol_plugin_ui(plugin->ctx));
+    const float scale = ui_scale > 0.0f ? ui_scale : 1.0f;
+    const float row_height = 46.0f * scale;
     for (size_t i = 0u; i < plugin->history.count; ++i) {
         const GitCommitEntry *entry = &plugin->history.commits[i];
         GitActionContext *context = git_action_context(
@@ -1366,7 +1464,7 @@ static void git_render_history(GitPlugin *plugin)
             .style = "scm-commit-row",
             .disabled = plugin->task_running || !context,
         });
-        git_render_graph_gutter(entry, lane_span, row_height);
+        git_render_graph_gutter(entry, lane_span, row_height, scale);
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style = "scm-commit-info",
@@ -1447,27 +1545,10 @@ static void git_panel_render(void *user_data)
     });
     ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_SOURCE_CONTROL, .style = "scm-title-icon" });
     ca_text(&(Ca_TextDesc){ .text = "Source Control", .style = "scm-title" });
-    /* Fixed-size slot, always present, never toggled with `hidden` —
-     * only its glyph/color/tooltip change with task_running. This is
-     * what keeps busy/idle transitions from ever reflowing the rest of
-     * the panel (a conditionally-rendered banner used to do that). */
-    ca_div_begin(&(Ca_DivDesc){
-        .style = plugin->task_running ? "scm-busy-slot scm-busy-slot-active" : "scm-busy-slot",
-    });
-    if (plugin->task_running) {
-        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_SYNC, .style = "scm-busy-icon" });
-    }
-    ca_div_end();
-    if (plugin->task_running && plugin->activity[0]) {
-        ca_tooltip(&(Ca_TooltipDesc){ .text = plugin->activity });
-    }
-    git_render_icon_button(plugin, CA_ICON_NF_FA_REFRESH, "Refresh",
-                           GIT_UI_REFRESH, NULL, false,
-                           plugin->task_running || !plugin->snapshot.repository,
-                           "scm-header-icon-action");
+    git_render_header_status(plugin);
     git_render_icon_button(plugin, CA_ICON_NF_COD_CLOSE, "Close",
                            GIT_UI_CLOSE, NULL, false, false,
-                           "scm-header-icon-action");
+                           "scm-header-close-action");
     ca_div_end();
 
     if (plugin->error[0]) {
@@ -1545,17 +1626,32 @@ static void git_panel_render(void *user_data)
         .direction = CA_HORIZONTAL,
         .style = "scm-remote-actions",
     });
-    git_render_icon_button(plugin, CA_ICON_NF_COD_GIT_FETCH, "Fetch",
-                           GIT_UI_FETCH, NULL, false,
-                           plugin->task_running, "scm-action-icon");
-    git_render_icon_button(plugin, CA_ICON_NF_COD_CLOUD_DOWNLOAD, "Pull",
-                           GIT_UI_PULL, NULL, false,
-                           plugin->task_running || !plugin->snapshot.upstream[0],
-                           "scm-action-icon");
-    git_render_icon_button(plugin, CA_ICON_NF_COD_CLOUD_UPLOAD, "Push",
-                           GIT_UI_PUSH, NULL, false,
-                           plugin->task_running || plugin->snapshot.detached,
-                           "scm-action-icon");
+    char pull_tooltip[64];
+    char push_tooltip[64];
+    const bool pull_ready = plugin->snapshot.behind > 0;
+    const bool push_ready = plugin->snapshot.ahead > 0;
+    snprintf(pull_tooltip, sizeof(pull_tooltip), pull_ready
+                 ? "Pull %d incoming commit%s"
+                 : "Pull from remote",
+             plugin->snapshot.behind,
+             plugin->snapshot.behind == 1 ? "" : "s");
+    snprintf(push_tooltip, sizeof(push_tooltip), push_ready
+                 ? "Push %d outgoing commit%s"
+                 : "Push to remote",
+             plugin->snapshot.ahead,
+             plugin->snapshot.ahead == 1 ? "" : "s");
+    git_render_remote_action(plugin, CA_ICON_NF_COD_GIT_FETCH, "Fetch from remote",
+                             GIT_UI_FETCH, plugin->task_running, false);
+    git_render_remote_action(plugin, CA_ICON_NF_COD_CLOUD_DOWNLOAD, pull_tooltip,
+                             GIT_UI_PULL,
+                             plugin->task_running || !plugin->snapshot.upstream[0],
+                             pull_ready);
+    git_render_remote_action(plugin, CA_ICON_NF_COD_CLOUD_UPLOAD, push_tooltip,
+                             GIT_UI_PUSH,
+                             plugin->task_running || plugin->snapshot.detached,
+                             push_ready);
+    git_render_remote_action(plugin, CA_ICON_NF_FA_REFRESH, "Refresh repository",
+                             GIT_UI_REFRESH, plugin->task_running, false);
     ca_div_end();
 
     /* Tabs share the row width evenly (flex-grow, centered) instead of a

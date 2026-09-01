@@ -577,6 +577,14 @@ static void test_service_limit(SolTestCtx *T)
 
 static SolPluginCtx *g_buf_ctx = NULL;
 static bool buf_plugin_load(SolPluginCtx *ctx) { g_buf_ctx = ctx; return true; }
+static int g_custom_buffer_destroyed = 0;
+
+/* Count custom-buffer destruction to verify plugin teardown owns callbacks. */
+static void custom_buffer_destroy(void *state)
+{
+    free(state);
+    ++g_custom_buffer_destroyed;
+}
 
 static void test_buf_open_scratch(SolTestCtx *T)
 {
@@ -684,6 +692,35 @@ static void test_buf_focus_active(SolTestCtx *T)
                   "active buffer did not match focused id");
 
     free_env(&e);
+    g_buf_ctx = NULL;
+}
+
+static void test_buf_custom_closed_on_plugin_unload(SolTestCtx *T)
+{
+    g_buf_ctx = NULL;
+    g_custom_buffer_destroyed = 0;
+    TestEnv e = make_env();
+    SolPluginAPI api = {
+        .api_version = SOL_PLUGIN_API_VERSION,
+        .id          = "test.custom-buffer",
+        .on_load     = buf_plugin_load,
+    };
+    SOL_CHECK(T, sol_plugin_manager_register_static(e.pm, &api));
+
+    void *state = calloc(1u, 1u);
+    SOL_CHECK_NOT_NULL(T, state);
+    SolBufferId id = sol_plugin_open_custom(
+        g_buf_ctx, "custom", state,
+        (SolBufferOps){ .destroy = custom_buffer_destroy });
+    SOL_CHECK_MSG(T, id != 0u, "open_custom returned 0");
+    SOL_CHECK_NOT_NULL(T, sol_buffer_get(sol_plugin_buffers(g_buf_ctx), id));
+
+    SOL_CHECK(T, sol_plugin_manager_unload(e.pm, "test.custom-buffer"));
+    SOL_CHECK_EQ_INT(T, g_custom_buffer_destroyed, 1);
+    SOL_CHECK_NULL(T, sol_buffer_get(sol_system_buffers(e.sys), id));
+
+    free_env(&e);
+    SOL_CHECK_EQ_INT(T, g_custom_buffer_destroyed, 1);
     g_buf_ctx = NULL;
 }
 
@@ -1171,6 +1208,7 @@ int main(void)
     SOL_RUN(suites[si], test_buf_delete);
     SOL_RUN(suites[si], test_buf_cursor);
     SOL_RUN(suites[si], test_buf_focus_active);
+    SOL_RUN(suites[si], test_buf_custom_closed_on_plugin_unload);
     SOL_RUN(suites[si], test_buf_null_safety);
     sol_suite_report(&suites[si++]);
 

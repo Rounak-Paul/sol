@@ -40,3 +40,27 @@ now discovers it as the active repository; all existing source-control actions
 therefore run at that submodule root. When selected, the panel shows the active
 repository path and offers a Workspace Repository control to return to the
 parent repository.
+
+The Git row Open File action uses `sol_plugin_open_file()`. That shared API was
+loading disk content but registered a NULL render callback, causing all files
+opened by plugins to appear blank. It now uses the standard `sol_text_view_render`
+callback, matching the main application's file-open path.
+
+Changed-file rows reserve a fixed 56px right action rail. The filename column
+is explicitly shrinkable and clipped, so long paths cannot move the open,
+stage/unstage, or discard buttons off-screen.
+
+Remote operations are repository-level actions. Fetch, Pull, and Push use
+three equal-sized icon controls with tooltips, aligned as a compact toolbar.
+Causality scales stylesheet dimensions and text with the UI scale; the History
+graph was the Git-panel exception because it uses inline geometry, so its row,
+lane, line, and dot measurements now apply the current UI scale explicitly.
+## 2026-09-02 — custom Git buffers and Git action strip
+
+- Git Diff output uses `git_view_open()` with plugin-owned render/destroy callbacks. System teardown unloads plugins before the buffer system, so those callbacks could point into an unloaded Git module when a Diff buffer remained open. `SolPluginCtx` now tracks custom-buffer ids and closes them during plugin cleanup, before `dlclose`.
+- `sol_plugin_open_custom()` closes the newly-created buffer and returns failure if tracking allocation fails, so no untracked callback-bearing buffer can escape.
+- `test_buf_custom_closed_on_plugin_unload` checks that plugin unloading closes the custom buffer and invokes destruction exactly once; later system teardown does not invoke it again.
+- Git Diff line styles now match normal editor `SOL_UI_BOOT_FONT_SIZE_PX_CSS` and 20px line height, allowing the existing Causality CSS scale to apply identically.
+- Remote Fetch/Pull/Push/Refresh controls are four equal 30x26 logical-pixel icon actions, right-aligned as a compact toolbar with tooltips. Pull is warning-colored for incoming commits; Push is success-colored for outgoing commits. The header reserves its former Refresh space for a persistent status icon that reports running work, errors, conflicts, worktree changes, sync state, or a clean tree.
+- The status slot is 20x20 logical pixels with a 12px glyph so scaled theme icons cannot be clipped. Local changes use the compact Edit glyph rather than the taller Diff Modified glyph.
+- The header Close action has its own 20x20 logical-pixel control box; file-row actions retain their denser 16px geometry.

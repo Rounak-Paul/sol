@@ -6,6 +6,7 @@
  */
 
 #include "sol_ui_internal.h"
+#include "sol_text_view.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +15,15 @@ void sol_ui_bump_u32(Ca_Signal *sig)
 {
     if (!sig) return;
     ca_signal_set_u32(sig, ca_signal_get_u32(sig) + 1u);
+}
+
+void sol_text_view_render(const SolBuffer *buffer,
+                          const SolBufferRenderArgs *args,
+                          void *state)
+{
+    (void)buffer;
+    (void)args;
+    (void)state;
 }
 
 /* workspace.c owns the real version; tests don't exercise plugin

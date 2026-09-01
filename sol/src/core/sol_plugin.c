@@ -29,6 +29,7 @@
 #include "sol_system_manager.h"
 #include "sol_threading.h"
 #include "sol_text_buffer.h"
+#include "sol_text_view.h"
 #include "sol_ui_system.h"
 
 #include <stdarg.h>
@@ -100,6 +101,12 @@ struct SolPluginCtx {
     /* Tracked CSS theme ids — auto-unregistered before library unload. */
     char theme_ids[SOL_PLUGIN_CTX_MAX_THEMES][SOL_THEME_ID_MAX + 1u];
     size_t theme_count;
+
+    /* Custom buffers retain plugin callback pointers.  They must be closed
+     * before the plugin library is unloaded. */
+    SolBufferId *custom_buffer_ids;
+    size_t       custom_buffer_count;
+    size_t       custom_buffer_capacity;
 };
 
 /* ================================================================== */
@@ -217,6 +224,23 @@ static SolPluginCtx *plugin_ctx_alloc(SolPluginManager *manager,
     return ctx;
 }
 
+/* Record a custom buffer so its callbacks remain valid through teardown. */
+static bool plugin_ctx_track_custom_buffer(SolPluginCtx *ctx, SolBufferId id)
+{
+    if (!ctx || !id) return false;
+    if (ctx->custom_buffer_count == ctx->custom_buffer_capacity) {
+        size_t capacity = ctx->custom_buffer_capacity
+            ? ctx->custom_buffer_capacity * 2u : 4u;
+        SolBufferId *ids = (SolBufferId *)realloc(
+            ctx->custom_buffer_ids, capacity * sizeof(*ids));
+        if (!ids) return false;
+        ctx->custom_buffer_ids = ids;
+        ctx->custom_buffer_capacity = capacity;
+    }
+    ctx->custom_buffer_ids[ctx->custom_buffer_count++] = id;
+    return true;
+}
+
 /* Release all tracked resources, then free the ctx. */
 static void plugin_ctx_cleanup(SolPluginCtx *ctx)
 {
@@ -266,6 +290,16 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
         if (bs)  sol_text_buffer_invalidate_language(bs, ctx->language_ptrs[i]);
         if (reg) sol_syntax_registry_unregister(reg, ctx->id);
     }
+
+    /* The buffer system is destroyed after the plugin manager.  Close every
+     * plugin-owned custom buffer here, while its render and destroy callbacks
+     * still point into a loaded library.  Buffer ids are monotonic, so an
+     * already-closed id cannot target an unrelated buffer. */
+    if (bs) {
+        for (size_t i = 0u; i < ctx->custom_buffer_count; ++i)
+            (void)sol_buffer_close(bs, ctx->custom_buffer_ids[i]);
+    }
+    free(ctx->custom_buffer_ids);
 
     free(ctx->id);
     free(ctx->display_name);
@@ -1475,7 +1509,7 @@ SolBufferId sol_plugin_open_file(SolPluginCtx *ctx, const char *path)
     const SolBufferId existing = sol_text_buffer_find_by_path(bs, path);
     if (existing) return existing;
     const char *err = NULL;
-    return sol_text_buffer_open_file(bs, path, NULL, NULL, &err);
+    return sol_text_buffer_open_file(bs, path, NULL, sol_text_view_render, &err);
 }
 
 SolBufferId sol_plugin_open_scratch(SolPluginCtx *ctx,
@@ -1500,12 +1534,17 @@ SolBufferId sol_plugin_open_custom(SolPluginCtx *ctx,
     if (!ctx) return 0u;
     SolBufferSystem *bs = sol_system_buffers(ctx->manager->systems);
     if (!bs) return 0u;
-    return sol_buffer_create(bs, &(SolBufferDesc){
+    const SolBufferId id = sol_buffer_create(bs, &(SolBufferDesc){
         .name  = name ? name : "plugin-buffer",
         .kind  = SOL_BUFFER_KIND_PLUGIN,
         .state = state,
         .ops   = ops,
     });
+    if (id && !plugin_ctx_track_custom_buffer(ctx, id)) {
+        (void)sol_buffer_close(bs, id);
+        return 0u;
+    }
+    return id;
 }
 
 bool sol_plugin_focus_buffer(SolPluginCtx *ctx, SolBufferId id)

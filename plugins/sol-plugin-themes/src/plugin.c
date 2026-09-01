@@ -270,7 +270,10 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".scm-danger-action:hover,.scm-icon-danger:hover{background:%s;color:%s;}"
         ".scm-tab:hover{background:%s;color:%s;}"
         ".scm-tab-active{color:%s;}"
-        ".scm-busy-icon,.scm-activity-icon{color:%s;}"
+        ".scm-repository-status-busy,.scm-repository-status-sync,.scm-activity-icon{color:%s;}"
+        ".scm-repository-status-clean{color:%s;}"
+        ".scm-repository-status-changed{color:%s;}"
+        ".scm-repository-status-error{color:%s;}"
         ".scm-status-added,.scm-sync-ahead{color:%s;}"
         ".scm-status-modified,.scm-sync-behind{color:%s;}"
         ".scm-status-deleted,.scm-error-icon,.scm-error-text{color:%s;}"
@@ -290,10 +293,13 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         /* 14 */ theme->success,
         /* 15 */ theme->warning,
         /* 16 */ theme->danger,
-        /* 17 */ theme->accent, /* 18 */ theme->danger,
-        /* 19 */ theme->primary,
-        /* 20 */ theme->primary,
-        /* 21 */ theme->accent);
+        /* 17 */ theme->success,
+        /* 18 */ theme->warning,
+        /* 19 */ theme->danger,
+        /* 20 */ theme->accent, /* 21 */ theme->danger,
+        /* 22 */ theme->primary,
+        /* 23 */ theme->primary,
+        /* 24 */ theme->accent);
     css_append(&css,
         ".scm-graph-connector{background:%s;}"
         ".scm-submodule-clean{color:%s;}"
@@ -302,6 +308,16 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".scm-submodule-conflict{color:%s;}",
         theme->primary, theme->muted, theme->warning, theme->warning,
         theme->danger);
+    css_append(&css,
+        ".scm-remote-action{color:%s;}"
+        ".scm-remote-action:hover{background:%s;color:%s;}"
+        ".scm-remote-action-icon{color:%s;}"
+        ".scm-remote-action-pull-ready{background:%s;}"
+        ".scm-remote-action-push-ready{background:%s;}"
+        ".scm-remote-action-icon-pull-ready{color:%s;}"
+        ".scm-remote-action-icon-push-ready{color:%s;}",
+        theme->muted, hover, theme->text, theme->primary, hover, hover,
+        theme->warning, theme->success);
     return css.valid && css.length > 0u;
 }
 
