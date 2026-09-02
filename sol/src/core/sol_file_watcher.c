@@ -258,7 +258,9 @@ static void sol_fw_platform_stop(SolFileWatcher *watcher)
 #if defined(__linux__)
 
 #include <errno.h>
+#include <limits.h>
 #include <sys/inotify.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define SOL_FW_INOTIFY_MASK \
@@ -291,9 +293,26 @@ static const char *sol_fw_path_for_wd(SolFileWatcher *watcher, int wd)
 
 /* Recursively add an inotify watch for dir_path and every subdirectory
    beneath it. inotify has no native recursive mode, so each directory
-   needs its own watch descriptor. */
+   needs its own watch descriptor.
+
+   Uses lstat (not the entry iterator's stat-following is_directory) to
+   skip symlinked directories: neither FSEvents nor ReadDirectoryChangesW
+   follows symlinks into a tree, and doing so here has no cycle detection
+   — a self- or mutually-referential symlink (common in node_modules,
+   build output, etc.) would otherwise recurse until inotify's per-user
+   watch limit is exhausted, or effectively forever on a deep enough
+   cycle.
+
+   Checks stop_reader between entries so a watcher torn down mid-descent
+   (e.g. rapidly switching the explorer root) unwinds promptly instead of
+   finishing an entire stale tree walk on the way out. */
 static void sol_fw_watch_recursive(SolFileWatcher *watcher, const char *dir_path)
 {
+    if (atomic_load_explicit(&watcher->stop_reader, memory_order_relaxed)) return;
+
+    struct stat st;
+    if (lstat(dir_path, &st) != 0 || S_ISLNK(st.st_mode)) return;
+
     int wd = inotify_add_watch(watcher->inotify_fd, dir_path, SOL_FW_INOTIFY_MASK);
     if (wd < 0) return;
     if (!sol_fw_add_watch_entry(watcher, wd, dir_path)) {
@@ -304,7 +323,28 @@ static void sol_fw_watch_recursive(SolFileWatcher *watcher, const char *dir_path
     SolDirectoryIter iter;
     if (!sol_platform_dir_open(&iter, dir_path)) return;
     SolDirectoryEntry entry;
-    while (sol_platform_dir_next(&iter, &entry)) {
+    while (!atomic_load_explicit(&watcher->stop_reader, memory_order_relaxed) &&
+           sol_platform_dir_next(&iter, &entry)) {
+        if (!entry.is_directory) continue;
+        char *child = sol_platform_path_join(dir_path, entry.name);
+        if (!child) continue;
+        sol_fw_watch_recursive(watcher, child);
+        free(child);
+    }
+    sol_platform_dir_close(&iter);
+}
+
+/* Recurse into every subdirectory of dir_path, adding a watch for each,
+   without re-watching dir_path itself (already watched by the caller).
+   Used for the deferred initial descent from the watch root — see
+   sol_fw_linux_reader_thread. */
+static void sol_fw_watch_children(SolFileWatcher *watcher, const char *dir_path)
+{
+    SolDirectoryIter iter;
+    if (!sol_platform_dir_open(&iter, dir_path)) return;
+    SolDirectoryEntry entry;
+    while (!atomic_load_explicit(&watcher->stop_reader, memory_order_relaxed) &&
+           sol_platform_dir_next(&iter, &entry)) {
         if (!entry.is_directory) continue;
         char *child = sol_platform_path_join(dir_path, entry.name);
         if (!child) continue;
@@ -318,6 +358,19 @@ static void *sol_fw_linux_reader_thread(void *arg)
 {
     SolFileWatcher *watcher = (SolFileWatcher *)arg;
     atomic_store_explicit(&watcher->reader_running, true, memory_order_release);
+
+    /* The recursive descent that establishes per-subdirectory watches
+       happens here, on the background thread, rather than in
+       sol_fw_platform_start on the caller's thread — a large tree (deep
+       node_modules, monorepo checkouts, etc.) can mean thousands of
+       inotify_add_watch + readdir syscalls, which would otherwise
+       freeze the caller (typically the UI thread, via
+       sol_file_watcher_set_root) for the entire walk. The root watch
+       itself is already established synchronously in
+       sol_fw_platform_start before this thread is spawned, so events
+       under the root are never missed — only the deeper subdirectory
+       watches lag slightly behind set_root returning. */
+    sol_fw_watch_children(watcher, watcher->root);
 
     char buf[64 * (sizeof(struct inotify_event) + NAME_MAX + 1)];
     while (!atomic_load_explicit(&watcher->stop_reader, memory_order_relaxed)) {
@@ -357,8 +410,15 @@ static bool sol_fw_platform_start(SolFileWatcher *watcher)
     watcher->inotify_fd = inotify_init1(0);
     if (watcher->inotify_fd < 0) return false;
 
-    sol_fw_watch_recursive(watcher, watcher->root);
-    if (watcher->watch_count == 0u) {
+    /* Only the root watch is established synchronously here, so a bad
+       root (permission denied, watch-limit exhaustion) still fails
+       set_root immediately as documented. The recursive descent into
+       subdirectories runs on the reader thread instead (see its top) —
+       for a large tree it can mean thousands of syscalls, which must
+       not block the caller (typically the UI thread). */
+    int root_wd = inotify_add_watch(watcher->inotify_fd, watcher->root, SOL_FW_INOTIFY_MASK);
+    if (root_wd < 0 || !sol_fw_add_watch_entry(watcher, root_wd, watcher->root)) {
+        if (root_wd >= 0) inotify_rm_watch(watcher->inotify_fd, root_wd);
         close(watcher->inotify_fd);
         watcher->inotify_fd = -1;
         return false;
