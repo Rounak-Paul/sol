@@ -135,6 +135,14 @@ struct SolFileWatcher {
     void *dispatch_queue;    /* dispatch_queue_t the stream delivers on */
 #elif defined(__linux__)
     int          inotify_fd;
+    /* Self-pipe used to reliably wake the reader thread out of poll().
+       Closing inotify_fd from another thread does NOT interrupt a
+       concurrent blocking read()/poll() on it on Linux — the reader
+       already holds its own kernel reference from syscall entry, so it
+       just keeps waiting for a real event that never arrives. Writing a
+       byte to wake_fd[1] is the portable way to force an immediate,
+       guaranteed wakeup. wake_fd[0]/[1] are -1 when not initialized. */
+    int          wake_fd[2];
     pthread_t    reader_thread;
     atomic_bool  stop_reader;
     atomic_bool  reader_running;
@@ -259,6 +267,7 @@ static void sol_fw_platform_stop(SolFileWatcher *watcher)
 
 #include <errno.h>
 #include <limits.h>
+#include <poll.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -374,6 +383,20 @@ static void *sol_fw_linux_reader_thread(void *arg)
 
     char buf[64 * (sizeof(struct inotify_event) + NAME_MAX + 1)];
     while (!atomic_load_explicit(&watcher->stop_reader, memory_order_relaxed)) {
+        struct pollfd fds[2];
+        fds[0].fd = watcher->inotify_fd; fds[0].events = POLLIN; fds[0].revents = 0;
+        fds[1].fd = watcher->wake_fd[0]; fds[1].events = POLLIN; fds[1].revents = 0;
+
+        int pr = poll(fds, 2, -1);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        /* Woken by stop() writing to the self-pipe — exit without touching
+           inotify_fd, which the caller may be about to close. */
+        if (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) break;
+        if (!(fds[0].revents & POLLIN)) continue;
+
         ssize_t n = read(watcher->inotify_fd, buf, sizeof(buf));
         if (n <= 0) {
             if (errno == EINTR) continue;
@@ -410,6 +433,13 @@ static bool sol_fw_platform_start(SolFileWatcher *watcher)
     watcher->inotify_fd = inotify_init1(0);
     if (watcher->inotify_fd < 0) return false;
 
+    watcher->wake_fd[0] = watcher->wake_fd[1] = -1;
+    if (pipe(watcher->wake_fd) != 0) {
+        close(watcher->inotify_fd);
+        watcher->inotify_fd = -1;
+        return false;
+    }
+
     /* Only the root watch is established synchronously here, so a bad
        root (permission denied, watch-limit exhaustion) still fails
        set_root immediately as documented. The recursive descent into
@@ -421,6 +451,9 @@ static bool sol_fw_platform_start(SolFileWatcher *watcher)
         if (root_wd >= 0) inotify_rm_watch(watcher->inotify_fd, root_wd);
         close(watcher->inotify_fd);
         watcher->inotify_fd = -1;
+        close(watcher->wake_fd[0]);
+        close(watcher->wake_fd[1]);
+        watcher->wake_fd[0] = watcher->wake_fd[1] = -1;
         return false;
     }
 
@@ -429,6 +462,9 @@ static bool sol_fw_platform_start(SolFileWatcher *watcher)
                        sol_fw_linux_reader_thread, watcher) != 0) {
         close(watcher->inotify_fd);
         watcher->inotify_fd = -1;
+        close(watcher->wake_fd[0]);
+        close(watcher->wake_fd[1]);
+        watcher->wake_fd[0] = watcher->wake_fd[1] = -1;
         return false;
     }
     return true;
@@ -437,15 +473,23 @@ static bool sol_fw_platform_start(SolFileWatcher *watcher)
 static void sol_fw_platform_stop(SolFileWatcher *watcher)
 {
     atomic_store_explicit(&watcher->stop_reader, true, memory_order_relaxed);
-    if (watcher->inotify_fd >= 0) {
-        /* Unblock the reader's blocking read() by closing its fd. */
-        close(watcher->inotify_fd);
-        watcher->inotify_fd = -1;
+    if (watcher->wake_fd[1] >= 0) {
+        /* Guaranteed wakeup for the reader's poll(), unlike closing
+           inotify_fd (see the wake_fd comment on the struct). */
+        char b = 0;
+        ssize_t written = write(watcher->wake_fd[1], &b, 1u);
+        (void)written;
     }
     if (atomic_load_explicit(&watcher->reader_running, memory_order_acquire) ||
         watcher->reader_thread) {
         pthread_join(watcher->reader_thread, NULL);
     }
+    if (watcher->inotify_fd >= 0) {
+        close(watcher->inotify_fd);
+        watcher->inotify_fd = -1;
+    }
+    if (watcher->wake_fd[0] >= 0) { close(watcher->wake_fd[0]); watcher->wake_fd[0] = -1; }
+    if (watcher->wake_fd[1] >= 0) { close(watcher->wake_fd[1]); watcher->wake_fd[1] = -1; }
     for (size_t i = 0u; i < watcher->watch_count; ++i) {
         free(watcher->watches[i].path);
     }
@@ -592,6 +636,7 @@ SolFileWatcher *sol_file_watcher_create(void)
     sol_fw_queue_init(&watcher->queue);
 #if defined(__linux__)
     watcher->inotify_fd = -1;
+    watcher->wake_fd[0] = watcher->wake_fd[1] = -1;
 #endif
     return watcher;
 }
