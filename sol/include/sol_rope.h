@@ -121,9 +121,12 @@ size_t sol_rope_read(const SolRope *rope, size_t byte_offset,
  */
 typedef struct SolRopeChunkIter {
     const SolRope *rope;
-    void          *stack[32];   /* opaque; sized for trees up to ~4G nodes */
+    void          *stack[32];   /* opaque; holds ~16 tree levels (2 slots/frame) */
     size_t         depth;
     size_t         byte_pos;    /* byte offset of the current leaf start */
+    bool           overflowed;  /* true if a subtree deeper than the stack
+                                    capacity was skipped — see
+                                    sol_rope_chunk_iter_overflowed() below */
 } SolRopeChunkIter;
 
 /*
@@ -146,6 +149,23 @@ void sol_rope_chunk_iter_init(SolRopeChunkIter *it, const SolRope *rope);
 bool sol_rope_chunk_iter_next(SolRopeChunkIter *it,
                               const uint8_t **out_data, size_t *out_len,
                               size_t *out_byte_offset);
+
+/*
+ * Report whether the iterator had to skip part of the tree because it
+ * was deeper than the iterator's fixed traversal-stack capacity (~16
+ * levels). In that case sol_rope_chunk_iter_next enumerated fewer bytes
+ * than the rope actually contains, silently from the caller's point of
+ * view unless this is checked. A rope built through normal edits stays
+ * within this depth for any realistic file size; this exists so a
+ * caller that needs a complete traversal (hashing, diffing, an
+ * incremental reparse) can detect the rare case and fall back to
+ * sol_rope_read instead of trusting a truncated result.
+ *
+ * it  The iterator, after iteration has completed (or at any point
+ *     during it — the flag latches true as soon as a skip occurs).
+ * Returns true if any subtree was skipped due to depth.
+ */
+bool sol_rope_chunk_iter_overflowed(const SolRopeChunkIter *it);
 
 /* ---- Edit --------------------------------------------------------- */
 

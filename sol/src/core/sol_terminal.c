@@ -1143,7 +1143,14 @@ static void vt_csi_dispatch(SolTerminal *term, uint8_t final)
 
     /* ---- Scroll region (DECSTBM) ---- */
     case 'r':
-        if (!priv) {
+        /* A scroll region needs at least two rows to be meaningful; at
+           rows < 2, term_clamp(v, 0, term->rows - 2) is asked to clamp
+           into an inverted [0, -1] range and returns -1, corrupting
+           margin_top into an out-of-bounds row index that the next
+           linefeed's scroll-up would index the screen array with
+           (screen[-1]). Skip DECSTBM entirely at rows < 2, matching the
+           existing cols < 2 guard used elsewhere for wide-char writes. */
+        if (!priv && term->rows >= 2) {
             int top = term_clamp(vt_param(term, 0, 1) - 1, 0, term->rows - 2);
             int bot = term_clamp(vt_param(term, 1, term->rows) - 1,
                                  top + 1, term->rows - 1);
@@ -2719,8 +2726,16 @@ void sol_terminal_resize(SolTerminal *term, int cols, int rows)
     /* Resize screen lines. */
     for (int r = 0; r < rows; ++r) {
         if (r >= term->rows) {
-            /* New rows beyond old rows: allocate. */
-            term_line_alloc(&term->screen[r], cols);
+            /* New rows beyond old rows: allocate. On OOM, clip growth
+               to the last successfully allocated row rather than
+               claiming rows still hold a NULL cells buffer below
+               (term->rows is set to `rows` unconditionally further
+               down; every write path assumes cells is non-NULL for
+               any row < term->rows). */
+            if (!term_line_alloc(&term->screen[r], cols)) {
+                rows = r;
+                break;
+            }
         } else if (cols != term->cols) {
             /* Existing rows: realloc. */
             SolTermCell *newcells =

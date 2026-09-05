@@ -444,45 +444,75 @@ static const char *const rainbow_bracket_css[] = {
     "hl-bracket-4", "hl-bracket-5", "hl-bracket-6",
 };
 
+/* Maximum explicit-stack depth for the iterative tree walks below. A
+ * pathological file (e.g. tens of thousands of nested brackets) produces
+ * a parse tree exactly as deep as its nesting, so walking it with native
+ * recursion risks a stack overflow on ordinary file open — this bound
+ * turns that into "stop highlighting past this depth" instead of a
+ * crash. 4096 comfortably covers any realistic hand-written or
+ * generated code; nothing below it is user-visible as a limitation. */
+#define SOL_SYNTAX_WALK_MAX_DEPTH 4096u
+
 /* Walk parser-recognized punctuation leaves so brackets inside strings and
  * comments are not colored. This works for every registered Tree-sitter
- * language without requiring language-specific highlight queries. */
-static void collect_rainbow_brackets(TSNode node, const char *src,
+ * language without requiring language-specific highlight queries.
+ *
+ * Iterative pre-order DFS (explicit stack of (node, next_child_index)
+ * frames) rather than native recursion: `depth` is a running counter
+ * that must be updated in the same left-to-right visitation order a
+ * recursive walk would use, so frames are revisited to advance their
+ * child cursor exactly like unwinding a call stack would. */
+static void collect_rainbow_brackets(TSNode root, const char *src,
                                      uint32_t src_len, size_t *depth,
                                      struct SolSyntaxHighlighter *h)
 {
-    const uint32_t child_count = ts_node_child_count(node);
-    if (child_count != 0u) {
-        for (uint32_t i = 0u; i < child_count; i++)
-            collect_rainbow_brackets(ts_node_child(node, i), src, src_len,
-                                     depth, h);
-        return;
+    typedef struct { TSNode node; uint32_t next_child; } WalkFrame;
+    WalkFrame *stack = (WalkFrame *)malloc(SOL_SYNTAX_WALK_MAX_DEPTH * sizeof(WalkFrame));
+    if (!stack) return; /* OOM: skip rainbow-bracket highlighting for this reparse */
+    uint32_t sp = 0u;
+    stack[sp++] = (WalkFrame){ root, 0u };
+
+    while (sp > 0u) {
+        WalkFrame *top = &stack[sp - 1u];
+        const uint32_t child_count = ts_node_child_count(top->node);
+
+        if (child_count != 0u) {
+            if (top->next_child >= child_count) { sp--; continue; }
+            TSNode child = ts_node_child(top->node, top->next_child);
+            top->next_child++;
+            if (sp >= SOL_SYNTAX_WALK_MAX_DEPTH) continue; /* too deep: skip subtree */
+            stack[sp++] = (WalkFrame){ child, 0u };
+            continue;
+        }
+
+        /* Leaf: structural delimiters are anonymous one-byte leaves in
+         * Tree-sitter grammars. Requiring anonymity excludes bracket
+         * characters contained in named string/comment leaf nodes. */
+        TSNode node = top->node;
+        sp--;
+        if (ts_node_is_named(node)) continue;
+        const uint32_t start = ts_node_start_byte(node);
+        const uint32_t end = ts_node_end_byte(node);
+        if (end != start + 1u || end > src_len) continue;
+
+        const char ch = src[start];
+        size_t color_depth;
+        if (ch == '(' || ch == '[' || ch == '{') {
+            color_depth = *depth;
+            (*depth)++;
+        } else if (ch == ')' || ch == ']' || ch == '}') {
+            if (*depth > 0u) (*depth)--;
+            color_depth = *depth;
+        } else {
+            continue;
+        }
+
+        push_span(h, start, end,
+                  rainbow_bracket_css[color_depth %
+                      (sizeof(rainbow_bracket_css) /
+                       sizeof(rainbow_bracket_css[0]))]);
     }
-
-    /* Structural delimiters are anonymous one-byte leaves in Tree-sitter
-     * grammars. Requiring anonymity excludes bracket characters contained in
-     * named string/comment leaf nodes. */
-    if (ts_node_is_named(node)) return;
-    const uint32_t start = ts_node_start_byte(node);
-    const uint32_t end = ts_node_end_byte(node);
-    if (end != start + 1u || end > src_len) return;
-
-    const char ch = src[start];
-    size_t color_depth;
-    if (ch == '(' || ch == '[' || ch == '{') {
-        color_depth = *depth;
-        (*depth)++;
-    } else if (ch == ')' || ch == ']' || ch == '}') {
-        if (*depth > 0u) (*depth)--;
-        color_depth = *depth;
-    } else {
-        return;
-    }
-
-    push_span(h, start, end,
-              rainbow_bracket_css[color_depth %
-                  (sizeof(rainbow_bracket_css) /
-                   sizeof(rainbow_bracket_css[0]))]);
+    free(stack);
 }
 
 /* ------------------------------------------------------------------ */
@@ -654,24 +684,46 @@ static const char *type_to_css_legacy(const char *type, bool is_named,
 /*
  * Depth-first walk the syntax tree and collect spans (legacy fallback).
  *
- * node        Current tree-sitter node.
- * parent_type Node type of the parent (for context-sensitive coloring).
- * h           Syntax highlighter to receive the spans.
+ * root  Root of the (sub)tree to walk.
+ * h     Syntax highlighter to receive the spans.
+ *
+ * Iterative pre-order DFS (explicit heap stack of (node, parent_type,
+ * next_child_index) frames) rather than native recursion: a
+ * pathological file with deep nesting (many nested brackets/blocks)
+ * produces a proportionally deep parse tree, and this function runs
+ * unconditionally on every reparse when no highlight query is loaded
+ * for the language, making native recursion here a stack-overflow
+ * crash reachable by simply opening one crafted file.
  */
-static void collect_spans_legacy(TSNode node, const char *parent_type,
-                                  struct SolSyntaxHighlighter *h)
+static void collect_spans_legacy(TSNode root, struct SolSyntaxHighlighter *h)
 {
-    uint32_t child_count = ts_node_child_count(node);
-    if (child_count == 0u) {
-        const char *css = type_to_css_legacy(
-            ts_node_type(node), ts_node_is_named(node), parent_type);
-        if (css)
-            push_span(h, ts_node_start_byte(node), ts_node_end_byte(node), css);
-        return;
+    typedef struct { TSNode node; const char *parent_type; uint32_t next_child; } WalkFrame;
+    WalkFrame *stack = (WalkFrame *)malloc(SOL_SYNTAX_WALK_MAX_DEPTH * sizeof(WalkFrame));
+    if (!stack) return; /* OOM: skip legacy span collection for this reparse */
+    uint32_t sp = 0u;
+    stack[sp++] = (WalkFrame){ root, NULL, 0u };
+
+    while (sp > 0u) {
+        WalkFrame *top = &stack[sp - 1u];
+        const uint32_t child_count = ts_node_child_count(top->node);
+
+        if (child_count == 0u) {
+            const char *css = type_to_css_legacy(
+                ts_node_type(top->node), ts_node_is_named(top->node), top->parent_type);
+            if (css)
+                push_span(h, ts_node_start_byte(top->node), ts_node_end_byte(top->node), css);
+            sp--;
+            continue;
+        }
+
+        if (top->next_child >= child_count) { sp--; continue; }
+        const char *my_type = ts_node_type(top->node);
+        TSNode child = ts_node_child(top->node, top->next_child);
+        top->next_child++;
+        if (sp >= SOL_SYNTAX_WALK_MAX_DEPTH) continue; /* too deep: skip subtree */
+        stack[sp++] = (WalkFrame){ child, my_type, 0u };
     }
-    const char *my_type = ts_node_type(node);
-    for (uint32_t i = 0u; i < child_count; i++)
-        collect_spans_legacy(ts_node_child(node, i), my_type, h);
+    free(stack);
 }
 
 /* ------------------------------------------------------------------ */
@@ -805,7 +857,7 @@ void sol_syntax_highlight_reparse(SolSyntaxHighlighter *h,
     if (h->query && h->cursor && h->capture_css && h->pattern_preds) {
         collect_query_spans(h, buf, (uint32_t)byte_len);
     } else {
-        collect_spans_legacy(ts_tree_root_node(h->tree), NULL, h);
+        collect_spans_legacy(ts_tree_root_node(h->tree), h);
     }
 
     size_t bracket_depth = 0u;

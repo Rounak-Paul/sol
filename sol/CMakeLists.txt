@@ -290,4 +290,29 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         target_compile_options(sol_plugin_tests PRIVATE /experimental:c11atomics)
     endif()
     add_test(NAME sol_plugin_tests COMMAND sol_plugin_tests)
+
+    # ---- Terminal VT state machine unit tests ---------------------------
+    # Whitebox: test_terminal.c #includes sol_terminal.c directly to reach
+    # its static VT state machine without spawning a real PTY/SSH channel.
+    # Needs libssh2_static (SSH channel code paths, unused at runtime by
+    # these tests but referenced) and the real causality lib (ca_instance_wake).
+    add_executable(sol_terminal_tests
+        tests/test_terminal.c
+        src/core/sol_platform.c
+    )
+    target_include_directories(sol_terminal_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_TEST_INCLUDES}
+    )
+    target_compile_definitions(sol_terminal_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_terminal_tests PRIVATE causality libssh2_static Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
+    if(WIN32)
+        target_compile_definitions(sol_terminal_tests PRIVATE causality_EXPORTS)
+    endif()
+    if(MSVC)
+        target_compile_options(sol_terminal_tests PRIVATE /experimental:c11atomics)
+    endif()
+    add_test(NAME sol_terminal_tests COMMAND sol_terminal_tests)
 endif()

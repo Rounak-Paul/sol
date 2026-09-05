@@ -2259,12 +2259,22 @@ bool sol_text_buffer_undo(SolTextBuffer *tb)
     const TbEditRecord *rec = &tb->undo_stack[tb->undo_top];
     const size_t at = rec->byte_offset;
     /* Remove what was inserted. */
-    if (rec->new_len > 0u)
-        sol_rope_remove(tb->rope, at, rec->new_len);
+    if (rec->new_len > 0u && !sol_rope_remove(tb->rope, at, rec->new_len)) {
+        /* Rope mutation failed (OOM or internal error): the buffer no
+           longer matches this undo record. Re-advance undo_top so the
+           stack isn't left pointing at an entry that was only half
+           applied, and report failure instead of publishing an edit
+           event for a change that didn't (fully) happen. */
+        ++tb->undo_top;
+        return false;
+    }
     /* Re-insert what was there before. */
-    if (rec->old_len > 0u && rec->old_bytes)
-        sol_rope_insert(tb->rope, at,
-                        (const uint8_t *)rec->old_bytes, rec->old_len);
+    if (rec->old_len > 0u && rec->old_bytes &&
+        !sol_rope_insert(tb->rope, at,
+                         (const uint8_t *)rec->old_bytes, rec->old_len)) {
+        ++tb->undo_top;
+        return false;
+    }
     /* Restore cursor and selection. */
     tb_set_cursor_byte(tb, rec->cursor_before);
     tb_update_preferred_col(tb);
@@ -2290,12 +2300,21 @@ bool sol_text_buffer_redo(SolTextBuffer *tb)
     ++tb->undo_top;
     const size_t at = rec->byte_offset;
     /* Remove what was there before. */
-    if (rec->old_len > 0u)
-        sol_rope_remove(tb->rope, at, rec->old_len);
+    if (rec->old_len > 0u && !sol_rope_remove(tb->rope, at, rec->old_len)) {
+        /* See the matching comment in sol_text_buffer_undo: don't leave
+           undo_top pointing past an entry that was only half applied,
+           and don't report success or publish an edit event for a
+           change that didn't (fully) happen. */
+        --tb->undo_top;
+        return false;
+    }
     /* Re-insert what was inserted. */
-    if (rec->new_len > 0u && rec->new_bytes)
-        sol_rope_insert(tb->rope, at,
-                        (const uint8_t *)rec->new_bytes, rec->new_len);
+    if (rec->new_len > 0u && rec->new_bytes &&
+        !sol_rope_insert(tb->rope, at,
+                         (const uint8_t *)rec->new_bytes, rec->new_len)) {
+        --tb->undo_top;
+        return false;
+    }
     tb_set_cursor_byte(tb, rec->cursor_after);
     tb_update_preferred_col(tb);
     tb->has_selection = false;

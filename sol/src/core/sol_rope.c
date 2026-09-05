@@ -657,7 +657,15 @@ _Static_assert(sizeof(IterFrame) <= sizeof(void *) * 2, "iter frame fits");
 static void iter_push(SolRopeChunkIter *it, const SolRopeNode *n, uint32_t idx)
 {
     /* Use two slots per frame so we can store the full IterFrame. */
-    if (it->depth + 2 > sizeof(it->stack) / sizeof(it->stack[0])) return;
+    if (it->depth + 2 > sizeof(it->stack) / sizeof(it->stack[0])) {
+        /* Stack exhausted: this subtree (and everything under it) will
+           be skipped rather than traversed. Latch the flag so
+           sol_rope_chunk_iter_overflowed() can tell the caller the
+           enumeration was incomplete, instead of silently under-
+           reporting the rope's contents. */
+        it->overflowed = true;
+        return;
+    }
     IterFrame f = { n, idx };
     memcpy(&it->stack[it->depth], &f, sizeof f);
     it->depth += 2;
@@ -686,10 +694,23 @@ static bool iter_pop(SolRopeChunkIter *it, IterFrame *out)
  */
 void sol_rope_chunk_iter_init(SolRopeChunkIter *it, const SolRope *rope)
 {
-    it->rope     = rope;
-    it->depth    = 0;
-    it->byte_pos = 0;
+    it->rope       = rope;
+    it->depth      = 0;
+    it->byte_pos   = 0;
+    it->overflowed = false;
     if (rope && rope->root) iter_push(it, rope->root, 0);
+}
+
+/*
+ * Report whether the iterator skipped part of the tree due to depth.
+ *
+ * it  The iterator.
+ * Returns true if any subtree was skipped because it exceeded the
+ * iterator's fixed traversal-stack capacity.
+ */
+bool sol_rope_chunk_iter_overflowed(const SolRopeChunkIter *it)
+{
+    return it && it->overflowed;
 }
 
 /*
@@ -866,6 +887,58 @@ static bool branch_insert_child_split(SolRopeNode *parent, uint32_t at,
 }
 
 /*
+ * Splice a run of same-depth sibling nodes into a branch starting at a
+ * given child index, propagating overflow splits exactly as a single
+ * branch_insert_child_split does.
+ *
+ * n           Branch node to modify.
+ * at          Child index where the first sibling should land.
+ * nodes       Array of sibling nodes to insert, in order (ownership transferred).
+ * node_count  Number of nodes to insert (never more than 3 in practice:
+ *             at most one leaf split produces prefix + payload + suffix).
+ * out_split   Pointer to receive a new sibling branch if `n` itself
+ *             overflows past SOL_ROPE_BRANCH_MAX, otherwise NULL.
+ * Returns false on OOM (state before the failing splice is left
+ * consistent; the caller aborts rather than losing data mid-edit).
+ */
+static bool branch_splice_siblings(SolRopeNode *n, uint32_t at,
+                                   SolRopeNode **nodes, uint32_t node_count,
+                                   SolRopeNode **out_split)
+{
+    *out_split = NULL;
+    SolRopeNode *target = n;
+    uint32_t     insert_at = at;
+
+    for (uint32_t k = 0; k < node_count; ++k) {
+        SolRopeNode *split = NULL;
+        if (!branch_insert_child_split(target, insert_at, nodes[k], &split))
+            return false;
+        insert_at++;
+
+        if (split) {
+            if (target == n) {
+                *out_split = split;
+            } else {
+                /* target was itself a previously split-off sibling; a
+                   second split means the caller must chain it further.
+                   This cannot happen in practice (see node_insert's
+                   call site), but is handled correctly regardless. */
+                SolRopeNode *chained = NULL;
+                SolRopeNode *chain_nodes[1] = { split };
+                if (!branch_splice_siblings(*out_split, 0, chain_nodes, 1, &chained))
+                    return false;
+                *out_split = chained ? chained : *out_split;
+            }
+            if (insert_at > target->as.branch.child_count) {
+                insert_at -= target->as.branch.child_count;
+                target = split;
+            }
+        }
+    }
+    return true;
+}
+
+/*
  * Insert leaf nodes into a subtree.
  *
  * n          Root node of subtree (replaced by result).
@@ -875,6 +948,19 @@ static bool branch_insert_child_split(SolRopeNode *parent, uint32_t at,
  * out_node   Pointer to receive modified subtree root.
  * out_split  Pointer to receive sibling if split occurs, otherwise NULL.
  * Returns false on OOM; true on success.
+ *
+ * Depth invariant: this function must never make the subtree rooted at
+ * `n` taller than it was — a split leaf is always replaced by nodes at
+ * the *same* depth as the leaf it replaces. Wrapping a split leaf in a
+ * brand-new branch and returning that branch as a single replacement
+ * child would add one tree level per edit at a fixed offset — with no
+ * rebalancing elsewhere in this file to undo it, repeated edits at the
+ * same location (e.g. ordinary sequential typing) would grow the tree
+ * to unbounded depth and eventually stack-overflow every recursive
+ * walker (destroy, read, remove, line lookups). Splicing the
+ * replacement leaves in as direct siblings via branch_splice_siblings
+ * keeps depth strictly proportional to size, exactly like a normal
+ * single-leaf split.
  */
 static bool node_insert(SolRopeNode *n, size_t off,
                         SolRopeNode **leaves, size_t leaf_count,
@@ -883,8 +969,11 @@ static bool node_insert(SolRopeNode *n, size_t off,
     *out_split = NULL;
 
     if (n->is_leaf) {
-        /* Split the existing leaf into prefix + new_leaves + suffix,
-           wrap in a branch, then let the caller flatten/rebalance. */
+        /* Split the existing leaf into prefix + new_leaves + suffix.
+           All of these become siblings at n's own depth: the first
+           takes n's slot in the parent's children array (returned via
+           out_node), and any remaining ones are returned via out_split
+           for the parent to splice in immediately after it. */
         SolRopeNode *prefix = NULL, *suffix = NULL;
         if (off > 0) {
             prefix = node_clone_leaf_slice(n, n->as.leaf.start, (uint32_t)off);
@@ -910,16 +999,19 @@ static bool node_insert(SolRopeNode *n, size_t off,
         for (size_t i = 0; i < leaf_count; ++i) group[gi++] = leaves[i];
         if (suffix) group[gi++] = suffix;
 
-        SolRopeNode *sub = build_tree_from_leaves(group, group_count);
-        free(group);
-        if (!sub) {
-            /* OOM mid-mutation: the original n was already destroyed and
-               the new leaves cannot be reattached cleanly. Editors
-               cannot meaningfully recover from heap exhaustion mid-
-               edit; abort rather than corrupt the tree. */
-            abort();
+        *out_node = group[0];
+        if (group_count > 1) {
+            SolRopeNode *rest = node_new_branch();
+            if (!rest) { free(group); abort(); }
+            for (size_t k = 1; k < group_count; ++k)
+                rest->as.branch.children[k - 1] = group[k];
+            rest->as.branch.child_count = (uint32_t)(group_count - 1);
+            /* This branch is a plain carrier for the pending siblings,
+               never linked into the tree — the caller (branch case
+               below) unpacks its children and frees it immediately. */
+            *out_split = rest;
         }
-        *out_node = sub;
+        free(group);
         return true;
     }
 
@@ -931,23 +1023,43 @@ static bool node_insert(SolRopeNode *n, size_t off,
     }
     if (off > n->as.branch.children[i]->bytes) off = n->as.branch.children[i]->bytes;
 
-    SolRopeNode *new_child = NULL, *child_split = NULL;
+    bool child_was_leaf = n->as.branch.children[i]->is_leaf;
+    SolRopeNode *new_child = NULL, *child_extra = NULL;
     if (!node_insert(n->as.branch.children[i], off, leaves, leaf_count,
-                     &new_child, &child_split))
+                     &new_child, &child_extra))
         return false;
     n->as.branch.children[i] = new_child;
+    node_recompute_branch_metrics(n);
 
-    if (child_split) {
-        SolRopeNode *split = NULL;
-        if (!branch_insert_child_split(n, i + 1, child_split, &split)) {
-            /* OOM mid-mutation; see comment in the leaf branch above. */
-            abort();
-        }
-        *out_split = split;
+    if (!child_extra) {
+        *out_node = n;
+        return true;
+    }
+
+    SolRopeNode *pending[SOL_ROPE_BRANCH_MAX + 1];
+    uint32_t pending_count = 0;
+    if (child_was_leaf) {
+        /* child_extra is the plain carrier built in the leaf case
+           above: unpack its same-depth siblings and discard it. */
+        for (uint32_t k = 0; k < child_extra->as.branch.child_count; ++k)
+            pending[pending_count++] = child_extra->as.branch.children[k];
+        free(child_extra);
     } else {
-        node_recompute_branch_metrics(n);
+        /* child_extra is a genuine split-off branch sibling from the
+           recursive branch case, already at the correct depth. */
+        pending[pending_count++] = child_extra;
+    }
+
+    SolRopeNode *split = NULL;
+    if (!branch_splice_siblings(n, i + 1, pending, pending_count, &split)) {
+        /* OOM mid-mutation: n is fully consistent up to this point;
+           only some pending siblings could not be attached. Editors
+           cannot meaningfully recover from heap exhaustion mid-edit;
+           abort rather than silently drop data or corrupt the tree. */
+        abort();
     }
     *out_node = n;
+    *out_split = split;
     return true;
 }
 
@@ -1024,24 +1136,54 @@ bool sol_rope_insert(SolRope *r, size_t at, const uint8_t *data, size_t len)
         return true;
     }
 
-    SolRopeNode *new_root = NULL, *split = NULL;
-    bool ok = node_insert(r->root, at, leaves, leaf_count, &new_root, &split);
+    bool root_was_leaf = r->root->is_leaf;
+    SolRopeNode *new_root = NULL, *extra = NULL;
+    bool ok = node_insert(r->root, at, leaves, leaf_count, &new_root, &extra);
     free(leaves);
     if (!ok) return false;
     r->root = new_root;
-    if (split) {
+
+    if (extra) {
+        /* Same disambiguation as node_insert's branch case: when the
+           old root was a leaf, `extra` is a plain (unlinked) carrier
+           branch holding the same-depth siblings still pending
+           attachment; when the old root was already a branch, `extra`
+           is a genuine split-off sibling at the root's own depth. */
+        SolRopeNode *pending[SOL_ROPE_BRANCH_MAX + 1];
+        uint32_t pending_count = 0;
+        if (root_was_leaf) {
+            for (uint32_t k = 0; k < extra->as.branch.child_count; ++k)
+                pending[pending_count++] = extra->as.branch.children[k];
+            free(extra);
+        } else {
+            pending[pending_count++] = extra;
+        }
+
         SolRopeNode *parent = node_new_branch();
         if (!parent) {
             /* Tree is consistent (root absorbed the edit); a new root
                level is what failed. Abort rather than silently drop
-               half of the inserted data. */
+               data. */
             abort();
         }
         parent->as.branch.children[0] = r->root;
-        parent->as.branch.children[1] = split;
-        parent->as.branch.child_count = 2;
+        parent->as.branch.child_count = 1;
         node_recompute_branch_metrics(parent);
         r->root = parent;
+
+        SolRopeNode *split = NULL;
+        if (!branch_splice_siblings(r->root, 1, pending, pending_count, &split)) {
+            abort();
+        }
+        if (split) {
+            SolRopeNode *grandparent = node_new_branch();
+            if (!grandparent) abort();
+            grandparent->as.branch.children[0] = r->root;
+            grandparent->as.branch.children[1] = split;
+            grandparent->as.branch.child_count = 2;
+            node_recompute_branch_metrics(grandparent);
+            r->root = grandparent;
+        }
     }
     normalise_root(r);
     return true;

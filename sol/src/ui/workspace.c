@@ -2318,12 +2318,29 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
 {
     if (!ui || !ui->primary_window) return;
 
-    SolUIMenuBuildGroup groups[SOL_UI_TITLE_MENU_LIMIT] = {
-        { .id = "sol", .label = "Sol", .order = 100 },
-        { .id = "edit", .label = "Edit", .order = 300 },
-        { .id = "view", .label = "View", .order = 400 },
-        { .id = "plugins", .label = "Plugins", .order = 900 },
-    };
+    /* Heap-allocated rather than a stack array: SolUIMenuBuildGroup
+       nests two 16-element arrays of SolUIMenuBuildItem (each holding
+       its own two 16-element sub-item arrays), so groups[16] is on the
+       order of a quarter megabyte. This function runs on every plugin
+       menu registration and every Autosave toggle, potentially from
+       call sites with limited remaining stack; a quarter-megabyte
+       frame is an avoidable stack-overflow risk for no benefit over
+       a heap allocation freed at the end of this same function. */
+    SolUIMenuBuildGroup *groups =
+        (SolUIMenuBuildGroup *)calloc(SOL_UI_TITLE_MENU_LIMIT, sizeof(SolUIMenuBuildGroup));
+    if (!groups) return;
+    snprintf(groups[0].id, sizeof(groups[0].id), "sol");
+    snprintf(groups[0].label, sizeof(groups[0].label), "Sol");
+    groups[0].order = 100;
+    snprintf(groups[1].id, sizeof(groups[1].id), "edit");
+    snprintf(groups[1].label, sizeof(groups[1].label), "Edit");
+    groups[1].order = 300;
+    snprintf(groups[2].id, sizeof(groups[2].id), "view");
+    snprintf(groups[2].label, sizeof(groups[2].label), "View");
+    groups[2].order = 400;
+    snprintf(groups[3].id, sizeof(groups[3].id), "plugins");
+    snprintf(groups[3].label, sizeof(groups[3].label), "Plugins");
+    groups[3].order = 900;
     size_t group_count = 4u;
 
     (void)sol_ui_append_menu_build_item(&groups[0], "new-buffer", "New Buffer",
@@ -2416,6 +2433,7 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
         };
     }
     ca_instance_set_app_menus(ui->instance, menus, (int)group_count);
+    free(groups);
 }
 
 void sol_ui_system_refresh_title_bar_menus(SolUISystem *ui)

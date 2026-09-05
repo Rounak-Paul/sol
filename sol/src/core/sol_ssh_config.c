@@ -49,7 +49,10 @@ static bool jp_string(JP *j, char *buf, size_t bufsz)
     ++j->p;
     size_t i = 0;
     while (*j->p && *j->p != '"') {
-        if (*j->p == '\\') ++j->p;   /* skip escape */
+        if (*j->p == '\\') {
+            ++j->p;                 /* skip escape */
+            if (!*j->p) break;      /* trailing backslash at EOF: stop, don't read past it */
+        }
         if (i + 1 < bufsz) buf[i++] = *j->p;
         ++j->p;
     }
@@ -73,35 +76,72 @@ static long jp_int(JP *j)
     return strtol(tmp, NULL, 10);
 }
 
+/* Maximum nesting depth jp_skip_value will descend into. A corrupted
+   or hand-edited ssh_connections.json can contain arbitrarily deep
+   bracket nesting under any unknown key; without a bound, recursing
+   once per nesting level risks a native stack overflow just from
+   opening the SSH Connections window. 256 comfortably exceeds any
+   nesting this schema's JSON legitimately uses. */
+#define SOL_SSH_JSON_MAX_DEPTH 256
+
+/* Iterative, not recursive: uses an explicit bounded depth counter
+   instead of the call stack (see SOL_SSH_JSON_MAX_DEPTH above). Past
+   the depth limit, falls back to a flat brace/bracket scan (still
+   quote-aware) that skips the value without validating it. */
 static void jp_skip_value(JP *j)
 {
-    jp_skip_ws(j);
-    if (!*j->p) return;
-    if (*j->p == '"') {
-        char tmp[512];
-        jp_string(j, tmp, sizeof(tmp));
-        return;
-    }
-    if (*j->p == '{' || *j->p == '[') {
-        const char close = (*j->p == '{') ? '}' : ']';
-        ++j->p;
-        while (*j->p) {
-            jp_skip_ws(j);
-            if (*j->p == close) { ++j->p; return; }
-            if (close == '}') {
-                char key[128];
-                jp_string(j, key, sizeof(key));
-                jp_expect(j, ':');
+    int depth = 0;
+    char close_stack[SOL_SSH_JSON_MAX_DEPTH];
+
+    for (;;) {
+        jp_skip_ws(j);
+        if (!*j->p) return;
+
+        if (*j->p == '"') {
+            char tmp[512];
+            jp_string(j, tmp, sizeof(tmp));
+        } else if (*j->p == '{' || *j->p == '[') {
+            if (depth >= SOL_SSH_JSON_MAX_DEPTH) {
+                int flat_depth = 1;
+                ++j->p;
+                while (*j->p && flat_depth > 0) {
+                    if (*j->p == '"') {
+                        char tmp[512];
+                        jp_string(j, tmp, sizeof(tmp));
+                        continue;
+                    }
+                    if (*j->p == '{' || *j->p == '[') flat_depth++;
+                    else if (*j->p == '}' || *j->p == ']') flat_depth--;
+                    ++j->p;
+                }
+                return;
             }
-            jp_skip_value(j);
+            close_stack[depth] = (*j->p == '{') ? '}' : ']';
+            ++j->p;
+            depth++;
+            continue;
+        } else if (*j->p == '}' || *j->p == ']') {
+            ++j->p;
+            depth--;
+            if (depth <= 0) return;
             jp_skip_ws(j);
             if (*j->p == ',') ++j->p;
+            continue;
+        } else {
+            /* number / bool / null: advance past the bare token */
+            while (*j->p && !isspace((unsigned char)*j->p) &&
+                   *j->p != ',' && *j->p != '}' && *j->p != ']')
+                ++j->p;
         }
-        return;
+
+        if (depth == 0) return;
+
+        jp_skip_ws(j);
+        if (*j->p == ':' && close_stack[depth - 1] == '}') { ++j->p; continue; }
+        if (*j->p == ',') { ++j->p; continue; }
+        if (*j->p == '}' || *j->p == ']') continue; /* loop head handles it */
+        if (!*j->p) return;
     }
-    while (*j->p && !isspace((unsigned char)*j->p) &&
-           *j->p != ',' && *j->p != '}' && *j->p != ']')
-        ++j->p;
 }
 
 static SolSshAuthMethod jp_auth_method(const char *s)

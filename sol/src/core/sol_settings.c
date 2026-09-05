@@ -95,7 +95,10 @@ static bool jp_string(JP *j, char *buf, size_t bufsz)
     ++j->p;
     size_t i = 0;
     while (*j->p && *j->p != '"') {
-        if (*j->p == '\\') { ++j->p; }   /* skip escape */
+        if (*j->p == '\\') {
+            ++j->p;                 /* skip escape */
+            if (!*j->p) break;      /* trailing backslash at EOF: stop, don't read past it */
+        }
         if (i + 1 < bufsz) buf[i++] = *j->p;
         ++j->p;
     }
@@ -157,48 +160,80 @@ static bool jp_bool(JP *j, bool *out_value)
     return false;
 }
 
+/* Maximum nesting depth jp_skip_value will descend into. A settings
+ * file that is corrupted (crash mid-write, disk-full, manual editing
+ * mistake) can contain arbitrarily deep bracket nesting under any
+ * unrecognized key; without a bound, recursing once per nesting level
+ * risks a native stack overflow on ordinary startup. 256 comfortably
+ * exceeds any nesting this schema's JSON legitimately uses. */
+#define SOL_SETTINGS_JSON_MAX_DEPTH 256
+
 /*
  * Skip any JSON value (string, number, bool, null, object, array).
  *
  * j  Parser cursor.
+ *
+ * Iterative, not recursive: uses an explicit bounded depth counter
+ * instead of the call stack, so a maliciously or accidentally deeply
+ * nested value degrades to "stop descending" rather than crashing.
+ * Past the depth limit, this scans forward by raw brace/bracket
+ * counting (ignoring string contents) instead of properly parsing,
+ * which is sufficient to skip past the value without validating it.
  */
 static void jp_skip_value(JP *j)
 {
-    jp_skip_ws(j);
-    if (!*j->p) return;
-    if (*j->p == '"') {
-        char tmp[512];
-        jp_string(j, tmp, sizeof(tmp));
-        return;
-    }
-    if (*j->p == '{') {
-        ++j->p;
-        while (*j->p) {
-            jp_skip_ws(j);
-            if (*j->p == '}') { ++j->p; return; }
-            char key[128]; jp_string(j, key, sizeof(key));
-            jp_expect(j, ':');
-            jp_skip_value(j);
+    int depth = 0;
+    for (;;) {
+        jp_skip_ws(j);
+        if (!*j->p) return;
+
+        if (*j->p == '"') {
+            char tmp[512];
+            jp_string(j, tmp, sizeof(tmp));
+        } else if (*j->p == '{' || *j->p == '[') {
+            if (depth >= SOL_SETTINGS_JSON_MAX_DEPTH) {
+                /* Too deep to track structurally: fall back to a flat
+                   scan that still respects string quoting, so quoted
+                   braces/brackets don't desync the count. */
+                int flat_depth = 1;
+                ++j->p;
+                while (*j->p && flat_depth > 0) {
+                    if (*j->p == '"') {
+                        char tmp[512];
+                        jp_string(j, tmp, sizeof(tmp));
+                        continue;
+                    }
+                    if (*j->p == '{' || *j->p == '[') flat_depth++;
+                    else if (*j->p == '}' || *j->p == ']') flat_depth--;
+                    ++j->p;
+                }
+                return;
+            }
+            ++j->p;
+            depth++;
+            continue;
+        } else if (*j->p == '}' || *j->p == ']') {
+            ++j->p;
+            depth--;
+            if (depth <= 0) return;
             jp_skip_ws(j);
             if (*j->p == ',') ++j->p;
+            continue;
+        } else {
+            /* number / bool / null: advance past the bare token */
+            while (*j->p && !isspace((unsigned char)*j->p) &&
+                   *j->p != ',' && *j->p != '}' && *j->p != ']')
+                ++j->p;
         }
-        return;
+
+        if (depth == 0) return;
+
+        jp_skip_ws(j);
+        if (*j->p == ':') { ++j->p; continue; }  /* object key just parsed */
+        if (*j->p == ',') { ++j->p; continue; }
+        if (*j->p == '}' || *j->p == ']') continue; /* loop head handles it */
+        if (!*j->p) return;
     }
-    if (*j->p == '[') {
-        ++j->p;
-        while (*j->p) {
-            jp_skip_ws(j);
-            if (*j->p == ']') { ++j->p; return; }
-            jp_skip_value(j);
-            jp_skip_ws(j);
-            if (*j->p == ',') ++j->p;
-        }
-        return;
-    }
-    /* number / bool / null: advance past the bare token */
-    while (*j->p && !isspace((unsigned char)*j->p) &&
-           *j->p != ',' && *j->p != '}' && *j->p != ']')
-        ++j->p;
 }
 
 /*
