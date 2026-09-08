@@ -804,6 +804,183 @@ clip. This avoids the failing transparent-fill/border shader path entirely
 while preserving post-children paint order and CSS border colours/widths.
 Build and all 14 CTests pass; both worktrees pass `git diff --check`.
 
+## Round 16 — the "proven-working" backdrop-filter claim from Round 7 was wrong
+
+User reported the floating terminal's dimmed backdrop showed no visible blur
+despite `.term-float-backdrop` being wired into the same
+`sol_settings_build_appearance_css` mechanism Round 7 used for the four
+dialog-window roots, and despite Round 7 explicitly stating that mechanism
+was "the proven-working path this whole 6-round session built and
+validated." **That claim was never actually true** — every single round in
+this file ends with "not yet visually confirmed," including Round 7 itself;
+"proven-working" was an inference from clean Vulkan validation-layer output
+and correct CSS resolution, not from an actual screenshot. This round is
+the first time backdrop-filter was root-caused with runtime evidence rather
+than assumed correct.
+
+- **Confirmed CSS → paint layer works correctly** via a temporary
+  `fprintf` diagnostic in `paint_node_content` (causality/src/ui/paint.c):
+  `.term-float-backdrop`'s and `.term-float-panel`'s
+  `CA_DRAW_BACKDROP_BLUR` commands WERE being emitted, at the correct
+  rects, with the correct blur radius (40.0, matching the user's
+  `panel_blur` setting). Ruled out CSS/style-resolution as the cause.
+- **Root cause: the blur snapshot was captured before the frame's own UI
+  painted.** `ca_swapchain_frame` (causality/src/renderer/swapchain.c)
+  called `ca_blur_capture_and_blur` once, unconditionally, right after
+  `vkCmdBeginRendering`'s attachment setup but BEFORE the single
+  `vkCmdBeginRendering`/`vkCmdEndRendering` scope that draws every rect,
+  glyph, image, and backdrop-blur composite quad for the entire frame. The
+  "swapchain image" being blitted into the blur source at that point held
+  only whatever a `bg_render_fn` (the animated shader canvas) had written,
+  or the clear color — never the actual editor UI (buffer text, tree
+  panel, tabs) that a floating panel's backdrop is supposed to blur. For a
+  triple-buffered swapchain this made it worse: each image slot is reused
+  only every 3rd frame, so the "capture" was really re-blurring a
+  2-3-frame-stale composite, which on a mostly-static screen (a code
+  editor sitting still) looks visually identical to no blur — explaining
+  why it silently appeared broken instead of throwing errors or producing
+  the "zero pixels" GPU failure documented in
+  [[backdrop_blur_removed]]. Confirmed via the same diagnostic technique
+  (targeted `fprintf`, no screenshot needed) that this is NOT the same bug
+  as the menu-popup blur dead end — that one records correct state and
+  draws zero GPU pixels; this one draws real pixels, just of the wrong
+  (stale/background-only) source image. Two unrelated bugs in adjacent
+  code, easy to conflate.
+- **Fix: real per-band capture, spliced into the existing z-index band
+  loop** (`ca_swapchain_frame`'s `for (int band = 0; band < 4; ++band)`
+  loop, which already exists to enforce z-index paint order — see
+  `cmd_paint_band`'s doc comment). Removed the single early capture.
+  Before the band loop, computed `band_max_blur[4]` / `band_has_backdrop[4]`
+  by scanning all `CA_DRAW_BACKDROP_BLUR` commands and bucketing each by
+  its own paint band. At the top of each band iteration, if that band
+  contains a blur consumer, `vkCmdEndRendering` the swapchain's dynamic
+  render pass, call `ca_blur_capture_and_blur` (now capturing everything
+  painted by all strictly-earlier bands — the real UI), then
+  `vkCmdBeginRendering` again with `LOAD_OP_LOAD` to resume painting
+  without losing anything already drawn. `ca_blur_capture_and_blur`
+  itself needed zero changes — it already did its own self-contained
+  barriers/rendering scopes for the blur images and only required the
+  swapchain image to be outside ANY rendering scope when called, which
+  was already true both before this fix (called pre-pass) and after
+  (called between end/begin).
+- **Verified the z-index band routing was already correct without any
+  Sol-side change**, via a second temporary diagnostic (this time in
+  `paint_tree_cached`, reading `effective_z` and the post-
+  `apply_inherited_z` command z, not the node's own un-inherited
+  `desc.z_index`): `term_float_host`'s `z_index = 40`
+  (`sol_ui_build_layout`, workspace.c) correctly propagates via
+  `apply_inherited_z` to the backdrop and panel divs nested inside it
+  (both show `effective_z=40` → `band=2`), even though neither div sets
+  its own `z_index` explicitly. An earlier diagnostic pass had
+  misdiagnosed this as broken by reading `node->desc.z_index` (the
+  pre-inheritance raw field, always 0 for the children) instead of the
+  post-inheritance value — a reminder to check the field actually
+  consumed by the code path being investigated, not merely a
+  plausibly-named sibling field.
+- Forced a floating terminal open at startup via a temporary edit to
+  `main.c` (`sol_terminal_manager_set_position(..., FLOAT)` +
+  `new_tab` + `set_visible(true)`, clearly commented "TEMP DEBUG... REMOVE
+  before finishing") to exercise the band-2 capture path without GUI
+  input, since this session's shell still has no screen-recording
+  permission or GUI automation for Sol
+  ([[screencapture_unavailable]]). Removed before finishing, confirmed via
+  `git diff` — no debug scaffolding left in any file.
+- Build + full CTest suite (16/16) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs (no new VUID errors
+  from the render-pass end/restart sequence — dynamic rendering supports
+  multiple begin/end cycles per command buffer, and every per-band
+  pipeline bind already happens fresh inside each band iteration, so no
+  cross-pass-boundary state was assumed).
+- **This is an engine-level fix (vendored Causality, not Sol-only)** —
+  affects every current and future consumer of `backdrop-filter` in any
+  Causality-based app, not just Sol's floating terminal. The four dialog
+  windows and the tree/buffer/status-bar panels that already declared
+  `backdrop-filter` (Round 7) get the same correctness improvement for
+  free, though none of them were the reason this round happened.
+- User's own screenshot (first real visual evidence this whole file has
+  had) showed the fix DIDN'T resolve it — the floating terminal's backdrop
+  showed no visible dimming or blur at all, and the user separately flagged
+  that panel/buffer backgrounds "supposed to" be blurred too weren't
+  showing any effect either.
+
+## Round 17 — the real bug: a coordinate-space double-offset, found via reinstated diagnostics
+
+Re-added the same `fprintf` diagnostic technique (removed after Round 16,
+re-added at three points: draw-command emission in `paint_node_content`,
+the per-band capture trigger, and the composite instance-data packing) plus
+a temporary `main.c` edit forcing a floating terminal open at startup
+(commented "TEMP DEBUG... REMOVE before finishing", removed again once
+done) since GUI interaction still isn't possible from this session.
+
+- **Confirmed Round 16's mechanism fires exactly as designed**: capture
+  triggers for both band 1 and band 2 with the correct blur radius (40.0),
+  `blur_image_valid=1` and a non-null descriptor set at composite time, and
+  the composite quad draw call executes for both bands. Format checks
+  (`VK_FORMAT_R8G8B8A8_UNORM` blur images vs. a composite shader comment
+  claiming `_SRGB` — a real but separate cosmetic mismatch, not
+  investigated further since it can't explain total invisibility), shader
+  math (`roundedBoxSDF`, blend state, alpha handling), and clip rects all
+  checked out as structurally sound.
+- **Found the actual bug via the composite instance-data diagnostic**: the
+  floating backdrop's packed UV coordinates were `v1 = 1.036` — **over
+  1.0**, an out-of-range sample coordinate. Traced to `cmd->y + cmd->h =
+  26 + 720 = 746` against a 720-logical-px-tall window: the backdrop was
+  positioned at `y=26` (Causality's own absolute-position resolution) but
+  sized to the FULL window height (`ui->window_h = 720`), overflowing the
+  window's bottom edge by exactly the title-bar height (26px).
+- **Root cause: `sol_ui_term_float_builder`'s `pos_y=0.0f` was NOT relative
+  to the true window origin.** `term_float_host` (this builder's
+  container) is mounted inside `workspace_host` in `sol_ui_build_layout`,
+  which is itself a sibling of the title bar inside `app-root` — meaning
+  `workspace_host`'s own top edge already excludes the title bar strip, so
+  an absolutely-positioned child's `pos_y=0` is already relative to
+  *below* the title bar, not the physical window top. The original code
+  (Round 16 era, actually written during the initial floating-terminal
+  feature work before this file's involvement) assumed `pos_y=0` meant the
+  true window origin and manually added `title_h` again when computing the
+  panel's centering offset — a double-count that both overflowed the
+  backdrop's bottom edge AND threw off the panel's vertical centering by a
+  second `title_h` on top of whatever offset the coordinate space already
+  applied.
+- **Fix** (`sol/src/ui/workspace.c`, `sol_ui_term_float_builder`): stopped
+  adding `title_h` anywhere in this function. The backdrop is now sized to
+  `window_h - status_h` (status bar is genuinely outside this coordinate
+  space's extent, unlike the title bar) instead of the full `window_h`,
+  and the panel's centering spacer no longer adds a second `title_h`
+  offset. Re-verified via the same diagnostic: backdrop now resolves to
+  `size=(1080,690) pos=(0,26)` with `uv=(0.000,0.036)-(1.000,0.994)` —
+  fully within `[0,1]`, no overflow.
+- **This explains the reported "buffer/panel backgrounds not blurred"
+  half of the report too, indirectly**: `.term-panel`'s own
+  `backdrop-filter` (shared selector, applies to tree/buffer/status-bar
+  panels as well as the floating terminal) was never touched by this bug —
+  those panels aren't absolutely-positioned children of `term_float_host`
+  and have no title-bar-offset issue. Their blur visibility depends
+  entirely on `panel_opacity` (this user's live settings have it at `1.00`
+  — fully opaque — which by design hides any blur happening behind an
+  opaque fill, since there's nothing to blend through). This is
+  expected/correct behavior given that setting, not a bug — worth
+  confirming with the user whether they intended `panel_opacity < 1.0` to
+  actually see blur on ordinary panels, separately from the floating
+  terminal's scrim (which uses a fixed semi-transparent
+  `rgba(0,0,0,0.45)` background specifically so blur is visible there
+  regardless of the opacity slider).
+- All diagnostics (draw-command emission, per-band capture trigger,
+  composite instance packing) and the temporary `main.c` startup-force
+  removed again before finishing; confirmed via `git diff` on both
+  `paint.c` (zero diff — fully reverted) and `swapchain.c` (diff reduced
+  back to exactly Round 16's original 68-line fix, no diagnostic leftover).
+- Build + full CTest suite (16/16) pass; `git diff --check` clean on Sol
+  and the Causality submodule; stable launch with zero log output under
+  both plain and `VK_LAYER_KHRONOS_validation` runs.
+- **Still not visually confirmed by screenshot** — the geometry bug is
+  confirmed and fixed via runtime diagnostic ground truth (not
+  speculation), but whether the backdrop now visibly dims/blurs correctly
+  on screen, and whether the user still wants panel-background blur
+  visible independent of `panel_opacity`, both need the user's next
+  screenshot to close out.
+
 ## Validation
 
 - `cmake --build build --parallel 6`: passed.

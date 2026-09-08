@@ -224,16 +224,37 @@ itself renders fully opaque regardless of blur; only the backdrop scrim
 will visibly show the blur effect for this user, which is the intended
 target of this fix anyway).
 
-**Verification status**: build succeeds clean, app launches with no startup
-errors, under both plain and (not yet re-run for this specific change)
-`VK_LAYER_KHRONOS_validation`. Still NOT interactively driven — this
-session's shell has no screen-recording permission
-([[screencapture_unavailable]]) and no GUI automation set up for Sol, so
-the centering fix, size increase, keyboard-focus fix, and backdrop-blur
-wiring are code-verified (traced through Causality's actual layout/widget
-source, and cross-checked against the proven-working backdrop-filter
-precedent) but not yet visually/interactively confirmed by actually running
-the app by hand.
+**Coordinate-space bug found via user screenshot** (2026-09-09, see
+[[project_bg_effects]]'s `floating-glass-ui-overhaul-2026-08-29.md` Round
+17 for full detail): `sol_ui_term_float_builder`'s backdrop/panel
+positioning wrongly assumed the builder's own `pos_y=0` origin was the true
+window top. It isn't — `term_float_host` is mounted inside `workspace_host`
+(a sibling of the title bar, not of `app-root`), so `pos_y=0` is already
+below the title bar. The original code sized the backdrop to the full
+window height AND manually added `title_h` again when centering the panel
+— overflowing the backdrop past the window's bottom edge by `title_h` and
+double-offsetting the panel's vertical centering. Fixed: backdrop now sized
+to `window_h - status_h` (only the status bar needs subtracting; the title
+bar is already excluded by this coordinate space), no `title_h` addition
+anywhere in the function. This was root-caused via a runtime UV-diagnostic
+(`v1 = 1.036`, over the valid `[0,1]` range) — not visual inspection.
+
+**Backdrop-filter engine bug, round 2** (Round 17): after Round 16's
+per-band capture fix, the user's screenshot showed the mechanism still
+produced no visible blur/dimming — turned out to be caused entirely by the
+coordinate-space bug above (the backdrop's geometry was wrong, not the
+capture timing). Round 16's per-band capture fix itself was re-verified as
+firing correctly (capture, valid flag, descriptor set, composite draw call
+all confirmed via diagnostics) and was NOT the remaining cause.
+
+**Verification status**: build succeeds clean, 16/16 CTest pass, app
+launches with no startup errors under both plain and
+`VK_LAYER_KHRONOS_validation` runs. Still NOT interactively/visually
+confirmed by this session (no screen-recording permission or GUI automation
+— [[screencapture_unavailable]]) — the coordinate-space fix is confirmed
+correct via runtime diagnostic ground truth (exact resolved geometry
+re-checked after the fix, UV no longer overflows), but whether the backdrop
+now visibly dims/blurs on screen needs the user's next screenshot.
 
 ## Workspace Integration
 

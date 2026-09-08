@@ -1193,31 +1193,37 @@ static void sol_ui_term_float_builder(Ca_Div *div, void *user_data)
         return;
     }
 
-    /* Center the panel within the visible workspace area (below the title
-       bar, above the status bar), not the raw window — the overlay host
-       spans the full window, so flex-centering alone pulls the panel up by
-       roughly half the title+status chrome height. Mirrors the vertical
-       extent sol_ui_buffer_area_rect_internal computes for root_y/root_h. */
+    /* Center the panel within the visible workspace area. term_float_host
+       (this builder's container, see sol_ui_build_layout) is mounted inside
+       workspace_host as an absolute-positioned div with pos_y=0 — but that
+       0 is already relative to workspace_host's own top edge, which sits
+       BELOW the title bar (workspace_host is a sibling of the title bar
+       inside app-root, not a sibling of app-root itself). So this builder's
+       own coordinate space already excludes the title bar; sizing the
+       backdrop to the full window height and/or adding title_h again here
+       double-counts it and overflows past the window's bottom edge by
+       title_h (confirmed via a UV>1.0 diagnostic during initial
+       implementation). Only the status bar needs accounting for here,
+       since it's reserved space AFTER workspace_host's own extent, not
+       before it. */
     const float ui_scale = sol_ui_system_scale(ui);
     const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
-    const float title_h  = ca_window_get_title_bar_height(ui->primary_window);
     const float status_h = SOL_UI_STATUS_BAR_HEIGHT * scale;
-    const float workspace_y = title_h;
-    const float workspace_h = (float)ui->window_h - title_h - status_h;
+    const float workspace_h = (float)ui->window_h - status_h;
 
-    /* Dimmed backdrop fills the whole window and catches click-outside (see
-       input_router.c on_mouse_button). */
+    /* Dimmed backdrop fills the workspace host's own extent (window minus
+       status bar; the title bar is already excluded by this coordinate
+       space) and catches click-outside (see input_router.c on_mouse_button). */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .width     = (float)ui->window_w,
-        .height    = (float)ui->window_h,
+        .height    = workspace_h > 0.0f ? workspace_h : (float)ui->window_h,
         .style     = "term-float-backdrop",
     });
 
     const float panel_w = (float)ui->window_w * 0.82f;
     const float panel_h = (workspace_h > 0.0f ? workspace_h : (float)ui->window_h) * 0.78f;
-    const float panel_top_margin =
-        (workspace_h - panel_h) * 0.5f + workspace_y;
+    const float panel_top_margin = (workspace_h - panel_h) * 0.5f;
     const bool term_focused =
         sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TERMINAL;
 

@@ -2077,11 +2077,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "[sol] warning: terminal manager creation failed; terminal unavailable\n");
     } else {
         sol_ui_system_set_terminal_manager(app.ui, app.terminal_mgr);
-        /* TEMP DEBUG — force-open a floating terminal at startup to trace
-           the backdrop-blur bug without GUI input. REMOVE before finishing. */
-        sol_terminal_manager_set_position(app.terminal_mgr, SOL_TERMINAL_POSITION_FLOAT);
-        sol_terminal_manager_new_tab(app.terminal_mgr, NULL);
-        sol_terminal_manager_set_visible(app.terminal_mgr, true);
     }
 
     app.bg_effects = sol_bg_effect_registry_create(instance);
