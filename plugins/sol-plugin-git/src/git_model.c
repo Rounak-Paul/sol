@@ -518,24 +518,35 @@ void git_model_layout_graph(GitHistory *history)
                 break;
             }
         }
-        if (my_lane < 0) {
-            my_lane = lane_count < GIT_MAX_GRAPH_LANES
-                ? (int)lane_count++ : (int)GIT_MAX_GRAPH_LANES - 1;
+        if (my_lane < 0 && lane_count < GIT_MAX_GRAPH_LANES) {
+            my_lane = (int)lane_count++;
         }
+        /* my_lane stays -1 when every lane is already claimed by a
+           different, still-open branch. Forcing this commit onto the last
+           lane regardless (the previous behavior) would clobber that
+           lane's tracked hash, permanently losing track of the branch it
+           belonged to and drawing its line as if it ended here — the
+           renderer already treats a negative lane as "don't draw" (see
+           the entry->lane < 0 checks in plugin.c), the same sentinel
+           already used below for an overflowing merge parent. */
         commit->lane = my_lane;
 
         uint32_t through = 0u;
         for (size_t lane = 0u; lane < lane_count; ++lane) {
             if (lanes[lane][0]) through |= (1u << lane);
         }
-        through |= (1u << (uint32_t)my_lane);
+        if (my_lane >= 0) through |= (1u << (uint32_t)my_lane);
         commit->through_lanes = through;
 
-        lanes[my_lane][0] = '\0';
-        if (commit->parent_count > 0u) {
-            git_copy_span(lanes[my_lane], sizeof(lanes[my_lane]),
-                         commit->parents[0], strlen(commit->parents[0]));
-            commit->parent_lanes[0] = my_lane;
+        if (my_lane >= 0) {
+            lanes[my_lane][0] = '\0';
+            if (commit->parent_count > 0u) {
+                git_copy_span(lanes[my_lane], sizeof(lanes[my_lane]),
+                             commit->parents[0], strlen(commit->parents[0]));
+                commit->parent_lanes[0] = my_lane;
+            }
+        } else if (commit->parent_count > 0u) {
+            commit->parent_lanes[0] = -1;
         }
         for (size_t p = 1u; p < commit->parent_count; ++p) {
             int parent_lane = -1;

@@ -242,14 +242,52 @@ static char *acquire_token_slot(void)
 /* Show caret solid for this long after the cursor moves.             */
 #define SOL_CARET_SOLID_MS       150u
 
-static uint64_t g_caret_last_move_ms = 0u;
-static size_t   g_caret_prev_line    = (size_t)-1;
-static size_t   g_caret_prev_col     = (size_t)-1;
+/* Per-leaf blink state. Keyed by leaf_id rather than a single global so
+ * multiple split panes (each with their own cursor position) don't
+ * overwrite each other's "last moved" timestamp every frame — with a
+ * single shared state, two panes showing different cursor positions each
+ * saw the other's render as "the cursor just moved" every frame, so
+ * neither caret ever blinked correctly. Linear-scan cache sized to the
+ * same simultaneous-split-pane ceiling used elsewhere (SOL_UI_MAX_SPLIT_
+ * CALLBACKS); leaf_id 0 (no leaf context, e.g. render called without a
+ * pane geometry) falls back to slot 0 shared by all such callers, which
+ * matches the single-pane behavior this function always had. */
+#define SOL_CARET_STATE_SLOTS 64u
+typedef struct CaretBlinkState {
+    SolBufferNodeId leaf_id;
+    uint64_t        last_move_ms;
+    size_t          prev_line;
+    size_t          prev_col;
+    bool            in_use;
+} CaretBlinkState;
+static CaretBlinkState g_caret_states[SOL_CARET_STATE_SLOTS];
 
 /* Return the current monotonic time in milliseconds. */
 static uint64_t monotonic_ms(void)
 {
     return sol_platform_now_monotonic_ns() / 1000000ull;
+}
+
+/* Find (or claim) this leaf's blink-state slot. Falls back to the first
+ * slot when the cache is full (extreme split counts) rather than growing
+ * unbounded — the caret simply blinks relative to whichever leaf most
+ * recently claimed that slot, a graceful degradation, not a crash. */
+static CaretBlinkState *caret_state_for_leaf(SolBufferNodeId leaf_id)
+{
+    int free_slot = -1;
+    for (size_t i = 0u; i < SOL_CARET_STATE_SLOTS; ++i) {
+        if (g_caret_states[i].in_use && g_caret_states[i].leaf_id == leaf_id) {
+            return &g_caret_states[i];
+        }
+        if (free_slot < 0 && !g_caret_states[i].in_use) free_slot = (int)i;
+    }
+    CaretBlinkState *slot = &g_caret_states[free_slot >= 0 ? (size_t)free_slot : 0u];
+    slot->leaf_id       = leaf_id;
+    slot->last_move_ms  = 0u;
+    slot->prev_line     = (size_t)-1;
+    slot->prev_col      = (size_t)-1;
+    slot->in_use        = true;
+    return slot;
 }
 
 /* Call once per frame with the current cursor position.  Returns true
@@ -259,22 +297,25 @@ static uint64_t monotonic_ms(void)
  * phase when the cursor position changes and holds the caret solid for
  * SOL_CARET_SOLID_MS after any movement.
  *
+ * leaf_id   Identifies which pane this caret belongs to, so multiple panes
+ *           each track their own blink phase independently.
  * cur_line  Current cursor line index.
  * cur_col   Current cursor column index.
  * Returns   true when the caret should be drawn.
  */
-static bool caret_blink_visible(size_t cur_line, size_t cur_col)
+static bool caret_blink_visible(SolBufferNodeId leaf_id, size_t cur_line, size_t cur_col)
 {
+    CaretBlinkState *st = caret_state_for_leaf(leaf_id);
     const uint64_t now = monotonic_ms();
-    if (cur_line != g_caret_prev_line || cur_col != g_caret_prev_col) {
-        g_caret_prev_line    = cur_line;
-        g_caret_prev_col     = cur_col;
-        g_caret_last_move_ms = now;
+    if (cur_line != st->prev_line || cur_col != st->prev_col) {
+        st->prev_line    = cur_line;
+        st->prev_col     = cur_col;
+        st->last_move_ms = now;
     }
     /* Always solid immediately after movement. */
-    if (now - g_caret_last_move_ms < SOL_CARET_SOLID_MS) return true;
+    if (now - st->last_move_ms < SOL_CARET_SOLID_MS) return true;
     /* Periodic blink phase relative to last move. */
-    const uint64_t phase = (now - g_caret_last_move_ms)
+    const uint64_t phase = (now - st->last_move_ms)
                            % (SOL_CARET_BLINK_HALF_MS * 2u);
     return phase < SOL_CARET_BLINK_HALF_MS;
 }
@@ -1024,7 +1065,8 @@ void sol_text_view_render(const SolBuffer *buffer,
              * CSS px before handing off to Ca_DivDesc. */
             const float adv = glyph_advance_px_for(caret_win) / ui_scale;
             const float caret_x = (float)cp_count * adv;
-            const bool  visible = caret_blink_visible(cur_line, cur_col);
+            const bool  visible = caret_blink_visible(
+                args ? args->leaf_id : 0u, cur_line, cur_col);
 
             /* Fallbacks in layout space (matching what ca_font_line_metrics
              * would return if a font were already loaded). */

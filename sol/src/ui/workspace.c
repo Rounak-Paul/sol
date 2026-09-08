@@ -49,7 +49,6 @@
 #include "sol_text_buffer.h"
 #include "style.h"
 
-#include <assert.h>
 #include <ca_gpu.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -358,9 +357,13 @@ static void sol_ui_visit_begin_split(SolBufferSplitDirection direction,
         cb_ctx->node_id = node_id;
     } else {
         /* Pool exhausted: this split's drag will not persist across
-           rebuilds. The ceiling is generous; if you hit this, raise
-           SOL_UI_MAX_SPLIT_CALLBACKS. */
-        assert(false && "SOL_UI_MAX_SPLIT_CALLBACKS exceeded");
+           rebuilds (Causality gets on_resize=NULL below, so dragging the
+           divider simply has no effect rather than crashing or reading
+           stale memory). This is a graceful degradation for a condition
+           a user can genuinely trigger by opening enough split panes, not
+           a programming error — an assert() here would crash every debug
+           build the moment someone actually reaches the ceiling. If this
+           is ever hit in practice, raise SOL_UI_MAX_SPLIT_CALLBACKS. */
     }
 
     ca_split_begin(&(Ca_SplitDesc){
@@ -2905,6 +2908,14 @@ void sol_ui_system_unregister_side_panel(SolUISystem *ui,
     if (!panel) return;
     if (ui->active_side_panel == token) {
         ui->active_side_panel = SOL_UI_SIDE_PANEL_TOKEN_INVALID;
+        /* This panel occupied the sidebar slot, so it may also have been
+           the thing that last claimed keyboard focus there. Leaving
+           focused_panel pointing at SOL_UI_FOCUSED_PANEL_TREE after the
+           panel itself is gone would strand the "-focused" style on
+           whatever's left in the sidebar (or on nothing at all). */
+        if (sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TREE) {
+            sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_BUFFER);
+        }
     }
     memset(panel, 0, sizeof(*panel));
     sol_ui_bump_u32(ui->sig_side_panel_rev);

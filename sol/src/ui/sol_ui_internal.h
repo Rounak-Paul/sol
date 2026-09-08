@@ -33,7 +33,7 @@
 
 #define SOL_UI_MAX_COMMAND_FLOWS      64u
 #define SOL_UI_MAX_MENU_ITEMS         64u
-#define SOL_UI_MAX_SPLIT_CALLBACKS    64u
+#define SOL_UI_MAX_SPLIT_CALLBACKS   256u
 #define SOL_UI_MAX_ACTION_LEN         63u
 #define SOL_UI_MAX_LABEL_LEN          95u
 /* SOL_UI_MAX_FLOW_SEQUENCE_LEN is defined in sol_ui_system.h so the

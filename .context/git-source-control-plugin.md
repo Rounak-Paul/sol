@@ -1,5 +1,18 @@
 # Git Source Control Plugin
 
+## 2026-09-08 lane-clobbering bug at 32+ concurrent branches
+
+`git_model_layout_graph`'s lane-assignment overflow path (when all
+`GIT_MAX_GRAPH_LANES`=32 lanes are already claimed by distinct open
+branches) forced the new commit onto the last lane regardless, silently
+destroying that lane's tracked hash and corrupting the rendered graph for
+whichever branch it belonged to. Fixed to leave the lane as a `-1`
+sentinel instead (matching the overflow handling already used one code
+path below for merge parents) — the renderer already skips negative
+lanes. See [[buffer-tab-close-stability]] for full details (found via the
+same sweep that fixed sibling bugs in sol/src/ui). Needs 32+ simultaneous
+open branch tips in the visible history window to trigger; not a crash.
+
 ## 2026-08-30 commit graph view added to History tab
 
 Added a compact branch/merge graph to the History tab (in-sidebar, not a
