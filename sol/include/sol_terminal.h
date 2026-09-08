@@ -82,6 +82,7 @@ typedef struct SolTermLine {
 typedef enum SolTerminalPosition {
     SOL_TERMINAL_POSITION_BOTTOM = 0, /* horizontal strip below buffer area */
     SOL_TERMINAL_POSITION_RIGHT,      /* vertical strip right of buffer area */
+    SOL_TERMINAL_POSITION_FLOAT,      /* centered overlay above the workspace */
 } SolTerminalPosition;
 
 /* ================================================================== */

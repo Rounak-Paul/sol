@@ -167,7 +167,10 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     const bool term_visible = ui->terminal_mgr &&
         sol_terminal_manager_visible(ui->terminal_mgr) &&
         sol_terminal_manager_count(ui->terminal_mgr) > 0u;
-    if (term_visible) {
+    /* FLOAT renders as a centered overlay above the workspace, not a split
+       pane, so the buffer area keeps its full extent in that case. */
+    if (term_visible &&
+        sol_terminal_manager_position(ui->terminal_mgr) != SOL_TERMINAL_POSITION_FLOAT) {
         float term_ratio = sol_terminal_manager_ratio(ui->terminal_mgr);
         if (term_ratio < 0.20f) term_ratio = 0.20f;
         if (term_ratio > 0.80f) term_ratio = 0.80f;
@@ -941,7 +944,12 @@ void sol_ui_system_terminal_notify(SolUISystem *ui)
  */
 static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible)
 {
-    if (!term_visible) {
+    /* FLOAT is rendered by the separate term_float_host overlay (see
+       sol_ui_term_float_builder), not inline here — treat it like "not
+       visible" from the split-pane perspective so the buffer/tree area
+       renders full-size with no carved-out strip. */
+    if (!term_visible ||
+        sol_terminal_manager_position(ui->terminal_mgr) == SOL_TERMINAL_POSITION_FLOAT) {
         ui->term_panel_host    = NULL;
         ui->term_viewport_host = NULL;
         sol_ui_render_workspace_tree(ui);
@@ -1142,6 +1150,100 @@ static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
     (void)ca_signal_get_u32(ui->sig_leader_prefix_rev);
     (void)ca_signal_get_u32(ui->sig_flow_registry_rev);
     sol_ui_render_command_flow_panel(ui);
+}
+
+/*
+ * Build the floating (centered-overlay) terminal panel.
+ *
+ * Mirrors sol_ui_popup_builder's shape: an absolute-positioned host that
+ * renders nothing when inactive, so toggling the floating terminal never
+ * invalidates the workspace content tree. When active, renders a dimmed
+ * backdrop (catches click-outside dismissal in input_router.c) with a
+ * fixed-size centered panel inside it, reusing sol_ui_render_terminal_panel
+ * unchanged. Writes term_panel_host/term_viewport_host itself since the
+ * docked split path (sol_ui_render_buffer_and_terminal) is skipped for
+ * SOL_TERMINAL_POSITION_FLOAT.
+ *
+ * div       The float host div (unused).
+ * user_data The SolUISystem containing the terminal manager state.
+ */
+static void sol_ui_term_float_builder(Ca_Div *div, void *user_data)
+{
+    (void)div;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui) {
+        return;
+    }
+    ui->term_panel_host    = NULL;
+    ui->term_viewport_host = NULL;
+
+    /* Subscribe to terminal state (visibility, position, focus, output). */
+    (void)ca_signal_get_u32(ui->sig_terminal_rev);
+
+    SolTerminalManager *mgr = ui->terminal_mgr;
+    const bool active = mgr &&
+        sol_terminal_manager_visible(mgr) &&
+        sol_terminal_manager_count(mgr) > 0u &&
+        sol_terminal_manager_position(mgr) == SOL_TERMINAL_POSITION_FLOAT;
+    if (!active) {
+        return;
+    }
+
+    if (ui->window_w <= 0 || ui->window_h <= 0) {
+        return;
+    }
+
+    /* Center the panel within the visible workspace area (below the title
+       bar, above the status bar), not the raw window — the overlay host
+       spans the full window, so flex-centering alone pulls the panel up by
+       roughly half the title+status chrome height. Mirrors the vertical
+       extent sol_ui_buffer_area_rect_internal computes for root_y/root_h. */
+    const float ui_scale = sol_ui_system_scale(ui);
+    const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
+    const float title_h  = ca_window_get_title_bar_height(ui->primary_window);
+    const float status_h = SOL_UI_STATUS_BAR_HEIGHT * scale;
+    const float workspace_y = title_h;
+    const float workspace_h = (float)ui->window_h - title_h - status_h;
+
+    /* Dimmed backdrop fills the whole window and catches click-outside (see
+       input_router.c on_mouse_button). */
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .width     = (float)ui->window_w,
+        .height    = (float)ui->window_h,
+        .style     = "term-float-backdrop",
+    });
+
+    const float panel_w = (float)ui->window_w * 0.82f;
+    const float panel_h = (workspace_h > 0.0f ? workspace_h : (float)ui->window_h) * 0.78f;
+    const float panel_top_margin =
+        (workspace_h - panel_h) * 0.5f + workspace_y;
+    const bool term_focused =
+        sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TERMINAL;
+
+    /* A spacer above the panel (rather than centering the panel itself)
+       keeps the backdrop's own align-items:center working for horizontal
+       centering while giving exact control over vertical placement. */
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .width     = 1.0f,
+        .height    = panel_top_margin > 0.0f ? panel_top_margin : 0.0f,
+        .style     = "term-float-spacer",
+    });
+    ca_div_end();   /* term-float-spacer */
+
+    ui->term_panel_host = ca_div_begin(&(Ca_DivDesc){
+        .direction     = CA_VERTICAL,
+        .width         = panel_w,
+        .height        = panel_h,
+        .corner_radius = sol_ui_panel_corner_radius(ui),
+        .style         = term_focused ? "term-panel term-float-panel term-panel-focused"
+                                       : "term-panel term-float-panel",
+    });
+    sol_ui_render_terminal_panel(ui);
+    ca_div_end();   /* term-panel term-float-panel */
+
+    ca_div_end();   /* term-float-backdrop */
 }
 
 /*
@@ -1468,6 +1570,23 @@ static bool sol_ui_build_layout(SolUISystem *ui)
     ca_div_set_builder(ui->workspace_content_host, sol_ui_workspace_content_builder, ui);
 
     ca_div_end();   /* workspace-content-host */
+
+    /* Floating terminal host — absolute overlay sibling of
+       workspace_content_host, mirroring popup_host below. Its builder reads
+       terminal visibility/position and emits the dimmed backdrop + centered
+       panel only when the terminal is visible and positioned FLOAT. z_index
+       40 sits above the workspace (0) but below the which-key popup (50) so
+       the popup can still render on top if both are active. */
+    ui->term_float_host = ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .position  = CA_POSITION_ABSOLUTE,
+        .pos_x     = 0.0f,
+        .pos_y     = 0.0f,
+        .z_index   = 40,
+        .style     = "term-float-overlay",
+    });
+    ca_div_set_builder(ui->term_float_host, sol_ui_term_float_builder, ui);
+    ca_div_end();   /* term_float_host */
 
     /* Popup host — absolute overlay sibling of workspace_content_host.
        Its own reactive builder reads leader_active and emits the
@@ -1941,6 +2060,7 @@ void sol_ui_system_on_window_close(SolUISystem *ui, const Ca_Window *window)
     ui->tree_panel_host        = NULL;
     ui->buffer_area_host       = NULL;
     ui->popup_host             = NULL;
+    ui->term_float_host        = NULL;
 }
 
 /*

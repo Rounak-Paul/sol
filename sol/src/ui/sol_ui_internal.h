@@ -216,6 +216,14 @@ struct SolUISystem {
        sig_popup_version and re-runs in isolation; the workspace
        content tree is never touched on Ctrl-press. */
     Ca_Div           *popup_host;
+    /* Floating (centered-overlay) terminal host — absolute-positioned
+       sibling of workspace_content_host, mirroring popup_host. Its builder
+       subscribes to sig_terminal_rev and renders only when the terminal is
+       visible and positioned SOL_TERMINAL_POSITION_FLOAT. When active it
+       writes term_panel_host/term_viewport_host itself (the docked path in
+       sol_ui_render_buffer_and_terminal is skipped for FLOAT), so layout
+       queries and hit-testing stay position-agnostic. */
+    Ca_Div           *term_float_host;
     /* Sticky-scroll ancestor overlay host — absolute-positioned sibling
        of workspace_content_host. Its builder subscribes only to
        sig_tree_scroll + sig_file_tree_rev and renders the ancestor-directory

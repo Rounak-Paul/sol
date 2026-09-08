@@ -597,6 +597,35 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  overflow: hidden;"
     "}"
     ".cf-row-error { background: #1c1018; }"
+    /* ===== Floating terminal overlay ===== */
+    ".term-float-overlay {"
+    "  background: transparent;"
+    "  width: 100%;"
+    "  height: 100%;"
+    "  padding: 0px;"
+    "  gap: 0px;"
+    "  justify-content: center;"
+    "  align-items: center;"
+    "  overflow: hidden;"
+    "}"
+    ".term-float-backdrop {"
+    "  background: rgba(0, 0, 0, 0.45);"
+    "  width: 100%;"
+    "  height: 100%;"
+    "  padding: 0px;"
+    "  gap: 0px;"
+    /* flex-start: the explicit spacer div above the panel (see
+       sol_ui_term_float_builder) provides the exact vertical offset needed
+       to center within the workspace area (excluding title/status chrome),
+       not the raw window — justify-content:center here would instead
+       center the (spacer + panel) pair as a unit and double-offset it. */
+    "  justify-content: flex-start;"
+    "  align-items: center;"
+    "  overflow: hidden;"
+    "}"
+    ".term-float-spacer {"
+    "  flex-shrink: 0;"
+    "}"
     /* Key badge */
     ".cf-row-key {"
     "  background: rgba(100, 142, 192, 0.16);"
@@ -2286,6 +2315,17 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".workspace-main-content { padding: " SOL_UI_PANEL_MARGIN_PX_CSS "; }"
     ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel, .welcome-pane {"
     "  border-radius: " SOL_UI_PANEL_RADIUS_PX_CSS "; overflow: hidden;"
+    "}"
+    /* Floating terminal card: same rounding as docked panels, plus a
+       drop shadow so it reads as an overlay rather than a workspace pane.
+       flex-grow/shrink: 0 overrides base .term-panel's flex-grow:1 — inside
+       the backdrop's flex column the panel must respect its own explicit
+       width/height (see sol_ui_term_float_builder), not stretch to fill
+       the remaining backdrop space after the spacer div. */
+    ".term-float-panel {"
+    "  flex-grow: 0; flex-shrink: 0;"
+    "  shadow-offset-y: 10px; shadow-blur: 28px;"
+    "  shadow-color: rgba(0, 0, 0, 0.55);"
     "}"
     /* Focused-panel indicator: a thin inset accent border on whichever
        top-level panel currently owns keyboard focus (tree/plugin

@@ -170,8 +170,14 @@ static bool point_in_active_buffer_leaf(SolInputRouter *r,
 /*
  * Resolve a window-space point to a terminal grid cell, when the terminal
  * panel is visible and the point falls inside its viewport (excluding the
- * tab header strip).  Mirrors the rect math sol_ui_system_pre_tick uses to
- * size the grid, so hit-testing always agrees with what is actually drawn.
+ * tab header strip).
+ *
+ * For docked positions (BOTTOM/RIGHT), mirrors the split-ratio rect math
+ * sol_ui_system_pre_tick uses to size the grid, so hit-testing always agrees
+ * with what is actually drawn. For FLOAT, the panel is not part of any split
+ * — its rect is queried directly from the mounted term_panel_host div via
+ * ca_div_screen_rect(), which is exact regardless of how the panel is sized
+ * or centered.
  *
  * r          The input router.
  * x, y       Window-space point to test.
@@ -186,40 +192,47 @@ static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (!tmgr || !sol_terminal_manager_visible(tmgr)) return false;
 
-    /* sol_ui_system_buffer_area_rect() already returns the buffer's share
-       AFTER subtracting the terminal's split — it is not the pre-split
-       workspace rect. Re-deriving the terminal rect by applying (1-ratio)/
-       ratio a second time on top of that already-shrunk rect would carve a
-       phantom terminal box out of the buffer area itself instead of
-       matching the terminal's real on-screen position. Invert the same
-       panel_gap/ratio split sol_ui_buffer_area_rect_internal() applied to
-       recover the true pre-split extent, then place the terminal directly
-       after the buffer + gap. */
-    float bx, by, bw, bh;
-    if (!sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) ||
-        bw <= 0.0f || bh <= 0.0f) {
-        return false;
-    }
-
-    const float ratio = sol_terminal_manager_ratio(tmgr);
-    const float buffer_ratio = 1.0f - ratio;
-    if (buffer_ratio <= 0.0f) return false;
-    const float scale = sol_ui_system_scale(r->ui);
-    const float panel_gap = SOL_UI_PANEL_GAP_PX * scale;
     const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
     float vx, vy, vw, vh; /* terminal panel rect, header not yet excluded */
-    if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
-        const float available = bh / buffer_ratio;
-        vx = bx;
-        vy = by + bh + panel_gap;
-        vw = bw;
-        vh = available - bh;
+
+    if (pos == SOL_TERMINAL_POSITION_FLOAT) {
+        if (!r->ui->term_panel_host) return false;
+        ca_div_screen_rect(r->ui->term_panel_host, &vx, &vy, &vw, &vh);
     } else {
-        const float available = bw / buffer_ratio;
-        vx = bx + bw + panel_gap;
-        vy = by;
-        vw = available - bw;
-        vh = bh;
+        /* sol_ui_system_buffer_area_rect() already returns the buffer's
+           share AFTER subtracting the terminal's split — it is not the
+           pre-split workspace rect. Re-deriving the terminal rect by
+           applying (1-ratio)/ratio a second time on top of that
+           already-shrunk rect would carve a phantom terminal box out of the
+           buffer area itself instead of matching the terminal's real
+           on-screen position. Invert the same panel_gap/ratio split
+           sol_ui_buffer_area_rect_internal() applied to recover the true
+           pre-split extent, then place the terminal directly after the
+           buffer + gap. */
+        float bx, by, bw, bh;
+        if (!sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) ||
+            bw <= 0.0f || bh <= 0.0f) {
+            return false;
+        }
+
+        const float ratio = sol_terminal_manager_ratio(tmgr);
+        const float buffer_ratio = 1.0f - ratio;
+        if (buffer_ratio <= 0.0f) return false;
+        const float scale = sol_ui_system_scale(r->ui);
+        const float panel_gap = SOL_UI_PANEL_GAP_PX * scale;
+        if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
+            const float available = bh / buffer_ratio;
+            vx = bx;
+            vy = by + bh + panel_gap;
+            vw = bw;
+            vh = available - bh;
+        } else {
+            const float available = bw / buffer_ratio;
+            vx = bx + bw + panel_gap;
+            vy = by;
+            vw = available - bw;
+            vh = bh;
+        }
     }
     if (vw <= 0.0f || vh <= 0.0f) return false;
     if (x < vx || x >= vx + vw || y < vy || y >= vy + vh) return false;
@@ -433,6 +446,17 @@ static void on_key(const Ca_Event *ev, void *user_data)
                 return;
             }
 
+            /* ESC closes the floating terminal (quake-console convention)
+               instead of forwarding to the PTY. Scoped strictly to FLOAT —
+               docked BOTTOM/RIGHT keep forwarding ESC to the shell
+               unconditionally, unchanged. */
+            if (ie.data.key.key == SOL_KEY_ESCAPE &&
+                sol_terminal_manager_position(tmgr) == SOL_TERMINAL_POSITION_FLOAT) {
+                sol_ui_system_set_focused_panel(r->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
+                sol_ui_system_terminal_notify(r->ui);
+                return;
+            }
+
             /* Paste intercept: Cmd+V (macOS Super+V) or Ctrl+Shift+V (Linux/Win).
                Both paste the system clipboard into the PTY with bracketed-paste
                framing when the application has enabled XTerm ?2004 mode.
@@ -605,11 +629,32 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
     ie.data.mouse_button.modifiers = modifiers_from_ca(ev->mouse_button.mods);
     ie.data.mouse_button.repeated  = (ev->mouse_button.action == CA_REPEAT);
 
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+
+    /* Clicking outside the floating terminal's panel closes it (quake-console
+       convention). Scoped strictly to FLOAT — docked BOTTOM/RIGHT have no
+       click-outside-defocus behavior, unchanged. Only MOUSE_DOWN triggers
+       this; the matching MOUSE_UP is left to fall through normally. */
+    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN && tmgr &&
+        sol_terminal_manager_visible(tmgr) &&
+        sol_terminal_manager_position(tmgr) == SOL_TERMINAL_POSITION_FLOAT &&
+        r->ui->term_panel_host) {
+        float px, py, pw, ph;
+        ca_div_screen_rect(r->ui->term_panel_host, &px, &py, &pw, &ph);
+        const bool inside_panel =
+            r->mouse_x >= px && r->mouse_x < px + pw &&
+            r->mouse_y >= py && r->mouse_y < py + ph;
+        if (!inside_panel) {
+            sol_ui_system_set_focused_panel(r->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
+            sol_ui_system_terminal_notify(r->ui);
+            return;
+        }
+    }
+
     /* Mouse-aware TUIs (e.g. an editor's mouse-driven selection, an Ink app
        with clickable rows) get first refusal on clicks inside the terminal
        grid. Falls through to normal Sol routing (scrollback, buffer focus)
        when the app hasn't enabled mouse tracking. */
-    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     SolTerminal *term = tmgr ? sol_terminal_manager_active(tmgr) : NULL;
     int col = 0, row = 0;
     if (term && sol_terminal_wants_mouse(term) &&

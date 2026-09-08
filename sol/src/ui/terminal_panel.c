@@ -364,6 +364,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
             .background = 0u,
             .on_click   = on_term_tab_click,
             .click_data = &g_term_tab_ctxs[i],
+            .skip_keyboard_focus = true,
         });
         ca_text(&(Ca_TextDesc){
             .text  = title,
@@ -374,6 +375,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
             .background = 0u,
             .on_click   = on_term_tab_close,
             .click_data = &g_term_tab_close_ctxs[i],
+            .skip_keyboard_focus = true,
         });
         ca_text(&(Ca_TextDesc){
             .text  = "\xC3\x97",   /* UTF-8 for U+00D7 MULTIPLICATION SIGN (×) */
@@ -392,6 +394,15 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
         .background = 0u,
         .on_click   = on_term_viewport_click,
         .click_data = &g_term_viewport_ctx,
+        /* All keyboard input while the terminal is focused goes straight to
+           the PTY via input_router.c — this button must never enter
+           Causality's own Tab-focus/Enter-activation cycle. Without this,
+           clicking the viewport claims Causality's internal keyboard focus
+           (win->focused_node), and every later Enter/Space keystroke
+           re-fires on_term_viewport_click as a synthetic "activation" on
+           top of being forwarded to the PTY, and bumps sig_terminal_rev a
+           second time mid-frame. */
+        .skip_keyboard_focus = true,
     });
 
     SolTerminal *term = sol_terminal_manager_active(mgr);

@@ -285,6 +285,7 @@ static void sol_register_terminal_command_defaults(SolUISystem *ui)
         { "terminal.toggle",           "Focus/toggle terminal",    'T' },
         { "terminal.position.bottom",  "Terminal: bottom",         'H' },
         { "terminal.position.right",   "Terminal: right",          'V' },
+        { "terminal.position.float",   "Terminal: float",          'F' },
         { "terminal.kill",             "Kill terminal",            'X' },
         { "terminal.tab.new",          "New terminal tab",         'C' },
         { "terminal.tab.next",         "Next terminal tab",        'N' },
@@ -1747,6 +1748,15 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
 
         if (strcmp(p->action, "terminal.position.right") == 0) {
             sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_RIGHT);
+            if (sol_terminal_manager_visible(mgr)) {
+                sol_ui_system_terminal_set_focused(app->ui, true);
+            }
+            sol_ui_system_terminal_notify(app->ui);
+            return true;
+        }
+
+        if (strcmp(p->action, "terminal.position.float") == 0) {
+            sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_FLOAT);
             if (sol_terminal_manager_visible(mgr)) {
                 sol_ui_system_terminal_set_focused(app->ui, true);
             }

@@ -88,6 +88,129 @@ Main thread drains in `sol_ui_on_frame` via `sol_terminal_manager_drain()`:
 This caps per-frame VT-parse CPU at ~64KB × parse overhead, keeping the UI responsive at ≤60 fps
 even when a process floods the terminal at MB/s rates.
 
+## Terminal Positions
+
+`SolTerminalPosition` (`sol_terminal.h`): `BOTTOM` (0), `RIGHT` (1), `FLOAT` (2).
+
+BOTTOM/RIGHT dock as one pane of a `ca_split_begin` split shared with the
+buffer/tree area (`sol_ui_render_buffer_and_terminal`). FLOAT is a centered
+overlay that does not participate in the split at all:
+- `sol_ui_buffer_area_rect_internal` (workspace.c) skips its shrink branch
+  for FLOAT — buffer area stays full-size.
+- `sol_ui_render_buffer_and_terminal` early-returns for FLOAT (treated like
+  `!term_visible`) — no inline terminal pane, no split.
+- A separate top-level host `ui->term_float_host` (mounted in
+  `sol_ui_build_layout`, absolute-positioned, z_index 40 — above the
+  workspace (0), below the which-key popup (50)) with its own reactive
+  builder `sol_ui_term_float_builder` renders a dimmed backdrop
+  (`.term-float-backdrop`) plus a fixed-size (70%×60% of viewport) centered
+  panel (`.term-panel.term-float-panel`). Mirrors the `popup_host` /
+  `sol_ui_popup_builder` pattern (see command_panel.c's doc comment) —
+  toggling FLOAT never invalidates the workspace content tree.
+- The float builder writes `ui->term_panel_host`/`term_viewport_host`
+  itself (same fields the docked path writes), so `sol_ui_system_pre_tick`'s
+  row/col grid sizing needs no position-specific logic — it already just
+  reads whichever div is currently mounted there.
+- `sol_ui_render_terminal_panel(ui)` (terminal_panel.c) is reused unchanged
+  for all three positions — it only fills whatever div it's given.
+
+**Hit-testing** (`input_router.c`, `terminal_cell_at_point`): BOTTOM/RIGHT
+re-derive the panel rect from `sol_ui_system_buffer_area_rect` + the split
+ratio (documented in-function — buffer_area_rect already returns the
+post-split buffer share, so the terminal rect is recovered by inverting the
+same ratio, not re-splitting a second time). FLOAT instead calls
+`ca_div_screen_rect(ui->term_panel_host, ...)` directly — exact, no ratio
+math, immune to how the panel is sized/centered. (This is arguably better
+than the split-based approach and could replace it for BOTTOM/RIGHT too as a
+future simplification, but that wasn't done — out of scope for the FLOAT
+addition.)
+
+**FLOAT-only input behavior** (`input_router.c`), both scoped strictly to
+`position == SOL_TERMINAL_POSITION_FLOAT` so BOTTOM/RIGHT are unchanged:
+- ESC (`on_key`, checked before the paste intercept): calls
+  `sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_BUFFER)` instead
+  of forwarding to the PTY. This is the one exception to "ESC always
+  forwards to the PTY" noted below in Input Routing.
+- Click-outside the floating panel (`on_mouse_button`, checked on
+  `MOUSE_DOWN` before the terminal-mouse-passthrough check): same defocus
+  call, consumes the click. Click *inside* the panel falls through to
+  existing click-to-focus/mouse-report logic unchanged.
+- Both just defocus (`SOL_UI_FOCUSED_PANEL_BUFFER`) — they do NOT hide the
+  panel via `sol_terminal_manager_set_visible(false)`. The float panel stays
+  visible-but-unfocused after dismissal, consistent with how
+  visible/focused are already independent flags for BOTTOM/RIGHT. This
+  choice avoided reaching into `main.c`'s `App.focus_before_terminal`
+  restore state (owned by `terminal.toggle`'s dispatch handler, not visible
+  to input_router.c) — `sol_ui_system_set_focused_panel` already clears
+  terminal focus as a side effect (see its doc comment in workspace.c), so
+  no new cross-module plumbing was needed.
+
+**Command flow**: `terminal.position.float` registered in
+`sol_register_terminal_command_defaults` (main.c), bound to `L t f`
+(mnemonic: float). Dispatch block in main.c mirrors bottom/right exactly.
+Also mirrored as literal text in `sol_config.c`'s `SOL_DEFAULT_BINDINGS_CONF`
+(comment + `bind L t f` line) since that template is written verbatim to
+`~/.sol/bindings.conf` on first launch.
+
+**Size**: fixed viewport percentage — 82% width (of window), 78% height (of
+the *workspace* vertical extent, not the raw window — see Centering below).
+Computed at render time in `sol_ui_term_float_builder`, NOT tied to the
+`ratio` field BOTTOM/RIGHT use for split sizing. Tune the two literals if
+the size needs adjusting; no stored state. (Originally shipped at 70%/60%
+of the raw window; user reported "can be bigger" — bumped to 82%/78% and
+switched the height basis to workspace-relative in the same fix pass, see
+Bugfixes below.)
+
+**Centering** (fixed 2026-09-09, see Bugfixes): the overlay host
+(`term_float_host`) and backdrop both span the *raw window*
+(`0,0`–`window_w,window_h`), which includes the title bar strip above and
+the status bar strip below the actual workspace content. Centering the
+panel via plain flexbox `justify-content: center` against that full window
+therefore visually centers it a bit high — pulled up by roughly half the
+title+status chrome height. Fixed by computing the workspace's true
+vertical extent (`title_h` to `window_h - title_h - status_h`, the same
+quantities `sol_ui_buffer_area_rect_internal` uses for its `root_y`/`root_h`
+— not reused directly since that function returns the buffer sub-region,
+not the full workspace) and inserting an explicit-height spacer div above
+the panel instead of relying on flex centering. `.term-float-backdrop`'s
+`justify-content` had to change from `center` to `flex-start` accordingly
+(centering-as-a-unit would have double-offset the spacer+panel pair).
+`.term-float-panel` also needed `flex-grow: 0; flex-shrink: 0;` to override
+base `.term-panel`'s `flex-grow: 1` — without it the panel stretched to
+fill the backdrop's remaining flex space instead of respecting its own
+explicit height.
+
+**Keyboard-focus double-activation bug** (fixed 2026-09-09): Causality's
+widget layer (`widget.c`) has its own internal keyboard-focus system
+(`win->focused_node`), entirely separate from Sol's app-level
+`SolUIFocusedPanel`/`terminal_mgr->focused`. Any `Ca_Button` defaults to
+`keyboard_focusable = true` unless `Ca_BtnDesc.skip_keyboard_focus` is set.
+Clicking the terminal viewport button claimed Causality's own keyboard
+focus; every later Enter/Space keystroke then re-fired the button's
+`on_click` a second time as a synthetic "keyboard activation"
+(`widget.c` ~4356-4374, "Enter/Space to activate focused button") — on top
+of `input_router.c` separately forwarding that same Enter to the PTY. This
+is a latent bug in the docked BOTTOM/RIGHT terminal too (same button, same
+default), but only became visibly disruptive with FLOAT because the
+floating panel's `sig_terminal_rev`-driven rebuild-on-every-PTY-output
+churn made the extra synthetic activation (and its
+`sol_ui_system_terminal_notify` call inside `on_term_viewport_click`) much
+more frequent, reading as "losing focus" after pressing Enter. Fixed by
+setting `.skip_keyboard_focus = true` on the terminal viewport button and
+both tab buttons (`term-viewport`, `term-tab`/`term-tab-active`,
+`term-tab-close`) in `terminal_panel.c` — none of them should participate
+in Tab-navigation or Enter/Space-activation; all real keyboard interaction
+while the terminal is focused goes through `input_router.c`'s PTY-forward
+path, not Causality's generic widget-activation path.
+
+**Verification status**: build succeeds clean, app launches with no startup
+errors. Still NOT interactively driven — this session's shell has no
+screen-recording permission ([[screencapture_unavailable]]) and no GUI
+automation set up for Sol, so the centering fix, size increase, and
+keyboard-focus fix are code-verified (traced through Causality's actual
+layout/widget source) but not yet visually/interactively confirmed by
+actually running the app by hand.
+
 ## Workspace Integration
 
 `SolUISystem` (in `sol_ui_internal.h`) gained:
@@ -155,6 +278,7 @@ Bindings are also written to `~/.sol/bindings.conf` on first launch via `SOL_DEF
 | `terminal.toggle` | L t t | Show/hide terminal + focus toggle |
 | `terminal.position.bottom` | L t h | Dock at bottom; retains focus if visible |
 | `terminal.position.right` | L t v | Dock on right; retains focus if visible |
+| `terminal.position.float` | L t f | Center as floating overlay; retains focus if visible |
 | `terminal.kill` | L t x | Kill active terminal tab |
 | `terminal.tab.new` | L t c | Open new terminal tab + focus it |
 | `terminal.tab.next` | L t n | Switch to next tab + show + focus |
