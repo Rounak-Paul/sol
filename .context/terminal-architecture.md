@@ -203,13 +203,37 @@ in Tab-navigation or Enter/Space-activation; all real keyboard interaction
 while the terminal is focused goes through `input_router.c`'s PTY-forward
 path, not Causality's generic widget-activation path.
 
+**Backdrop blur** (added 2026-09-09): `.term-float-backdrop` (the dimmed
+scrim behind the floating panel) is wired into
+`sol_settings_build_appearance_css` (`sol_settings.c`) alongside
+`.fp-root, .search-root-window, .pm-root, .sw-root` — same rule shape
+(`backdrop-filter: blur(%.1fpx); opacity: %.3f;`, no `border-radius` since
+it's a full-bleed surface, not a rounded card). This is the SAME
+`backdrop-filter` mechanism [[floating-glass-ui-overhaul-2026-08-29]]
+(Round 7) proved works for panel-level surfaces — do not confuse with the
+*menu-popup* blur path ([[backdrop_blur_removed]]) which is the one
+confirmed broken at the GPU level; those are different CSS rule sets on
+different element classes, not the same code path. `.term-panel`/
+`.term-panel-focused` (the panel itself, both docked and floating) already
+inherited blur for free from the pre-existing shared panel-blur selector —
+only the backdrop scrim needed a new selector added. Effective blur amount
+is driven entirely by the user's live Settings > Theme picker
+`panel_blur`/`panel_opacity` sliders (this user's saved settings.json has
+`panel_blur: 40.00` — the max — and `panel_opacity: 1.00`, i.e. the panel
+itself renders fully opaque regardless of blur; only the backdrop scrim
+will visibly show the blur effect for this user, which is the intended
+target of this fix anyway).
+
 **Verification status**: build succeeds clean, app launches with no startup
-errors. Still NOT interactively driven — this session's shell has no
-screen-recording permission ([[screencapture_unavailable]]) and no GUI
-automation set up for Sol, so the centering fix, size increase, and
-keyboard-focus fix are code-verified (traced through Causality's actual
-layout/widget source) but not yet visually/interactively confirmed by
-actually running the app by hand.
+errors, under both plain and (not yet re-run for this specific change)
+`VK_LAYER_KHRONOS_validation`. Still NOT interactively driven — this
+session's shell has no screen-recording permission
+([[screencapture_unavailable]]) and no GUI automation set up for Sol, so
+the centering fix, size increase, keyboard-focus fix, and backdrop-blur
+wiring are code-verified (traced through Causality's actual layout/widget
+source, and cross-checked against the proven-working backdrop-filter
+precedent) but not yet visually/interactively confirmed by actually running
+the app by hand.
 
 ## Workspace Integration
 

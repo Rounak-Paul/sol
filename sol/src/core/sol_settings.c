@@ -545,8 +545,13 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
            Search) are plain OS-decorated square windows, not borderless
            floating panels — share blur/opacity but never corner-radius,
            which would round their root div against nothing and expose
-           the window's default backdrop at the corners. */
-        ".fp-root, .search-root-window, .pm-root, .sw-root {"
+           the window's default backdrop at the corners.
+           .term-float-backdrop (the floating terminal's dimmed scrim) is
+           the same shape: a full-bleed surface behind a rounded card, not
+           itself rounded — shares this rule rather than the panel-radius
+           one above. */
+        ".fp-root, .search-root-window, .pm-root, .sw-root,"
+        ".term-float-backdrop {"
         "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
         "}"
