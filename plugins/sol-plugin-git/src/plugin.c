@@ -1755,6 +1755,22 @@ static void git_panel_tick(void *user_data)
         ca_input_focus(plugin->branch_input);
         plugin->needs_branch_focus = false;
     }
+
+    /* Neither ca_input has an on-focus callback, only on-change — so a click
+       that focuses the input without editing it would never route through
+       here otherwise. Poll focus every tick instead: this is the panel's
+       only chance to tell the router the terminal no longer owns keyboard
+       focus. sol_ui_system_set_focused_panel() is a no-op once the panel is
+       already SOL_UI_FOCUSED_PANEL_TREE, so polling every frame is cheap.
+       Without this, typing into the commit/branch input while terminal
+       focus is still sticky from a prior terminal use leaks every keystroke
+       to the PTY instead of the input (input_router.c on_key/on_char check
+       sol_terminal_manager_focused() first). */
+    if ((plugin->commit_input && ca_input_is_focused(plugin->commit_input)) ||
+        (plugin->branch_input && ca_input_is_focused(plugin->branch_input))) {
+        SolUISystem *ui = sol_plugin_ui(plugin->ctx);
+        if (ui) sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_TREE);
+    }
     if (plugin->commit_input &&
         ca_input_key_pressed(plugin->commit_input, SOL_KEY_ENTER) &&
         plugin->snapshot.staged_count > 0u &&

@@ -58,6 +58,34 @@ Planned fix:
   even when they share the same underlying SolTextBuffer (e.g. same file
   open in two split panes).
 
+2026-09-08 terminal hit-rect double-subtraction (wrong-pane scroll bug):
+- User report: terminal docked right, buffer in the middle; scrolling with the mouse clearly
+  over the buffer pane instead scrolled the terminal.
+- Root cause in `terminal_cell_at_point()` (`sol/src/ui/input_router.c`), used by
+  `on_mouse_scroll` and mouse click/drag routing to decide "is the pointer over the terminal
+  grid": it read `bx,by,bw,bh` from `sol_ui_system_buffer_area_rect()` — but that rect is
+  already the buffer's share AFTER `sol_ui_buffer_area_rect_internal()`
+  (`sol/src/ui/workspace.c`) subtracted the terminal's split. `terminal_cell_at_point` then
+  applied `(1-ratio)`/`ratio` a SECOND time on top of that already-shrunk rect, computing a
+  phantom terminal hit-box that landed partway INSIDE the real buffer pane instead of at the
+  terminal's true screen position (concretely, with a 30% terminal ratio, ~the rightmost 70% of
+  the buffer's own width was misclassified as "over the terminal").
+- Fix: invert the same panel_gap/ratio split `sol_ui_buffer_area_rect_internal` applied, to
+  recover the true pre-split extent from the already-split buffer rect (`available = bw /
+  buffer_ratio` for the RIGHT case, `bh / buffer_ratio` for BOTTOM), then place the terminal
+  rect directly after `buffer + panel_gap`. Guards added for `buffer_ratio <= 0` and
+  non-positive resulting `vw`/`vh`.
+- This function backs 3 call sites (scroll routing, and two mouse click/drag sites) — fixing it
+  once fixes wrong-pane scroll AND any click/drag misrouting into a mouse-aware terminal app
+  (htop/less/etc.) in that same phantom zone.
+- Lesson: `sol_ui_system_buffer_area_rect()` is POST-terminal-split. Anything that needs the
+  terminal's own on-screen rect must not re-apply the split ratio on top of it — either invert
+  the subtraction (as done here) or add a dedicated pre-split accessor if a second call site
+  ever needs this.
+- Verification: `sol_plugin_git` + `sol` build clean, full ctest 16/16 pass, `./bin/sol`
+  launches and stays alive. Not visually re-confirmed by the user yet — see
+  [[screencapture_unavailable]].
+
 2026-06-07 scrollbar geometry/drag follow-up:
 - Vertical editor scrollbar must use the actual pane-height track, not `viewport_lines * line_height`; otherwise its thumb cannot reach the bottom of tall panes.
 - Horizontal editor scrollbar should be flush to the bottom edge of the text pane and span the text viewport width, not leave the old 8px padding gap underneath.

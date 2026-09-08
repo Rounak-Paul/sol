@@ -186,6 +186,15 @@ static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (!tmgr || !sol_terminal_manager_visible(tmgr)) return false;
 
+    /* sol_ui_system_buffer_area_rect() already returns the buffer's share
+       AFTER subtracting the terminal's split — it is not the pre-split
+       workspace rect. Re-deriving the terminal rect by applying (1-ratio)/
+       ratio a second time on top of that already-shrunk rect would carve a
+       phantom terminal box out of the buffer area itself instead of
+       matching the terminal's real on-screen position. Invert the same
+       panel_gap/ratio split sol_ui_buffer_area_rect_internal() applied to
+       recover the true pre-split extent, then place the terminal directly
+       after the buffer + gap. */
     float bx, by, bw, bh;
     if (!sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) ||
         bw <= 0.0f || bh <= 0.0f) {
@@ -193,19 +202,26 @@ static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
     }
 
     const float ratio = sol_terminal_manager_ratio(tmgr);
+    const float buffer_ratio = 1.0f - ratio;
+    if (buffer_ratio <= 0.0f) return false;
+    const float scale = sol_ui_system_scale(r->ui);
+    const float panel_gap = SOL_UI_PANEL_GAP_PX * scale;
     const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
     float vx, vy, vw, vh; /* terminal panel rect, header not yet excluded */
     if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
-        vy = by + bh * (1.0f - ratio);
+        const float available = bh / buffer_ratio;
         vx = bx;
+        vy = by + bh + panel_gap;
         vw = bw;
-        vh = by + bh - vy;
+        vh = available - bh;
     } else {
-        vx = bx + bw * (1.0f - ratio);
+        const float available = bw / buffer_ratio;
+        vx = bx + bw + panel_gap;
         vy = by;
-        vw = bx + bw - vx;
+        vw = available - bw;
         vh = bh;
     }
+    if (vw <= 0.0f || vh <= 0.0f) return false;
     if (x < vx || x >= vx + vw || y < vy || y >= vy + vh) return false;
 
     const float ui_scale = sol_ui_system_scale(r->ui);

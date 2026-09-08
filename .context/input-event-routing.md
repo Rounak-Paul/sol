@@ -48,3 +48,27 @@ router's `buffer_input_active` field (gates whether KEY_DOWN reaches `handle_tex
 was previously only ever set from observed mouse clicks inside `input_router.c` itself; there
 was no way for a command action to programmatically restore it. This is the general pattern for
 any future "focus panel X via command/keybinding" action that targets the buffer.
+
+## Terminal focus leak into plugin-owned Ca_TextInput widgets (2026-09-08)
+
+User-reported bug: typing a commit message in the git panel's commit-message box also typed
+into the terminal last used. Root cause: `Ca_TextInput` (Causality's native text-input widget,
+used by `ca_input()` — e.g. the git plugin's commit-message and new-branch-name boxes) has no
+`on_focus` callback, only `on_change`, and nothing wires a click into it to
+`sol_ui_system_set_focused_panel`. So `sol_terminal_manager_focused` stays true from a prior
+terminal use, and `on_key`/`on_char` in `input_router.c` check that sticky bool FIRST — before
+Causality's own widget dispatch even runs — and forward every keystroke straight to the PTY
+regardless of which widget actually has real (Causality-level) keyboard focus.
+
+Fix: any plugin/panel with a `Ca_TextInput` needs to poll `ca_input_is_focused(input)` once per
+frame (in its own tick callback, since there's no on-focus event) and call
+`sol_ui_system_set_focused_panel(ui, <its panel enum>)` whenever true — see
+`git_panel_tick` in `plugins/sol-plugin-git/src/plugin.c`, which does this for both
+`commit_input` and `branch_input`, using `SOL_UI_FOCUSED_PANEL_TREE` (the sidebar-panel value,
+since the git panel occupies the same sidebar slot as the file tree). The setter is already a
+no-op once the panel is already the focused one, so calling it unconditionally every tick while
+focused is cheap. **This is a general gap, not just a git-plugin bug**: any future panel that
+puts a `Ca_TextInput` in front of the user and doesn't do this same poll-and-funnel will leak
+terminal (or buffer) keystrokes the same way. Causality has no public "is any input focused"
+query — only per-instance `ca_input_is_focused(specific_input)` — so this must be done per input,
+not fixed once at the router level.
