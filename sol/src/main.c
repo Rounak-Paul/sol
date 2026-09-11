@@ -162,6 +162,13 @@ typedef struct SolAppContext {
        sweep out, and the sweep saves everything dirty at that point. */
     uint64_t              autosave_deadline_ns;
     SolFileWatcher        *watcher;
+    /* Independent watcher on the config directory ($HOME/.sol), so a
+       settings.json change saved by *another* Sol instance is picked up
+       and applied live instead of requiring a restart. Separate from
+       `watcher` above (which tracks the explorer root and is repointed
+       by sol_set_explorer_root) since the two watch different,
+       unrelated directories for the whole process lifetime. */
+    SolFileWatcher        *settings_watcher;
     /* Status-bar segment showing "external changes not loaded" while at
        least one dirty buffer has a pending external change. Removed once
        no buffer needs the warning anymore. */
@@ -1344,6 +1351,86 @@ static void sol_drain_file_watcher(SolAppContext *app)
     }
 }
 
+/*
+ * Drain the settings-directory watcher and, if settings.json changed on
+ * disk since this instance last read or wrote it, reload and re-apply it.
+ *
+ * This is what lets multiple concurrently-running Sol instances share
+ * settings.json: instance A saves a theme change, instance B's watcher
+ * fires, B reloads and re-applies just the fields that actually differ.
+ * Comparing the freshly-loaded struct field-by-field (rather than, say,
+ * reacting unconditionally to every watch event) is what keeps this
+ * instance's *own* saves from re-triggering redundant work on itself —
+ * fopen(wb) + rename always generates a watch event for the writer too,
+ * and by the time it arrives the in-memory settings already match disk.
+ *
+ * app  The application context.
+ */
+static void sol_drain_settings_watcher(SolAppContext *app)
+{
+    if (!app || !app->settings_watcher || !app->ui) return;
+
+    SolFileWatchEvent events[8];
+    const size_t n = sol_file_watcher_poll(app->settings_watcher, events, 8u);
+    if (n == 0u) return;
+
+    bool settings_touched = false;
+    for (size_t i = 0u; i < n; ++i) {
+        if (strcmp(sol_platform_basename(events[i].path), "settings.json") == 0) {
+            settings_touched = true;
+            break;
+        }
+    }
+    if (!settings_touched) return;
+
+    SolSettings fresh = sol_settings_defaults();
+    if (!sol_settings_load(&fresh)) return;
+
+    SolSettings *cur = &app->settings;
+
+    if (strcmp(fresh.theme_id, cur->theme_id) != 0) {
+        if (sol_ui_system_set_active_theme(app->ui, fresh.theme_id)) {
+            snprintf(cur->theme_id, sizeof(cur->theme_id), "%s", fresh.theme_id);
+        }
+    }
+
+    const bool appearance_changed =
+        fresh.corner_radius   != cur->corner_radius   ||
+        fresh.panel_blur      != cur->panel_blur      ||
+        fresh.titlebar_blur   != cur->titlebar_blur   ||
+        fresh.panel_opacity   != cur->panel_opacity   ||
+        fresh.scrollbar_width != cur->scrollbar_width;
+    if (appearance_changed) {
+        cur->corner_radius   = fresh.corner_radius;
+        cur->panel_blur      = fresh.panel_blur;
+        cur->titlebar_blur   = fresh.titlebar_blur;
+        cur->panel_opacity   = fresh.panel_opacity;
+        cur->scrollbar_width = fresh.scrollbar_width;
+        sol_ui_system_apply_appearance(app->ui);
+    }
+
+    if (app->bg_effects && strcmp(fresh.bg_effect_id, cur->bg_effect_id) != 0) {
+        const char *id = fresh.bg_effect_id[0] != '\0' ? fresh.bg_effect_id : NULL;
+        if (sol_bg_effect_set_active(app->bg_effects, id)) {
+            snprintf(cur->bg_effect_id, sizeof(cur->bg_effect_id), "%s", fresh.bg_effect_id);
+        }
+    }
+    if (app->bg_effects && fresh.bg_opacity != cur->bg_opacity) {
+        cur->bg_opacity = fresh.bg_opacity;
+        sol_bg_effect_set_opacity(app->bg_effects, cur->bg_opacity);
+    }
+
+    if (app->instance && fresh.ui_scale != cur->ui_scale) {
+        cur->ui_scale = fresh.ui_scale;
+        ca_instance_set_scale(app->instance, cur->ui_scale);
+    }
+
+    /* autosave_enabled has no live-applied side effect beyond the flag
+       itself (sol_run_autosave_sweep reads app->settings directly each
+       frame), so a plain assignment is enough to pick it up. */
+    cur->autosave_enabled = fresh.autosave_enabled;
+}
+
 static bool sol_toggle_explorer_focus(SolAppContext *app)
 {
     if (!app || !app->ui || !app->buffers) return false;
@@ -1997,6 +2084,28 @@ int main(int argc, char **argv)
         sol_file_watcher_set_wake_callback(app.watcher, sol_on_file_watcher_wake, NULL);
     }
 
+    /* Independent watcher on $HOME/.sol so a settings.json change saved by
+       another concurrently-running Sol instance is picked up live instead
+       of only on next launch. A failed watch here is non-fatal for the
+       same reason as above — settings still load once at startup and
+       save correctly, cross-instance live sync is a convenience layer
+       on top. */
+    char *config_dir = sol_config_dir();
+    if (config_dir) {
+        app.settings_watcher = sol_file_watcher_create();
+        if (app.settings_watcher) {
+            sol_file_watcher_set_wake_callback(app.settings_watcher,
+                                               sol_on_file_watcher_wake, NULL);
+            if (!sol_file_watcher_set_root(app.settings_watcher, config_dir)) {
+                fprintf(stderr, "[sol] warning: settings watcher unavailable; "
+                                "changes from other Sol instances need a restart to appear\n");
+                sol_file_watcher_destroy(app.settings_watcher);
+                app.settings_watcher = NULL;
+            }
+        }
+        free(config_dir);
+    }
+
     /* Now safe to open the CLI file (renderer is wired up). */
     if (cli_path && !cli_is_dir) {
         if (!sol_open_path_in_active_leaf(&app, cli_path)) {
@@ -2134,6 +2243,7 @@ int main(int argc, char **argv)
             sol_run_deferred_init(&app, argc, argv);
         }
         sol_drain_file_watcher(&app);
+        sol_drain_settings_watcher(&app);
         sol_run_autosave_sweep(&app);
         sol_system_end_frame(app.systems);
     }
@@ -2155,6 +2265,8 @@ int main(int argc, char **argv)
        ordering requirement as the terminal manager's PTY reader below. */
     sol_file_watcher_destroy(app.watcher);
     app.watcher = NULL;
+    sol_file_watcher_destroy(app.settings_watcher);
+    app.settings_watcher = NULL;
 
     sol_input_router_destroy(app.router);
     /* Plugins must quiesce and unregister while the UI, syntax registry, and

@@ -9,7 +9,8 @@
  */
 
 #include "sol_settings.h"
-#include "sol_config.h"   /* sol_config_path() */
+#include "sol_config.h"     /* sol_config_path() */
+#include "sol_platform.h"   /* sol_platform_replace_file() */
 
 #include <ctype.h>
 #include <errno.h>
@@ -17,6 +18,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <process.h>
+#define sol_settings_getpid() ((long)_getpid())
+#else
+#include <unistd.h>
+#define sol_settings_getpid() ((long)getpid())
+#endif
 
 #define SOL_SETTINGS_FILENAME "settings.json"
 
@@ -416,6 +425,14 @@ bool sol_settings_load(SolSettings *out)
 /*
  * Save settings to disk.
  *
+ * Writes to a per-process temp file in the config directory and atomically
+ * replaces settings.json (sol_platform_replace_file — rename() on POSIX,
+ * MoveFileExW with MOVEFILE_REPLACE_EXISTING on Windows) so a concurrent
+ * reader (another Sol instance, or its settings-file watcher) never
+ * observes a partially-written file, and two instances saving around the
+ * same time cannot tear each other's write — the file always reflects
+ * one save or the other in full, never a mix.
+ *
  * settings  Settings to save.
  * Returns false on write error or invalid arguments; true on success.
  */
@@ -426,9 +443,21 @@ bool sol_settings_save(const SolSettings *settings)
     char *path = sol_config_path(SOL_SETTINGS_FILENAME);
     if (!path) return false;
 
-    FILE *fp = fopen(path, "wb");
-    free(path);
-    if (!fp) return false;
+    char tmp_name[64];
+    snprintf(tmp_name, sizeof(tmp_name), "%s.tmp%ld",
+             SOL_SETTINGS_FILENAME, sol_settings_getpid());
+    char *tmp_path = sol_config_path(tmp_name);
+    if (!tmp_path) {
+        free(path);
+        return false;
+    }
+
+    FILE *fp = fopen(tmp_path, "wb");
+    if (!fp) {
+        free(path);
+        free(tmp_path);
+        return false;
+    }
 
     /* Escape quotes in the effect id for JSON safety (effect ids are
        expected to be simple dotted identifiers, but guard anyway). */
@@ -483,8 +512,23 @@ bool sol_settings_save(const SolSettings *settings)
         (double)settings->scrollbar_width,
         settings->autosave_enabled ? "true" : "false");
 
+    /* fflush + fclose before replace: the atomic rename only guarantees
+       the destination sees a complete *file*, not that our own buffered
+       writes reached disk before we ask the OS to swap it in. */
+    const bool flushed = (n > 0) && (fflush(fp) == 0);
     fclose(fp);
-    return n > 0;
+
+    bool ok = false;
+    if (flushed) {
+        ok = sol_platform_replace_file(tmp_path, path);
+    }
+    if (!ok) {
+        remove(tmp_path);   /* best-effort cleanup of the orphaned temp file */
+    }
+
+    free(path);
+    free(tmp_path);
+    return ok;
 }
 
 /*
