@@ -36,7 +36,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  scrollbar-thumb-color: rgba(126, 145, 168, 0.38);"
     "  scrollbar-thumb-active-color: rgba(154, 180, 210, 0.62);"
     "}"
-    "splitter { background: transparent; color: rgba(89, 122, 163, 0.18); }"
+    "splitter { background: transparent; }"
     /* ===== Causality system chrome ===== */
     ".ca-titlebar {"
     "  background: rgba(4, 8, 15, 0.90); "

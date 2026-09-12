@@ -220,3 +220,9 @@ that factor is silently 1.0 (making the bug invisible) exactly when the
 requested font size happens to already be a multiple of the atlas tier's
 1/64px quantization grid, which is common enough at the default 1.0 scale
 to pass a superficial check but wrong in general.
+
+## Glyph edge clipping follow-up (2026-09-12)
+
+Advance accumulation remains unchanged. A separate right-edge clipping bug was
+fixed in Causality's text clip helper; see `text-glyph-clipping.md` for the
+reproduction, overflow contract and regression coverage.
