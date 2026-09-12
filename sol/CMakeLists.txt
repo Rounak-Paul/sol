@@ -82,6 +82,28 @@ if(APPLE)
     target_link_libraries(sol PRIVATE ${SOL_CORESERVICES_FRAMEWORK})
 endif()
 
+# On macOS, Vulkan is a system-wide SDK/loader install (e.g. LunarG's
+# /usr/local/lib), never vendored into this project. CMake's default
+# install() strips build-tree rpaths pointing at what it considers a
+# system library directory (which /usr/local/lib is, on macOS) instead of
+# keeping them — but unlike Linux's dynamic linker, dyld does NOT search
+# /usr/local/lib by default, so the installed binary fails with "no
+# LC_RPATH's found" for libvulkan.1.dylib. Re-embed the loader's actual
+# directory as an explicit install rpath so the installed binary can find
+# it without relying on the caller's environment.
+if(APPLE)
+    get_target_property(SOL_VULKAN_LOCATION Vulkan::Vulkan IMPORTED_LOCATION)
+    if(SOL_VULKAN_LOCATION)
+        get_filename_component(SOL_VULKAN_LIBDIR "${SOL_VULKAN_LOCATION}" DIRECTORY)
+        set_target_properties(sol PROPERTIES
+            INSTALL_RPATH "${SOL_VULKAN_LIBDIR}"
+            BUILD_WITH_INSTALL_RPATH FALSE
+        )
+    endif()
+endif()
+
+install(TARGETS sol RUNTIME DESTINATION bin)
+
 # ---- Tests --------------------------------------------------------------
 # The rope is self-contained (libc + POSIX mmap) and is the highest-risk
 # piece of new code, so it gets a dedicated unit-test executable wired
