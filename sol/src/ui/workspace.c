@@ -593,6 +593,15 @@ static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
             .background = 0u,
             .on_click   = cb ? sol_ui_on_tab_click : NULL,
             .click_data = cb,
+            /* This click only routes keyboard focus to the buffer panel as
+               a side effect of a positional click — it must never itself
+               become Causality's keyboard-focused node. Otherwise a later
+               Space/Enter typed into the terminal (or any other panel)
+               re-fires this as a synthetic click via Causality's own
+               Enter/Space-activates-focused-button path, silently
+               stealing focus back to this tab. Same reasoning applies to
+               every other button below in this file. */
+            .skip_keyboard_focus = true,
         });
         const char *full_name = sol_buffer_name(tab_buf);
         bool truncated = false;
@@ -622,6 +631,7 @@ static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
             .background = 0u,
             .on_click   = close_cb ? sol_ui_on_tab_close : NULL,
             .click_data = close_cb,
+            .skip_keyboard_focus = true,
         });
         ca_text(&(Ca_TextDesc){
             .text  = CA_ICON_NF_COD_CLOSE,
@@ -697,6 +707,7 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
             .background = 0u,
             .on_click   = cb ? sol_ui_on_pane_click : NULL,
             .click_data = cb,
+            .skip_keyboard_focus = true,
         });
     }
 

@@ -234,6 +234,11 @@ static void render_row(SolUISystem *ui, const SolFileEntry *entry,
         .direction  = CA_HORIZONTAL,
         .on_click   = on_row_click,
         .click_data = ctx,
+        /* Positional selection only — must not become Causality's
+           keyboard-focused node, or a later Space/Enter typed into the
+           terminal/another panel re-fires this row's click and steals
+           focus back to the tree (see the same fix in workspace.c). */
+        .skip_keyboard_focus = true,
     });
 
     /* Slot 1 — Indent spacer.
@@ -473,6 +478,7 @@ static void render_sticky_row(const SolFileEntry *entry, SolStickyClickCtx *ctx)
         .style      = "tree-sticky-row",
         .on_click   = on_sticky_click,
         .click_data = ctx,
+        .skip_keyboard_focus = true,
     });
     /* 1. depth indent */
     ca_div_begin(&(Ca_DivDesc){
