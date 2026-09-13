@@ -46,3 +46,39 @@ The background itself is normally viewed through translucent panels or in narrow
 
 - The active user setting already requested a 40px panel blur, so a weak result was not a radius-selection problem. The Causality support cap was raised to retain that Gaussian radius at the reduced blur scale.
 - Theme CSS previously stacked opaque-ish editor, terminal, gutter, and viewport surfaces on top of the backdrop-filter result. The outer pane is now the sole tinted glass layer; nested buffer, terminal, gutter, and scroll surfaces are transparent. Dark panels use lower alpha and chrome is reduced from 0.86 to 0.68, allowing the CSS-blurred background to be visibly diffused while preserving an opaque elevated popup layer for readability.
+
+## Mouse-move GPU spike fixed 2026-09-13
+
+Root cause: `vendors/causality/causality/src/renderer/renderer.c` (`ca_renderer_frame`) had
+`if (win->bg_render_fn || inst->default_bg_render_fn) win->needs_render = true;` — forcing a
+full render on literally every tick of the event loop whenever *any* bg-render callback was
+registered, regardless of what woke that tick. Raw GLFW cursor-pos events fire on every pixel of
+mouse movement and each one wakes the loop immediately (`glfw_cursor_pos_cb` in
+`platform/window.c`), so pointer motion drove the background shader / backdrop-blur render path
+at input-event rate (measured 100+ renders/sec while moving the mouse) instead of the intended
+15fps animation cadence — reproduced live via stderr counters comparing `bg_render/sec` to
+`mouse_move/sec` (they tracked ~1:1 before the fix). This happened even with **no** shader effect
+selected (`theme.effect: ""`): `sol_ui_system_set_bg_effects` wires `bg_render_fn` unconditionally
+once a registry is attached, so the forced-render line fired regardless of whether an effect was
+active — `bg_effect_render` itself no-ops on `active_idx < 0`, but the wasted full swapchain
+present still happened every tick.
+
+Fix (moved the cadence decision from Causality-core inference to an explicit Sol-owned request):
+- Causality: removed the unconditional force. Added `ca_window_request_bg_render(Ca_Window*)` and
+  `ca_instance_request_bg_render(Ca_Instance*)` (declared in `include/ca_gpu.h`, implemented in
+  `src/platform/window.c`) — the only way `needs_render` gets set for background content now.
+  `ca_renderer_frame` just checks `win->needs_render` like any other paint trigger.
+- Sol: `sol_ui_on_frame` (`sol/src/ui/workspace.c`) tracks a new `SolUISystem.bg_next_render_ns`
+  field (`sol_ui_internal.h`) and only calls `ca_instance_request_bg_render` when
+  `sol_platform_now_monotonic_ns() >= bg_next_render_ns`, then reschedules from *that* tick's
+  timestamp — so an early wake (mouse move, keypress, scroll) never advances or resets the
+  cadence, it just gets skipped until the real deadline.
+- Verified via temporary stderr instrumentation (counters + 1/sec dump) in a separately-launched
+  `./bin/sol`, then removed before considering the fix complete: idle/no-effect bg-render calls
+  dropped from a sustained 80-120/sec to ~4 total (startup settling only, then silent) over a
+  12s run. Did not get a live real-mouse-motion sample (the running Claude Code session's own
+  Sol window is a separate, pre-fix, long-lived process, not a valid test target) — user opted to
+  accept the counter evidence + full CTest pass (18/18) instead of a manual live check.
+- Full build clean, all 18 CTests pass. No behavior change intended for the resize/first-frame
+  paths (`pending_swapchain_resize`, normal dirty-content `needs_render` sets) — only the
+  bg-effect-specific forced render was touched.

@@ -1300,12 +1300,30 @@ static void sol_ui_on_frame(void *user_data)
     }
 
     /* The active plugin selects its animation rate. Schedule a timed frame
-       without turning Causality into a continuous polling renderer. */
+       without turning Causality into a continuous polling renderer.
+
+       on_frame runs every tick regardless of what woke it — including raw
+       pointer motion, which fires far more often than any sane animation
+       cadence. Causality no longer force-renders the background just
+       because a bg_render_fn is registered (that reintroduced uncapped
+       background rendering keyed to input-event rate instead of fps), so
+       bg_next_render_ns is the explicit "is this tick actually due" check:
+       only request the background frame when the cadence deadline has
+       passed, and reschedule from *this* tick's time rather than every
+       tick, so an early wake never pushes the next deadline further out. */
     const double bg_frame_interval = ui->bg_effects
         ? sol_bg_effect_active_frame_interval(ui->bg_effects)
         : 0.0;
-    if (bg_frame_interval > 0.0)
+    if (bg_frame_interval > 0.0) {
+        const uint64_t now_ns = sol_platform_now_monotonic_ns();
+        if (now_ns >= ui->bg_next_render_ns) {
+            ca_instance_request_bg_render(ui->instance);
+            ui->bg_next_render_ns = now_ns + (uint64_t)(bg_frame_interval * 1e9);
+        }
         ca_instance_request_frame_after(ui->instance, bg_frame_interval);
+    } else {
+        ui->bg_next_render_ns = 0u;
+    }
 
     /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
      * so the workspace-content builder re-runs every tick and evaluates

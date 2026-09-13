@@ -236,6 +236,17 @@ struct SolUISystem {
        the cursor cell or render it as a normal cell. */
     bool              term_cursor_blink_on;
 
+    /* Next monotonic-ns timestamp at which the active background effect is
+       due to render, per its own animation_fps cadence. Zero means "render
+       on the next on_frame tick" (covers startup and any cadence change).
+       on_frame is called every tick regardless of what woke it (including
+       raw pointer motion), so this — not "a bg_render_fn is registered" — is
+       what decides whether this tick actually requests a background frame
+       via ca_window_request_bg_render(). See project_bg_effects memory /
+       .context/background-effects-power-budget note for the mouse-move GPU
+       spike this prevents. */
+    uint64_t          bg_next_render_ns;
+
     /* ---- Reactive state (causality fine-grained signals) ----
      *
      * In the idiomatic causality design, state IS the signal: every
