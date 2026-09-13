@@ -2236,15 +2236,23 @@ int main(int argc, char **argv)
 
     for (;;) {
         sol_system_begin_frame(app.systems);
+        /* Watcher/autosave drains run before ca_instance_tick, not after:
+           they are what bumps the reactive signals (sig_file_tree_rev,
+           settings reload, buffer touch) that this tick's UI pass reads.
+           ca_instance_tick is where the reactive flush + dirty-content
+           check + needs_render/swapchain-present all happen — bumping a
+           signal after it returns leaves the (now up to date) widget
+           tree correctly rebuilt but unpainted until some unrelated
+           input event drives the next tick. */
+        sol_drain_file_watcher(&app);
+        sol_drain_settings_watcher(&app);
+        sol_run_autosave_sweep(&app);
         sol_ui_system_pre_tick(app.ui);
         if (!ca_instance_tick(instance)) break;
         sol_system_pump_events(app.systems, 128u);
         if (!app.deferred_init_done) {
             sol_run_deferred_init(&app, argc, argv);
         }
-        sol_drain_file_watcher(&app);
-        sol_drain_settings_watcher(&app);
-        sol_run_autosave_sweep(&app);
         sol_system_end_frame(app.systems);
     }
 
