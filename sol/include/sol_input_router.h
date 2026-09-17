@@ -56,6 +56,10 @@ SolInputRouter *sol_input_router_create(Ca_Instance     *instance,
  *
  * Call this BEFORE destroying any of the subsystems it was created with.
  */
+/** Route subsequent host-window events to ui, input and buffers after a project switch. */
+void sol_input_router_bind(SolInputRouter *router, SolUISystem *ui,
+                           SolInputSystem *input, SolBufferSystem *buffers);
+
 void sol_input_router_destroy(SolInputRouter *router);
 
 /*

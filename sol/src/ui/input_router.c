@@ -939,6 +939,20 @@ SolInputRouter *sol_input_router_create(Ca_Instance *instance, SolUISystem *ui,
  *
  * router  The router to destroy (safe to call with NULL).
  */
+/** Rebind router to a project and discard transient pointer/key routing state. */
+void sol_input_router_bind(SolInputRouter *router, SolUISystem *ui,
+                           SolInputSystem *input, SolBufferSystem *buffers)
+{
+    if (!router) return;
+    router->ui = ui;
+    router->input = input;
+    router->buffers = buffers;
+    router->buffer_input_active = ui && sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_BUFFER;
+    router->suppress_next_text_input = false;
+    router->terminal_mouse_down = false;
+    router->horizontal_scroll_remainder = 0;
+}
+
 void sol_input_router_destroy(SolInputRouter *router)
 {
     if (!router) return;

@@ -69,4 +69,7 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
  */
 void sol_file_picker_tick(void);
 
+/** Cancel and destroy all pickers whose callback belongs to owner. */
+void sol_file_picker_cancel_owner(void *owner);
+
 #endif /* SOL_FILE_PICKER_H */

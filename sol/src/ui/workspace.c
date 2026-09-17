@@ -140,9 +140,10 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     const float panel_gap = SOL_UI_PANEL_GAP_PX * scale;
 
     float root_x = panel_margin;
-    float root_y = title_h + panel_margin;
+    const float project_tabs_h = ui->project_tabs_builder ? SOL_UI_PROJECT_TABS_HEIGHT * scale : 0.0f;
+    float root_y = title_h + panel_margin + project_tabs_h;
     float root_w = (float)ui->window_w - panel_margin * 2.0f;
-    float root_h = (float)ui->window_h - title_h - status_h - panel_margin * 2.0f;
+    float root_h = (float)ui->window_h - title_h - status_h - panel_margin * 2.0f - project_tabs_h;
 
     if (root_w < 0.0f) root_w = 0.0f;
     if (root_h < 0.0f) root_h = 0.0f;
@@ -1514,7 +1515,7 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
     /* Compose: theme CSS + appearance overlay (if settings attached). */
     char *composed = NULL;
     if (ui->settings) {
-        char overlay[4096];
+        char overlay[8192];
         int olen = sol_settings_build_appearance_css(ui->settings,
                                                       overlay, (int)sizeof(overlay));
         if (olen > 0) {
@@ -1533,8 +1534,10 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
 
     Ca_Stylesheet *previous = ui->stylesheet;
     ui->stylesheet = stylesheet;
-    ca_instance_set_stylesheet(ui->instance, stylesheet);
-    ca_instance_refresh_styles(ui->instance);
+    if (ui->active) {
+        ca_instance_set_stylesheet(ui->instance, stylesheet);
+        ca_instance_refresh_styles(ui->instance);
+    }
     if (previous) ca_css_destroy(previous);
     if (ui->bg_effects) sol_ui_push_theme_colors(ui->themes, ui->bg_effects);
     snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s", active_id);
@@ -1593,6 +1596,15 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .style     = "workspace-host",
     });
 
+    if (ui->project_tabs_builder) {
+        ui->project_tabs_host = ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL, .style = "project-tabs",
+        });
+        ca_div_set_builder(ui->project_tabs_host, ui->project_tabs_builder,
+                           ui->project_tabs_data);
+        ca_div_end();
+    }
+
     ui->workspace_content_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style     = "workspace-main-full",
@@ -1649,7 +1661,8 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .direction = CA_VERTICAL,
         .position  = CA_POSITION_ABSOLUTE,
         .pos_x     = SOL_UI_PANEL_MARGIN_PX,
-        .pos_y     = SOL_UI_PANEL_MARGIN_PX + SOL_UI_TREE_STICKY_TOP,
+        .pos_y     = SOL_UI_PANEL_MARGIN_PX + SOL_UI_TREE_STICKY_TOP +
+                     (ui->project_tabs_builder ? SOL_UI_PROJECT_TABS_HEIGHT : 0.0f),
         .z_index   = 5,
         .style     = "tree-sticky-host",
         .no_hover  = true,   /* transparent to hover — sticky-row children still hit-test */
@@ -1678,9 +1691,10 @@ static bool sol_ui_build_layout(SolUISystem *ui)
  * buffers   The buffer system to manage.
  * Returns   A new SolUISystem, or NULL if initialization fails.
  */
-SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffers)
+SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
+                                  SolBufferSystem *buffers)
 {
-    if (!instance || !buffers) {
+    if (!instance || !window || !buffers) {
         return NULL;
     }
 
@@ -1730,14 +1744,14 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
         !ui->sig_tree_scroll || !ui->sig_terminal_rev ||
         !ui->sig_side_panel_rev || !ui->sig_bg_effect_rev ||
         !ui->sig_theme_rev || !ui->sig_focused_panel) {
-        free(ui);
+        sol_ui_system_destroy(ui);
         return NULL;
     }
     sol_buffer_attach_revision_signal(buffers, ui->sig_buffer_rev);
 
     ui->file_tree = sol_file_tree_create();
     if (!ui->file_tree) {
-        free(ui);
+        sol_ui_system_destroy(ui);
         return NULL;
     }
     sol_file_tree_attach_revision_signal(ui->file_tree, ui->sig_file_tree_rev);
@@ -1766,56 +1780,19 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
             },
             .has_colors = true,
         })) {
-        sol_theme_registry_destroy(ui->themes);
-        sol_file_tree_destroy(ui->file_tree);
-        free(ui);
+        sol_ui_system_destroy(ui);
         return NULL;
     }
 
     ui->stylesheet = ca_css_parse(sol_theme_active_css(ui->themes));
     if (!ui->stylesheet) {
-        sol_theme_registry_destroy(ui->themes);
-        sol_file_tree_destroy(ui->file_tree);
-        free(ui);
+        sol_ui_system_destroy(ui);
         return NULL;
     }
-    ca_instance_set_stylesheet(instance, ui->stylesheet);
+    ui->primary_window = window;
     snprintf(ui->applied_theme_id, sizeof(ui->applied_theme_id), "%s",
              sol_theme_active_id(ui->themes));
 
-    ui->primary_window = ca_window_create(instance, &(Ca_WindowDesc){
-        .title  = SOL_UI_WINDOW_TITLE,
-        .width  = SOL_UI_WINDOW_WIDTH,
-        .height = SOL_UI_WINDOW_HEIGHT,
-    });
-
-    if (!ui->primary_window) {
-        if (ui->stylesheet) {
-            ca_css_destroy(ui->stylesheet);
-        }
-        sol_theme_registry_destroy(ui->themes);
-        free(ui);
-        return NULL;
-    }
-
-    if (!sol_ui_build_layout(ui)) {
-        ca_window_destroy(ui->primary_window);
-        if (ui->stylesheet) {
-            ca_css_destroy(ui->stylesheet);
-        }
-        sol_theme_registry_destroy(ui->themes);
-        free(ui);
-        return NULL;
-    }
-
-    ca_window_set_on_frame(ui->primary_window, sol_ui_on_frame, ui);
-
-    /* Hand the bottom-of-window strip over to causality so we never have
-       to subtract its height from layout calculations. */
-    ca_window_set_status_bar(ui->primary_window,
-                             sol_ui_status_bar_builder,
-                             ui,
-                             SOL_UI_STATUS_BAR_HEIGHT);
     sol_theme_set_change_callback(ui->themes, sol_ui_on_theme_change, ui);
     return ui;
 }
@@ -1828,12 +1805,23 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffer
  *
  * ui  The UI system to destroy.
  */
+void sol_ui_system_close_auxiliary_windows(SolUISystem *ui)
+{
+    if (!ui) return;
+    sol_ui_search_window_close_owner(ui);
+    sol_ui_settings_window_close_owner(ui);
+    sol_ui_plugin_window_close_owner(ui->plugin_manager);
+}
+
+/** Release ui after detaching its project-owned view and services. */
 void sol_ui_system_destroy(SolUISystem *ui)
 {
     if (!ui) {
         return;
     }
 
+    sol_ui_system_set_active(ui, false);
+    sol_buffer_attach_revision_signal(ui->buffers, NULL);
     if (ui->file_tree) {
         sol_file_tree_destroy(ui->file_tree);
         ui->file_tree = NULL;
@@ -1855,13 +1843,7 @@ void sol_ui_system_destroy(SolUISystem *ui)
     free(ui->context_menu_ctxs);
     ui->context_menu_ctxs = NULL;
 
-    if (ui->primary_window) {
-        ca_window_destroy(ui->primary_window);
-        ui->primary_window = NULL;
-    }
-    if (ui->instance && ui->stylesheet) {
-        ca_instance_set_stylesheet(ui->instance, NULL);
-    }
+
     if (ui->stylesheet) {
         ca_css_destroy(ui->stylesheet);
         ui->stylesheet = NULL;
@@ -1869,6 +1851,19 @@ void sol_ui_system_destroy(SolUISystem *ui)
     sol_theme_registry_destroy(ui->themes);
     ui->themes = NULL;
 
+    ca_signal_destroy(ui->sig_buffer_rev);
+    ca_signal_destroy(ui->sig_file_tree_rev);
+    ca_signal_destroy(ui->sig_file_tree_visible);
+    ca_signal_destroy(ui->sig_leader_active);
+    ca_signal_destroy(ui->sig_leader_prefix_rev);
+    ca_signal_destroy(ui->sig_flow_registry_rev);
+    ca_signal_destroy(ui->sig_window_rev);
+    ca_signal_destroy(ui->sig_focused_panel);
+    ca_signal_destroy(ui->sig_tree_scroll);
+    ca_signal_destroy(ui->sig_bg_effect_rev);
+    ca_signal_destroy(ui->sig_theme_rev);
+    ca_signal_destroy(ui->sig_terminal_rev);
+    ca_signal_destroy(ui->sig_side_panel_rev);
     free(ui);
 }
 
@@ -1892,6 +1887,63 @@ Ca_Window *sol_ui_system_primary_window(SolUISystem *ui)
 float sol_ui_system_scale(const SolUISystem *ui)
 {
     return (ui && ui->instance) ? ca_instance_get_scale(ui->instance) : 1.0f;
+}
+
+/** Install builder and data for the host's project tab strip. */
+void sol_ui_system_set_project_tabs(SolUISystem *ui, void (*build)(Ca_Div *, void *), void *data)
+{
+    if (!ui) return;
+    ui->project_tabs_builder = build;
+    ui->project_tabs_data = data;
+}
+
+/** Reconcile the mounted tab strip with the host's current project list. */
+void sol_ui_system_refresh_project_tabs(SolUISystem *ui)
+{
+    if (ui && ui->project_tabs_host)
+        ca_div_set_builder(ui->project_tabs_host, ui->project_tabs_builder, ui->project_tabs_data);
+}
+
+/** Return whether ui currently presents the host window. */
+bool sol_ui_system_is_active(const SolUISystem *ui)
+{
+    return ui && ui->active;
+}
+
+/** Mount or remove ui's view; project data remains alive while unmounted. */
+bool sol_ui_system_set_active(SolUISystem *ui, bool active)
+{
+    if (!ui || ui->active == active) return ui != NULL;
+    if (!active) {
+        ui->saved_tree_scroll = ca_get_scroll_y(ui->primary_window, "tree-list");
+        sol_ui_close_leader_popup(ui);
+        ca_window_set_on_frame(ui->primary_window, NULL, NULL);
+        ca_window_set_status_bar(ui->primary_window, NULL, NULL, SOL_UI_STATUS_BAR_HEIGHT);
+        ca_window_set_bg_render(ui->primary_window, NULL, NULL);
+        ca_instance_set_bg_render(ui->instance, NULL, NULL);
+        ca_instance_set_stylesheet(ui->instance, NULL);
+        ca_div_destroy(ui->workspace_host);
+        ui->workspace_host = ui->workspace_content_host = NULL;
+        ui->project_tabs_host = ui->tree_panel_host = ui->buffer_area_host = NULL;
+        ui->term_panel_host = ui->term_float_host = ui->popup_host = NULL;
+        ui->tree_sticky_host = ui->status_bar_host = NULL;
+        ui->term_viewport_host = NULL;
+        ui->glass_panel_count = 0;
+        ui->active = false;
+        return true;
+    }
+    ui->active = true;
+    ca_instance_set_stylesheet(ui->instance, ui->stylesheet);
+    ca_instance_refresh_styles(ui->instance);
+    if (!sol_ui_build_layout(ui)) { ui->active = false; return false; }
+    ca_set_scroll_y(ui->primary_window, "tree-list", ui->saved_tree_scroll);
+    ca_window_set_on_frame(ui->primary_window, sol_ui_on_frame, ui);
+    ca_window_set_status_bar(ui->primary_window, sol_ui_status_bar_builder, ui,
+                             SOL_UI_STATUS_BAR_HEIGHT);
+    sol_ui_system_refresh_title_bar_menus(ui);
+    sol_ui_system_set_bg_effects(ui, ui->bg_effects);
+    ca_instance_wake();
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2474,7 +2526,7 @@ static void sol_ui_sort_menu_build_groups(SolUIMenuBuildGroup *groups,
 /* Rebuild the complete title-bar menu from host and plugin contributions. */
 static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
 {
-    if (!ui || !ui->primary_window) return;
+    if (!ui || !ui->active || !ui->primary_window) return;
 
     /* Heap-allocated rather than a stack array: SolUIMenuBuildGroup
        nests two 16-element arrays of SolUIMenuBuildItem (each holding
@@ -2954,10 +3006,12 @@ void sol_ui_system_set_bg_effects(SolUISystem *ui, SolBgEffectRegistry *reg)
     if (reg) {
         sol_ui_push_theme_colors(ui->themes, reg);
         sol_bg_effect_set_change_callback(reg, sol_ui_on_bg_effect_change, ui);
-        ca_instance_set_bg_render(ui->instance, sol_bg_effect_on_render_aux, reg);
-        ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
+        if (ui->active) {
+            ca_instance_set_bg_render(ui->instance, sol_bg_effect_on_render_aux, reg);
+            ca_window_set_bg_render(ui->primary_window, sol_bg_effect_on_render, reg);
+        }
         if (sol_bg_effect_active_id(reg)) ca_instance_wake();
-    } else {
+    } else if (ui->active) {
         ca_window_set_bg_render(ui->primary_window, NULL, NULL);
         ca_instance_set_bg_render(ui->instance, NULL, NULL);
     }

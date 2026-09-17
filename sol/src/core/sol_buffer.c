@@ -52,6 +52,7 @@ struct SolBuffer {
 };
 
 struct SolBufferSystem {
+    SolSyntaxRegistry *syntax_registry;
     SolBuffer *buffers;
     size_t buffer_count;
     size_t buffer_capacity;
@@ -1439,4 +1440,16 @@ void sol_buffer_render(SolBuffer *buffer, const SolBufferRenderArgs *args)
     }
 
     buffer->ops.render(buffer, args, buffer->state);
+}
+
+/** Attach the project's registry to system without transferring ownership. */
+void sol_buffer_attach_syntax_registry(SolBufferSystem *system, SolSyntaxRegistry *registry)
+{
+    if (system) system->syntax_registry = registry;
+}
+
+/** Return system's explicitly attached project syntax registry. */
+SolSyntaxRegistry *sol_buffer_syntax_registry(const SolBufferSystem *system)
+{
+    return system ? system->syntax_registry : NULL;
 }

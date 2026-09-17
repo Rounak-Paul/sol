@@ -74,6 +74,9 @@ void sol_ui_ssh_window_open(Ca_Instance *instance,
  */
 void sol_ui_ssh_window_tick(void);
 
+/** Cancel a pending SSH dialog belonging to owner before project teardown. */
+void sol_ui_ssh_window_cancel_owner(void *owner);
+
 #ifdef __cplusplus
 }
 #endif

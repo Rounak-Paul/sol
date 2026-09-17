@@ -18,6 +18,11 @@ typedef struct Ca_Signal Ca_Signal;
 typedef struct SolEventBus SolEventBus;
 
 typedef struct SolBufferSystem SolBufferSystem;
+typedef struct SolSyntaxRegistry SolSyntaxRegistry;
+/** Attach registry to system; it must outlive the system's text buffers. */
+void sol_buffer_attach_syntax_registry(SolBufferSystem *system, SolSyntaxRegistry *registry);
+/** Return the syntax registry owned by this buffer system's project. */
+SolSyntaxRegistry *sol_buffer_syntax_registry(const SolBufferSystem *system);
 typedef struct SolBuffer SolBuffer;
 
 typedef uint64_t SolBufferId;

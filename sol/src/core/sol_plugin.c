@@ -518,7 +518,10 @@ void sol_plugin_manager_attach_ui(SolPluginManager *manager, SolUISystem *ui)
 void sol_plugin_manager_attach_syntax_registry(SolPluginManager  *manager,
                                                 SolSyntaxRegistry *registry)
 {
-    if (manager) manager->syntax_registry = registry;
+    if (manager) {
+        manager->syntax_registry = registry;
+        sol_buffer_attach_syntax_registry(sol_system_buffers(manager->systems), registry);
+    }
 }
 
 /* ================================================================== */

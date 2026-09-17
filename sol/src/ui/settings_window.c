@@ -572,7 +572,7 @@ void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
     if (!instance || !settings) return;
 
     for (SolSettingsWindow *w = g_sw_windows; w; w = w->next) {
-        if (w->window && ca_window_is_open(w->window)) return;
+        if (w->ui == ui && w->window && ca_window_is_open(w->window)) return;
     }
 
     SolSettingsWindow *w = (SolSettingsWindow *)calloc(1, sizeof(*w));
@@ -635,5 +635,19 @@ void sol_ui_settings_window_tick(void)
             continue;
         }
         link = &w->next;
+    }
+}
+
+/** Destroy auxiliary windows owned by this project before its services disappear. */
+void sol_ui_settings_window_close_owner(SolUISystem *ui)
+{
+    SolSettingsWindow **link = &g_sw_windows;
+    while (*link) {
+        SolSettingsWindow *w = *link;
+        if (w->ui != ui) { link = &w->next; continue; }
+        *link = w->next;
+        if (w->window && ca_window_is_open(w->window)) ca_window_destroy(w->window);
+        w->window = NULL;
+        sw_destroy(w);
     }
 }

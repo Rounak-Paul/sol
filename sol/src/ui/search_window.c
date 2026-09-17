@@ -140,7 +140,7 @@ static bool search_prepare_preview(SolSearchWindow *w, const char *path)
     w->preview_mapped_valid = true;
     snprintf(w->preview_path, sizeof(w->preview_path), "%s", path);
 
-    SolSyntaxRegistry *registry = sol_syntax_get_global_registry();
+    SolSyntaxRegistry *registry = sol_buffer_syntax_registry(w->ui->buffers);
     const void *language = registry ? sol_syntax_get_for_path(registry, path) : NULL;
     if (language) {
         w->preview_rope = sol_rope_from_file(path, NULL);
@@ -789,6 +789,7 @@ static void search_destroy(SolSearchWindow *w)
     search_clear_preview_cache(w);
     sol_search_index_destroy(w->index);
     if (w->stream_mutex_initialized) pthread_mutex_destroy(&w->stream_mutex);
+    ca_signal_destroy(w->sig_results_rev);
     free(w);
 }
 
@@ -805,7 +806,8 @@ static void search_open(SolUISystem *ui, SolSearchWindowMode mode)
 {
     if (!ui || !ui->instance) return;
     for (SolSearchWindow *existing = g_search_windows; existing; existing = existing->next) {
-        if (existing->window && ca_window_is_open(existing->window)) {
+        if (existing->ui == ui && existing->mode == mode &&
+            existing->window && ca_window_is_open(existing->window)) {
             return;
         }
     }
@@ -899,5 +901,19 @@ void sol_ui_search_window_tick(void)
             continue;
         }
         link = &w->next;
+    }
+}
+
+/** Destroy auxiliary windows owned by this project before its services disappear. */
+void sol_ui_search_window_close_owner(SolUISystem *ui)
+{
+    SolSearchWindow **link = &g_search_windows;
+    while (*link) {
+        SolSearchWindow *w = *link;
+        if (w->ui != ui) { link = &w->next; continue; }
+        *link = w->next;
+        if (w->window && ca_window_is_open(w->window)) ca_window_destroy(w->window);
+        w->window = NULL;
+        search_destroy(w);
     }
 }

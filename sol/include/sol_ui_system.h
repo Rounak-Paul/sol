@@ -142,8 +142,20 @@ typedef struct SolCommandFlowDesc {
 	void *user_data;
 } SolCommandFlowDesc;
 
-SolUISystem *sol_ui_system_create(Ca_Instance *instance, SolBufferSystem *buffers);
+/** Create project UI state for the host-owned window; initially unmounted. */
+SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
+                                  SolBufferSystem *buffers);
+/** Mount or unmount this project's view in the shared window. */
+bool sol_ui_system_set_active(SolUISystem *ui, bool active);
+/** Return whether this project owns the shared window's input and presentation. */
+bool sol_ui_system_is_active(const SolUISystem *ui);
+/** Set the project-tab builder and its host context before mounting the view. */
+void sol_ui_system_set_project_tabs(SolUISystem *ui, void (*build)(Ca_Div *, void *), void *data);
+/** Rebuild the mounted project-tab strip after the host's project list changes. */
+void sol_ui_system_refresh_project_tabs(SolUISystem *ui);
 void sol_ui_system_destroy(SolUISystem *ui);
+/** Cancel and destroy this project's auxiliary windows at a frame boundary. */
+void sol_ui_system_close_auxiliary_windows(SolUISystem *ui);
 
 /* Called once per frame BEFORE ca_instance_tick. Polls the file-tree
  * scroll offset and pushes it into sig_tree_scroll so the sticky-ancestor

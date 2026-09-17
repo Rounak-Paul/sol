@@ -8,36 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ------------------------------------------------------------------ */
-/* Global registry                                                     */
-/* ------------------------------------------------------------------ */
-
-static SolSyntaxRegistry *g_global_registry = NULL;
-
-/*
- * Set the global syntax registry.
- *
- * reg  Registry to set as global (may be NULL).
- */
-void sol_syntax_set_global_registry(SolSyntaxRegistry *reg)
-{
-    g_global_registry = reg;
-}
-
-/*
- * Get the global syntax registry.
- *
- * Returns the current global registry, or NULL if not set.
- */
-SolSyntaxRegistry *sol_syntax_get_global_registry(void)
-{
-    return g_global_registry;
-}
-
-/* ------------------------------------------------------------------ */
-/* Limits                                                              */
-/* ------------------------------------------------------------------ */
-
 #define SOL_SYNTAX_MAX_LANGS 64u
 #define SOL_SYNTAX_MAX_EXTS   8u
 #define SOL_SYNTAX_MAX_EXT_LEN 16u

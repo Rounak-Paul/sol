@@ -59,5 +59,3 @@ size_t sol_syntax_registry_count(const SolSyntaxRegistry *reg)
     return reg ? 0u : 0u;
 }
 
-void sol_syntax_set_global_registry(SolSyntaxRegistry *reg) { (void)reg; }
-SolSyntaxRegistry *sol_syntax_get_global_registry(void) { return NULL; }

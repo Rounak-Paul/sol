@@ -573,6 +573,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         " height: 100%%; border-radius: %.1fpx; }"
         ".buffer-tabs-row { border-top-left-radius: %.1fpx;"
         " border-top-right-radius: %.1fpx; overflow: hidden; }"
+        ".project-tabs { border-radius: %.1fpx; overflow: hidden; }"
         ".buffer-body, .buffer-scroll-row { border-bottom-left-radius: %.1fpx;"
         " border-bottom-right-radius: %.1fpx; overflow: hidden; }"
         ".buffer-gutter-col { border-bottom-left-radius: %.1fpx; }"
@@ -617,6 +618,9 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".ca-overlay-hover,"
         ".buffer-tab,"
         ".buffer-tab-close,"
+        ".project-tab,"
+        ".project-tab-close,"
+        ".project-tab-new,"
         ".buffer-hscrollbar-thumb,"
         ".buffer-hscrollbar-thumb-active,"
         ".fp-row,"
@@ -667,7 +671,8 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         " { border-radius: %.1fpx; }",
         (double)sw, (double)sr,
         (double)sw, (double)sw, (double)sr, (double)sr,
-        (double)cr, (double)cr, (double)cr, (double)cr, (double)cr,
+        (double)cr, (double)cr, (double)cr,
+        (double)cr, (double)cr, (double)cr,
         (double)cr, (double)pblur, (double)op,
         (double)pblur, (double)op,
         (double)tblur, (double)op,

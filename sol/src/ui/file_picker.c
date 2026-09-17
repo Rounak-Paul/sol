@@ -1321,3 +1321,18 @@ void sol_file_picker_tick(void)
         link = &p->next;
     }
 }
+
+/** Cancel owner callbacks before destroying their picker windows and storage. */
+void sol_file_picker_cancel_owner(void *owner)
+{
+    SolFilePicker **link = &g_pickers;
+    while (*link) {
+        SolFilePicker *p = *link;
+        if (p->user_data != owner) { link = &p->next; continue; }
+        *link = p->next;
+        fp_fire(p, NULL);
+        if (p->window && ca_window_is_open(p->window)) ca_window_destroy(p->window);
+        p->window = NULL;
+        fp_destroy(p);
+    }
+}

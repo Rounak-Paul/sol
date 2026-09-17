@@ -45,6 +45,7 @@
 #include "sol_bg_effect.h"
 #include "sol_settings.h"
 #include "sol_ssh_config.h"
+#include "sol_ssh_window.h"
 #include "sol_system_manager.h"
 #include "sol_syntax.h"
 #include "sol_terminal.h"
@@ -132,7 +133,12 @@ static bool sol_resolve_plugin_directory(const char *argv0,
 /* Types                                                               */
 /* ------------------------------------------------------------------ */
 
+typedef struct SolProjectHost SolProjectHost;
+
 typedef struct SolAppContext {
+    SolProjectHost       *host;
+    struct SolAppContext *next;
+    uint64_t             project_id;
     SolSystemManager     *systems;
     SolEventBus          *events;
     SolBufferSystem      *buffers;
@@ -181,6 +187,27 @@ typedef struct SolAppContext {
     bool                   deferred_init_done;
 } SolAppContext;
 
+struct SolProjectHost {
+    Ca_Instance *instance;
+    Ca_Window *window;
+    SolInputRouter *router;
+    SolAppContext *projects;
+    SolAppContext *active;
+    SolAppContext *activate_pending;
+    SolAppContext *close_pending;
+    uint64_t next_id;
+    char create_path[4096];
+    bool create_pending;
+    bool picker_open;
+    int argc;
+    char **argv;
+};
+
+/** Queue project lifecycle commands for processing outside event dispatch. */
+static bool sol_project_command(SolAppContext *app, const char *action);
+/** Render project tabs for the host shared by all project runtimes. */
+static void sol_project_tabs(Ca_Div *div, void *data);
+
 /* Debounce interval: a dirty buffer is saved this long after its last
    edit, provided no further edit arrives first. Chosen to avoid writing
    to disk on every keystroke while still feeling near-immediate. */
@@ -223,6 +250,8 @@ static bool sol_set_explorer_root(SolAppContext *app, const char *path)
            convenience on top of an otherwise fully-usable explorer. */
         (void)sol_file_watcher_set_root(app->watcher, path);
     }
+    if (ok && app->host && app->host->active)
+        sol_ui_system_refresh_project_tabs(app->host->active->ui);
     return ok;
 }
 
@@ -1487,6 +1516,8 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
     const SolCommandInvokedPayload *p =
         (const SolCommandInvokedPayload *)event->payload;
     if (!p->action) return false;
+    if (strncmp(p->action, "project.", 8) == 0)
+        return sol_project_command(app, p->action);
 
     if (strcmp(p->action, "explorer.focus.toggle") == 0) {
         return sol_toggle_explorer_focus(app);
@@ -1984,320 +2015,397 @@ static void sol_run_deferred_init(SolAppContext *app, int argc, char **argv)
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
+/** Return the number of unsaved text buffers owned by app. */
+static size_t sol_project_dirty_count(SolAppContext *app)
+{
+    size_t dirty = 0;
+    const size_t count = sol_buffer_count(app->buffers);
+    for (size_t i = 0; i < count; ++i) {
+        SolBuffer *buffer = sol_buffer_get(app->buffers, sol_buffer_at(app->buffers, i));
+        SolTextBuffer *text = sol_text_buffer_state(buffer);
+        if (text && sol_text_buffer_is_dirty(text)) ++dirty;
+    }
+    return dirty;
+}
+
+/** Destroy app after its view is unmounted and auxiliary callbacks are cancelled. */
+static void sol_project_destroy(SolAppContext *app)
+{
+    if (!app) return;
+    sol_file_picker_cancel_owner(app);
+    sol_ui_ssh_window_cancel_owner(app);
+    sol_ui_system_close_auxiliary_windows(app->ui);
+    sol_ui_system_set_active(app->ui, false);
+    sol_file_watcher_destroy(app->watcher);
+    sol_file_watcher_destroy(app->settings_watcher);
+    if (app->systems) {
+        SolPluginManager *plugins = sol_system_plugins(app->systems);
+        sol_plugin_manager_unload_all(plugins);
+        sol_plugin_manager_attach_ui(plugins, NULL);
+    }
+    sol_ui_system_set_plugin_manager(app->ui, NULL);
+    sol_ui_system_set_terminal_manager(app->ui, NULL);
+    sol_terminal_manager_destroy(app->terminal_mgr);
+    sol_ui_system_set_bg_effects(app->ui, NULL);
+    sol_bg_effect_registry_destroy(app->bg_effects);
+    sol_ui_system_destroy(app->ui);
+    sol_system_manager_destroy(app->systems);
+    sol_syntax_registry_destroy(app->syntax_registry);
+    free(app);
+}
+
+/** Register project flows before user bindings so explicit overrides win. */
+static void sol_register_project_commands(SolUISystem *ui)
+{
+    const char *actions[] = {"project.create", "project.next", "project.previous", "project.close"};
+    const char *labels[] = {"New project", "Next project", "Previous project", "Close project"};
+    const SolKeyCode keys[] = {'C', 'N', 'P', 'X'};
+    for (size_t i = 0; i < 4; ++i) {
+        const SolKeyCode sequence[] = {'S', keys[i]};
+        sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+            .action = actions[i], .label = labels[i],
+            .sequence = sequence, .sequence_length = 2,
+        });
+    }
+}
+
+/** Create an isolated project runtime for path; NULL creates an empty project. */
+static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
+{
+    SolAppContext *app = calloc(1, sizeof(*app));
+    if (!app) return NULL;
+    app->host = host;
+    app->instance = host->instance;
+    app->router = host->router;
+    app->project_id = ++host->next_id;
+    SolSystemConfig config = sol_system_config_default();
+    config.jobs.worker_count = 2;
+    app->systems = sol_system_manager_create(&config);
+    if (!app->systems) goto fail;
+    app->events = sol_system_events(app->systems);
+    app->buffers = sol_system_buffers(app->systems);
+    app->jobs = sol_system_jobs(app->systems);
+    app->input = sol_system_input(app->systems);
+    sol_settings_load(&app->settings);
+    sol_buffer_attach_event_bus(app->buffers, app->events);
+    app->ui = sol_ui_system_create(host->instance, host->window, app->buffers);
+    if (!app->ui) goto fail;
+    sol_ui_system_set_project_tabs(app->ui, sol_project_tabs, host);
+    sol_ui_system_set_file_open_callback(app->ui, sol_on_tree_file_open, app);
+    sol_ui_system_set_focus_region_callback(app->ui, sol_on_ui_focus_region, app);
+    sol_ui_system_set_terminal_focus_gain_callback(app->ui, sol_on_terminal_focus_gain, app);
+    sol_ui_system_set_context_action_callback(app->ui, sol_on_context_action, app);
+    sol_ui_system_install_menu(app->ui, sol_on_menu_new_buffer, sol_on_menu_open_file,
+                               sol_on_menu_open_folder, app);
+    app->watcher = sol_file_watcher_create();
+    if (app->watcher)
+        sol_file_watcher_set_wake_callback(app->watcher, sol_on_file_watcher_wake, NULL);
+    char *config_dir = sol_config_dir();
+    if (config_dir) {
+        app->settings_watcher = sol_file_watcher_create();
+        if (app->settings_watcher) {
+            sol_file_watcher_set_wake_callback(app->settings_watcher, sol_on_file_watcher_wake, NULL);
+            sol_file_watcher_set_root(app->settings_watcher, config_dir);
+        }
+        free(config_dir);
+    }
+    if (path) {
+        SolPathInfo info;
+        if (!sol_platform_get_path_info(path, &info)) goto fail;
+        if (info.is_directory) {
+            if (!sol_set_explorer_root(app, path)) goto fail;
+        } else {
+            char directory[4096];
+            if (sol_path_dirname(path, directory, sizeof(directory)))
+                sol_set_explorer_root(app, directory);
+            if (!sol_open_path_in_active_leaf(app, path)) goto fail;
+        }
+    }
+    app->command_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
+        .event_name = SOL_EVENT_COMMAND_INVOKED, .handler = sol_on_command_invoked, .user_data = app,
+    });
+    app->text_edited_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
+        .event_name = SOL_EVENT_TEXT_EDITED, .handler = sol_on_text_edited_for_autosave, .user_data = app,
+    });
+    app->startup_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
+        .event_name = SOL_EVENT_APP_STARTUP, .handler = sol_on_startup_event,
+    });
+    sol_register_project_commands(app->ui);
+    sol_register_search_command_defaults(app->ui);
+    sol_register_terminal_command_defaults(app->ui);
+    sol_register_buffer_save_command_defaults(app->ui);
+    app->command_flows_loaded = sol_config_load_bindings(app->ui);
+    sol_register_workspace_menu_items(app->ui);
+    app->terminal_mgr = sol_terminal_manager_create(host->instance);
+    if (!app->terminal_mgr) goto fail;
+    sol_ui_system_set_terminal_manager(app->ui, app->terminal_mgr);
+    sol_terminal_manager_set_clipboard_write(app->terminal_mgr, sol_on_terminal_clipboard_write, host->window);
+    app->bg_effects = sol_bg_effect_registry_create(host->instance);
+    if (app->bg_effects) {
+        sol_bg_effect_set_opacity(app->bg_effects, app->settings.bg_opacity);
+        sol_ui_system_set_bg_effects(app->ui, app->bg_effects);
+    }
+    sol_system_register_service(app->systems, "ca.instance", host->instance, NULL, NULL);
+    sol_system_register_service(app->systems, "ca.window.primary", host->window, NULL, NULL);
+    sol_system_register_service(app->systems, "sol.ui", app->ui, NULL, NULL);
+    sol_system_register_service(app->systems, "sol.bg_effect_registry", app->bg_effects, NULL, NULL);
+    sol_plugin_manager_attach_ui(sol_system_plugins(app->systems), app->ui);
+    sol_ui_system_set_plugin_manager(app->ui, sol_system_plugins(app->systems));
+    sol_ui_system_set_settings(app->ui, &app->settings);
+    app->syntax_registry = sol_syntax_registry_create();
+    if (!app->syntax_registry) goto fail;
+    sol_plugin_manager_attach_syntax_registry(sol_system_plugins(app->systems), app->syntax_registry);
+    sol_run_deferred_init(app, host->argc, host->argv);
+    SolAppContext **tail = &host->projects;
+    while (*tail) tail = &(*tail)->next;
+    *tail = app;
+    return app;
+fail:
+    sol_project_destroy(app);
+    return NULL;
+}
+
+/** Present app in the host window after the preceding event frame completes. */
+static void sol_project_activate(SolProjectHost *host, SolAppContext *app)
+{
+    if (!app || host->active == app) return;
+    if (host->active) sol_ui_system_set_active(host->active->ui, false);
+    host->active = app;
+    sol_crash_track_events(app->events);
+    if (!host->router)
+        host->router = sol_input_router_create(host->instance, app->ui, app->input, app->buffers);
+    else
+        sol_input_router_bind(host->router, app->ui, app->input, app->buffers);
+    app->router = host->router;
+    sol_ui_system_set_active(app->ui, true);
+    const char *root = sol_ui_system_file_tree_root(app->ui);
+    char title[4200];
+    snprintf(title, sizeof(title), "Sol — %s", root ? root : "Empty project");
+    ca_window_set_title(host->window, title);
+}
+
+/** Queue a folder selected for a new project; cancellation creates nothing. */
+static void sol_project_folder_chosen(const char *path, void *data)
+{
+    SolProjectHost *host = data;
+    host->picker_open = false;
+    if (!path || strlen(path) >= sizeof(host->create_path)) return;
+    snprintf(host->create_path, sizeof(host->create_path), "%s", path);
+    host->create_pending = true;
+    ca_instance_wake();
+}
+
+/** Queue confirmed project teardown; the callback never frees UI state. */
+static void sol_project_close_confirmed(Ca_PopupResult result, void *data)
+{
+    SolAppContext *app = data;
+    if (result == CA_POPUP_RESULT_YES) app->host->close_pending = app;
+}
+
+/** Handle project lifecycle actions on app without mutating callback owners. */
+static bool sol_project_command(SolAppContext *app, const char *action)
+{
+    SolProjectHost *host = app->host;
+    if (strcmp(action, "project.create") == 0) {
+        if (!host->picker_open) {
+            host->picker_open = sol_file_picker_open(host->instance, SOL_FILE_PICKER_FOLDER,
+                sol_ui_system_file_tree_root(app->ui), sol_project_folder_chosen, host) != NULL;
+        }
+        return true;
+    }
+    if (strcmp(action, "project.close") == 0) {
+        if (ca_popup_is_active(host->instance)) return true;
+        size_t dirty = sol_project_dirty_count(app);
+        size_t terminals = sol_terminal_manager_count(app->terminal_mgr);
+        if (!dirty && !terminals) host->close_pending = app;
+        else {
+            char message[512];
+            snprintf(message, sizeof(message),
+                "Close this project? This discards %zu unsaved buffer(s) and stops %zu terminal session(s). Save your buffers first if you want to keep the changes.", dirty, terminals);
+            ca_popup_show(host->instance, &(Ca_PopupDesc){
+                .title = "Close project", .message = message, .buttons = CA_POPUP_BUTTONS_YES_NO,
+                .on_result = sol_project_close_confirmed, .result_data = app,
+            });
+        }
+        return true;
+    }
+    if (strcmp(action, "project.next") == 0) {
+        host->activate_pending = app->next ? app->next : host->projects;
+        return true;
+    }
+    if (strcmp(action, "project.previous") == 0) {
+        SolAppContext *previous = NULL;
+        for (SolAppContext *it = host->projects; it; it = it->next) {
+            if (it == app && previous) break;
+            previous = it;
+        }
+        host->activate_pending = previous;
+        return true;
+    }
+    return false;
+}
+
+/** Select the project supplied as data after button dispatch completes. */
+static void sol_project_tab_clicked(Ca_Button *button, void *data)
+{
+    (void)button;
+    SolAppContext *app = data;
+    app->host->activate_pending = app;
+}
+
+/** Request closing the project supplied as data. */
+static void sol_project_tab_close(Ca_Button *button, void *data)
+{
+    (void)button;
+    sol_project_command(data, "project.close");
+}
+
+/** Open the host's new-project folder chooser. */
+static void sol_project_tab_new(Ca_Button *button, void *data)
+{
+    (void)button;
+    SolProjectHost *host = data;
+    if (host->active) sol_project_command(host->active, "project.create");
+}
+
+/** Render stable project tabs and their close controls for host. */
+static void sol_project_tabs(Ca_Div *div, void *data)
+{
+    (void)div;
+    SolProjectHost *host = data;
+    for (SolAppContext *app = host->projects; app; app = app->next) {
+        const char *root = sol_ui_system_file_tree_root(app->ui);
+        const char *name = root;
+        if (root) {
+            for (const char *p = root; *p; ++p)
+                if (sol_platform_is_path_separator(*p) && p[1]) name = p + 1;
+        }
+        const bool tab_active = app == host->active;
+        char key[48];
+        snprintf(key, sizeof(key), "project-%llu", (unsigned long long)app->project_id);
+        Ca_Button *tab = ca_btn_begin(&(Ca_BtnDesc){
+            .id = key,
+            .style      = tab_active ? "project-tab project-tab-active" : "project-tab",
+            .direction  = CA_HORIZONTAL,
+            .background = 0u,
+            .on_click   = sol_project_tab_clicked,
+            .click_data = app,
+            .skip_keyboard_focus = true,
+        });
+        ca_text(&(Ca_TextDesc){
+            .text  = name ? name : "Empty project",
+            .style = "project-tab-label",
+        });
+        ca_tooltip_for_widget(tab, &(Ca_TooltipDesc){ .text = root ? root : "Empty project" });
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style      = "project-tab-close",
+            .direction  = CA_HORIZONTAL,
+            .background = 0u,
+            .on_click   = sol_project_tab_close,
+            .click_data = app,
+            .skip_keyboard_focus = true,
+        });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CLOSE, .style = "project-tab-close-icon" });
+        ca_btn_end();  /* project-tab-close */
+        ca_btn_end();  /* project-tab */
+    }
+    ca_btn_begin(&(Ca_BtnDesc){
+        .style      = "project-tab-new",
+        .direction  = CA_HORIZONTAL,
+        .background = 0u,
+        .on_click   = sol_project_tab_new,
+        .click_data = host,
+        .skip_keyboard_focus = true,
+    });
+    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_FA_PLUS, .style = "project-tab-new-icon" });
+    ca_btn_end();
+}
+
+/** Apply queued lifecycle operations at the host's frame boundary. */
+static void sol_project_apply_requests(SolProjectHost *host)
+{
+    bool changed = host->create_pending || host->close_pending || host->activate_pending;
+    if (host->create_pending) {
+        host->create_pending = false;
+        SolAppContext *created = sol_project_create(host, host->create_path);
+        if (created) host->activate_pending = created;
+        else if (host->active) sol_show_error(host->active, "Could not create the project.");
+    }
+    if (host->activate_pending) {
+        SolAppContext *next = host->activate_pending;
+        host->activate_pending = NULL;
+        sol_project_activate(host, next);
+    }
+    if (host->close_pending && !ca_popup_is_active(host->instance)) {
+        SolAppContext *closing = host->close_pending;
+        host->close_pending = NULL;
+        SolAppContext *replacement = closing->next ? closing->next : host->projects;
+        if (replacement == closing) replacement = sol_project_create(host, NULL);
+        if (!replacement) return;
+        if (host->active == closing) sol_project_activate(host, replacement);
+        SolAppContext **link = &host->projects;
+        while (*link && *link != closing) link = &(*link)->next;
+        if (*link) *link = closing->next;
+        sol_project_destroy(closing);
+    }
+    if (changed) sol_ui_system_refresh_project_tabs(host->active->ui);
+}
+
+/** Run one window with independently owned project runtimes. */
 int main(int argc, char **argv)
 {
-    /* Installed before any other subsystem so a fault during their own
-       init is still caught and reported, not just faults after startup
-       completes. */
 #ifdef SOL_BUILD_VERSION
     sol_crash_install("Sol", SOL_BUILD_VERSION);
 #else
     sol_crash_install("Sol", NULL);
 #endif
-
-    SolAppContext app;
-    memset(&app, 0, sizeof(app));
-
-    SolSystemConfig system_config = sol_system_config_default();
-    app.systems = sol_system_manager_create(&system_config);
-    if (!app.systems) {
-        fprintf(stderr, "Failed to create system manager\n");
-        return 1;
-    }
-
-    app.events  = sol_system_events(app.systems);
-    app.buffers = sol_system_buffers(app.systems);
-    app.jobs    = sol_system_jobs(app.systems);
-    app.input   = sol_system_input(app.systems);
-    sol_crash_track_events(app.events);
-
-    /* CLI: `./sol <path>` — file → open buffer; dir → mount tree root. */
-    const char *cli_path =
-        (argc >= 2 && argv[1] && argv[1][0] != '\0') ? argv[1] : NULL;
-    bool cli_is_dir = false;
-    if (cli_path) {
-        SolPathInfo info;
-        if (!sol_platform_get_path_info(cli_path, &info)) {
-            fprintf(stderr, "sol: cannot stat '%s'\n", cli_path);
-            sol_system_manager_destroy(app.systems);
-            return 1;
-        }
-        cli_is_dir = info.is_directory;
-        /* Defer file opens until after the UI system exists so the
-           render callback has somewhere to invalidate. */
-    }
-
-    app.startup_token = sol_event_bus_subscribe(app.events,
-        &(SolEventSubscriptionDesc){
-            .event_name = SOL_EVENT_APP_STARTUP,
-            .priority   = 100,
-            .handler    = sol_on_startup_event,
-            .user_data  = NULL,
-        });
-
-    /* Load user settings before creating Causality so the global UI scale is
-       present from instance init, before any windows inherit it. */
-    sol_settings_load(&app.settings);
-
-    /* Compiled-shader cache under ~/.sol — see Ca_InstanceDesc::shader_cache_dir.
-       A NULL path (config dir unresolvable, e.g. $HOME unset) just leaves
-       caching disabled for this run; Causality falls back to compiling
-       every shader via shaderc exactly as before this existed. */
-    char *shader_cache_dir = sol_config_path("shader_cache");
-
-    Ca_Instance *instance = ca_instance_create(&(Ca_InstanceDesc){
-        .app_name             = "Sol",
-        .prefer_dedicated_gpu = true,
-        .default_ui_scale     = app.settings.ui_scale,
-        .shader_cache_dir     = shader_cache_dir,
+    SolSettings settings;
+    sol_settings_load(&settings);
+    char *cache = sol_config_path("shader_cache");
+    SolProjectHost host = { .argc = argc, .argv = argv };
+    host.instance = ca_instance_create(&(Ca_InstanceDesc){
+        .app_name = "Sol", .prefer_dedicated_gpu = true,
+        .default_ui_scale = settings.ui_scale, .shader_cache_dir = cache,
     });
-    free(shader_cache_dir);
-    if (!instance) {
-        fprintf(stderr, "Failed to create causality instance\n");
-        sol_system_manager_destroy(app.systems);
-        return 1;
-    }
-    app.instance = instance;
-
-    /* Wire the buffer system to the bus BEFORE the UI is built so the
-       UI system can in turn share the bus with the file tree. After
-       this call, every buffer create/close/focus and every text edit
-       fans out to subscribers. */
-    sol_buffer_attach_event_bus(app.buffers, app.events);
-
-    app.ui = sol_ui_system_create(instance, app.buffers);
-    if (!app.ui) {
-        fprintf(stderr, "Failed to create UI system\n");
-        ca_instance_destroy(instance);
-        sol_system_manager_destroy(app.systems);
-        return 1;
-    }
-
-    /* Created before any explorer-root change (CLI dir arg or cwd
-       fallback below) so sol_set_explorer_root can attach the watcher
-       to the very first root, not just later folder-open actions. */
-    app.watcher = sol_file_watcher_create();
-    if (!app.watcher) {
-        fprintf(stderr, "[sol] warning: file watcher creation failed; "
-                        "explorer/buffers will not live-update on external changes\n");
-    } else {
-        sol_file_watcher_set_wake_callback(app.watcher, sol_on_file_watcher_wake, NULL);
-    }
-
-    /* Independent watcher on $HOME/.sol so a settings.json change saved by
-       another concurrently-running Sol instance is picked up live instead
-       of only on next launch. A failed watch here is non-fatal for the
-       same reason as above — settings still load once at startup and
-       save correctly, cross-instance live sync is a convenience layer
-       on top. */
-    char *config_dir = sol_config_dir();
-    if (config_dir) {
-        app.settings_watcher = sol_file_watcher_create();
-        if (app.settings_watcher) {
-            sol_file_watcher_set_wake_callback(app.settings_watcher,
-                                               sol_on_file_watcher_wake, NULL);
-            if (!sol_file_watcher_set_root(app.settings_watcher, config_dir)) {
-                fprintf(stderr, "[sol] warning: settings watcher unavailable; "
-                                "changes from other Sol instances need a restart to appear\n");
-                sol_file_watcher_destroy(app.settings_watcher);
-                app.settings_watcher = NULL;
+    free(cache);
+    if (!host.instance) return 1;
+    host.window = ca_window_create(host.instance, &(Ca_WindowDesc){
+        .title = "Sol", .width = 1080, .height = 720,
+    });
+    if (!host.window) { ca_instance_destroy(host.instance); return 1; }
+    char cwd[4096];
+    const char *path = argc > 1 ? argv[1] :
+        (sol_platform_get_cwd(cwd, sizeof(cwd)) ? cwd : NULL);
+    SolAppContext *first = sol_project_create(&host, path);
+    if (!first) { ca_instance_destroy(host.instance); return 1; }
+    sol_project_activate(&host, first);
+    while (ca_window_is_open(host.window)) {
+        for (SolAppContext *app = host.projects; app; app = app->next) {
+            sol_system_begin_frame(app->systems);
+            sol_drain_file_watcher(app);
+            sol_drain_settings_watcher(app);
+            sol_run_autosave_sweep(app);
+            if (app == host.active) sol_ui_system_pre_tick(app->ui);
+            else {
+                sol_terminal_manager_drain(app->terminal_mgr);
+                sol_ui_system_tick(app->ui);
             }
         }
-        free(config_dir);
-    }
-
-    /* Now safe to open the CLI file (renderer is wired up). */
-    if (cli_path && !cli_is_dir) {
-        if (!sol_open_path_in_active_leaf(&app, cli_path)) {
-            sol_ui_system_destroy(app.ui);
-            ca_instance_destroy(instance);
-            sol_system_manager_destroy(app.systems);
-            return 1;
+        if (!ca_instance_tick(host.instance)) break;
+        for (SolAppContext *app = host.projects; app; app = app->next) {
+            sol_system_pump_events(app->systems, 128);
+            sol_system_end_frame(app->systems);
         }
+        sol_project_apply_requests(&host);
     }
-
-    sol_ui_system_set_file_open_callback(app.ui, sol_on_tree_file_open, &app);
-    sol_ui_system_set_focus_region_callback(app.ui, sol_on_ui_focus_region, &app);
-    sol_ui_system_set_terminal_focus_gain_callback(app.ui, sol_on_terminal_focus_gain, &app);
-    sol_ui_system_set_context_action_callback(app.ui, sol_on_context_action, &app);
-    if (cli_is_dir && cli_path) {
-        if (!sol_set_explorer_root(&app, cli_path)) {
-            fprintf(stderr, "sol: cannot open directory '%s'\n", cli_path);
-        }
-    } else if (!cli_path) {
-        /* No CLI argument: open the working directory in the explorer so
-           the panel is visible on first launch. */
-        char cwd_buf[4096];
-        if (sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf))) {
-            if (!sol_set_explorer_root(&app, cwd_buf)) {
-                fprintf(stderr, "sol: cannot open cwd as explorer root\n");
-            }
-        }
+    sol_file_picker_cancel_owner(&host);
+    sol_input_router_destroy(host.router);
+    sol_crash_track_events(NULL);
+    while (host.projects) {
+        SolAppContext *app = host.projects;
+        host.projects = app->next;
+        sol_project_destroy(app);
     }
-
-    sol_ui_system_install_menu(app.ui,
-                               sol_on_menu_new_buffer,
-                               sol_on_menu_open_file,
-                               sol_on_menu_open_folder,
-                               &app);
-
-    /* Subscribe to command-invoked events BEFORE loading the bindings
-       file so any chord that happens to fire during early startup
-       (none today, but plugins might queue one) is observed. The
-       subscriber dispatches built-in actions; plugins may install
-       their own subscribers for additional actions. */
-    app.command_token = sol_event_bus_subscribe(app.events,
-        &(SolEventSubscriptionDesc){
-            .event_name = SOL_EVENT_COMMAND_INVOKED,
-            .priority   = 0,
-            .handler    = sol_on_command_invoked,
-            .user_data  = &app,
-        });
-
-    app.text_edited_token = sol_event_bus_subscribe(app.events,
-        &(SolEventSubscriptionDesc){
-            .event_name = SOL_EVENT_TEXT_EDITED,
-            .priority   = 0,
-            .handler    = sol_on_text_edited_for_autosave,
-            .user_data  = &app,
-        });
-
-    sol_register_search_command_defaults(app.ui);
-    sol_register_terminal_command_defaults(app.ui);
-    sol_register_buffer_save_command_defaults(app.ui);
-    app.command_flows_loaded = sol_config_load_bindings(app.ui);
-    if (app.command_flows_loaded < 0) {
-        fprintf(stderr, "sol: failed to load key bindings from ~/.sol/bindings.conf\n");
-        app.command_flows_loaded = 0;
-    }
-    sol_register_workspace_menu_items(app.ui);
-
-    app.router = sol_input_router_create(instance, app.ui, app.input, app.buffers);
-    if (!app.router) {
-        fprintf(stderr, "Failed to create input router\n");
-        sol_ui_system_destroy(app.ui);
-        ca_instance_destroy(instance);
-        sol_system_manager_destroy(app.systems);
-        return 1;
-    }
-
-    app.terminal_mgr = sol_terminal_manager_create(instance);
-    if (!app.terminal_mgr) {
-        fprintf(stderr, "[sol] warning: terminal manager creation failed; terminal unavailable\n");
-    } else {
-        sol_ui_system_set_terminal_manager(app.ui, app.terminal_mgr);
-    }
-
-    app.bg_effects = sol_bg_effect_registry_create(instance);
-    if (!app.bg_effects) {
-        fprintf(stderr, "[sol] warning: background effect registry creation failed\n");
-    } else {
-        sol_bg_effect_set_opacity(app.bg_effects, app.settings.bg_opacity);
-        sol_ui_system_set_bg_effects(app.ui, app.bg_effects);
-    }
-
-    Ca_Window *window = sol_ui_system_primary_window(app.ui);
-    if (!window) {
-        fprintf(stderr, "Failed to access primary window\n");
-        sol_input_router_destroy(app.router);
-        sol_ui_system_destroy(app.ui);
-        ca_instance_destroy(instance);
-        sol_system_manager_destroy(app.systems);
-        return 1;
-    }
-
-    if (app.terminal_mgr) {
-        sol_terminal_manager_set_clipboard_write(
-            app.terminal_mgr, sol_on_terminal_clipboard_write, window);
-    }
-
-    if (!sol_system_register_service(app.systems, "ca.instance", instance, NULL, NULL)) {
-        fprintf(stderr, "[sol] warning: failed to register ca.instance service\n");
-    }
-    if (!sol_system_register_service(app.systems, "ca.window.primary", window, NULL, NULL)) {
-        fprintf(stderr, "[sol] warning: failed to register ca.window.primary service\n");
-    }
-    if (!sol_system_register_service(app.systems, "sol.ui", app.ui, NULL, NULL)) {
-        fprintf(stderr, "[sol] warning: failed to register sol.ui service\n");
-    }
-    if (app.bg_effects &&
-        !sol_system_register_service(app.systems, "sol.bg_effect_registry",
-                                     app.bg_effects, NULL, NULL)) {
-        fprintf(stderr, "[sol] warning: failed to register sol.bg_effect_registry service\n");
-    }
-    sol_plugin_manager_attach_ui(sol_system_plugins(app.systems), app.ui);
-    sol_ui_system_set_plugin_manager(app.ui, sol_system_plugins(app.systems));
-    sol_ui_system_set_settings(app.ui, &app.settings);
-
-    app.syntax_registry = sol_syntax_registry_create();
-    sol_syntax_set_global_registry(app.syntax_registry);
-    sol_plugin_manager_attach_syntax_registry(
-        sol_system_plugins(app.systems), app.syntax_registry);
-
-    for (;;) {
-        sol_system_begin_frame(app.systems);
-        /* Watcher/autosave drains run before ca_instance_tick, not after:
-           they are what bumps the reactive signals (sig_file_tree_rev,
-           settings reload, buffer touch) that this tick's UI pass reads.
-           ca_instance_tick is where the reactive flush + dirty-content
-           check + needs_render/swapchain-present all happen — bumping a
-           signal after it returns leaves the (now up to date) widget
-           tree correctly rebuilt but unpainted until some unrelated
-           input event drives the next tick. */
-        sol_drain_file_watcher(&app);
-        sol_drain_settings_watcher(&app);
-        sol_run_autosave_sweep(&app);
-        sol_ui_system_pre_tick(app.ui);
-        if (!ca_instance_tick(instance)) break;
-        sol_system_pump_events(app.systems, 128u);
-        if (!app.deferred_init_done) {
-            sol_run_deferred_init(&app, argc, argv);
-        }
-        sol_system_end_frame(app.systems);
-    }
-
-    if (app.startup_token != 0u) {
-        sol_event_bus_unsubscribe(app.events, app.startup_token);
-    }
-    if (app.command_token != 0u) {
-        sol_event_bus_unsubscribe(app.events, app.command_token);
-    }
-    if (app.text_edited_token != 0u) {
-        sol_event_bus_unsubscribe(app.events, app.text_edited_token);
-    }
-    sol_system_unregister_service(app.systems, "ca.window.primary");
-    sol_system_unregister_service(app.systems, "ca.instance");
-
-    /* Stop the watcher's background thread before anything its drain
-       path touches (event bus, buffers, UI) is torn down — same
-       ordering requirement as the terminal manager's PTY reader below. */
-    sol_file_watcher_destroy(app.watcher);
-    app.watcher = NULL;
-    sol_file_watcher_destroy(app.settings_watcher);
-    app.settings_watcher = NULL;
-
-    sol_input_router_destroy(app.router);
-    /* Plugins must quiesce and unregister while the UI, syntax registry, and
-       Causality instance they reference are still alive. */
-    SolPluginManager *plugins = sol_system_plugins(app.systems);
-    if (plugins) {
-        (void)sol_plugin_manager_unload_all(plugins);
-        sol_plugin_manager_attach_ui(plugins, NULL);
-    }
-    sol_ui_system_set_plugin_manager(app.ui, NULL);
-    sol_system_unregister_service(app.systems, "sol.ui");
-    sol_system_unregister_service(app.systems, "sol.bg_effect_registry");
-    /* Destroy the terminal manager before the UI system so PTY reader threads
-       stop before causality signals are freed. */
-    sol_ui_system_set_terminal_manager(app.ui, NULL);
-    sol_terminal_manager_destroy(app.terminal_mgr);
-    /* Detach and destroy bg effects before UI destroy so Vulkan pipelines are
-       freed before the Causality instance tears down its device. */
-    sol_ui_system_set_bg_effects(app.ui, NULL);
-    sol_bg_effect_registry_destroy(app.bg_effects);
-    sol_ui_system_destroy(app.ui);
-    sol_syntax_registry_destroy(app.syntax_registry);
-    ca_instance_destroy(instance);
-    sol_system_manager_destroy(app.systems);
+    ca_instance_destroy(host.instance);
     return 0;
 }

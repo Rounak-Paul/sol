@@ -55,6 +55,7 @@ typedef struct {
 } TbEditRecord;
 
 struct SolTextBuffer {
+    SolBufferSystem      *system;
     SolRope              *rope;            /* owned                              */
     size_t                cursor_byte;     /* absolute byte offset into the rope */
     size_t                preferred_col_cp;
@@ -594,14 +595,12 @@ static SolBufferId tb_register(SolBufferSystem *system, SolTextBuffer *tb,
     if (id == 0u) {
         tb_destroy(tb);
     } else {
+        tb->system = system;
         tb->events  = sol_buffer_event_bus(system);
         tb->self_id = id;
 
-        /* Attach syntax highlighter if a language is registered for this
-         * file's extension.  Requires the global registry to be set
-         * (via sol_syntax_set_global_registry) before files are opened. */
         if (tb->source_path) {
-            SolSyntaxRegistry *reg = sol_syntax_get_global_registry();
+            SolSyntaxRegistry *reg = sol_buffer_syntax_registry(system);
             if (reg) {
                 const void *lang =
                     sol_syntax_get_for_path(reg, tb->source_path);
@@ -757,7 +756,7 @@ void sol_text_buffer_invalidate_language(SolBufferSystem *system,
 void sol_text_buffer_refresh_highlighters(SolBufferSystem *system)
 {
     if (!system) return;
-    SolSyntaxRegistry *reg = sol_syntax_get_global_registry();
+    SolSyntaxRegistry *reg = sol_buffer_syntax_registry(system);
     if (!reg) return;
     const size_t total = sol_buffer_count(system);
     for (size_t i = 0u; i < total; ++i) {
@@ -997,7 +996,7 @@ bool sol_text_buffer_save_as(SolTextBuffer *tb, const char *path,
     /* Re-resolve syntax highlighting for the (possibly new) extension. */
     sol_syntax_highlight_destroy(tb->highlighter);
     tb->highlighter = NULL;
-    SolSyntaxRegistry *reg = sol_syntax_get_global_registry();
+    SolSyntaxRegistry *reg = sol_buffer_syntax_registry(tb->system);
     if (reg) {
         const void *lang = sol_syntax_get_for_path(reg, tb->source_path);
         if (lang) {

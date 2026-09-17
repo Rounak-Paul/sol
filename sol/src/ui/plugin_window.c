@@ -523,7 +523,7 @@ void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm)
 
     /* If a window is already open, don't open a second one. */
     for (SolPluginWindow *w = g_pm_windows; w; w = w->next) {
-        if (w->window && ca_window_is_open(w->window))
+        if (w->plugin_manager == pm && w->window && ca_window_is_open(w->window))
             return;
     }
 
@@ -571,5 +571,19 @@ void sol_ui_plugin_window_tick(void)
             continue;
         }
         link = &w->next;
+    }
+}
+
+/** Destroy auxiliary windows owned by this project before its services disappear. */
+void sol_ui_plugin_window_close_owner(SolPluginManager *plugin_manager)
+{
+    SolPluginWindow **link = &g_pm_windows;
+    while (*link) {
+        SolPluginWindow *w = *link;
+        if (w->plugin_manager != plugin_manager) { link = &w->next; continue; }
+        *link = w->next;
+        if (w->window && ca_window_is_open(w->window)) ca_window_destroy(w->window);
+        w->window = NULL;
+        pm_destroy(w);
     }
 }

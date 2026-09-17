@@ -480,6 +480,7 @@ static void sshw_build_layout(SolSshConnectWindow *w)
 static void sshw_destroy(SolSshConnectWindow *w)
 {
     if (!w) return;
+    sol_file_picker_cancel_owner(w);
     if (w->window && ca_window_is_open(w->window))
         ca_window_close(w->window);
     free(w);
@@ -534,4 +535,14 @@ void sol_ui_ssh_window_tick(void)
     free(g_sshw_saved_ctxs);
     g_sshw_saved_ctxs = NULL;
     g_sshw_saved_ctx_count = 0u;
+}
+
+/** Cancel the SSH dialog if its completion callback belongs to owner. */
+void sol_ui_ssh_window_cancel_owner(void *owner)
+{
+    if (!g_sshw || g_sshw->on_connect_data != owner) return;
+    if (g_sshw->window && ca_window_is_open(g_sshw->window))
+        ca_window_destroy(g_sshw->window);
+    g_sshw->window = NULL;
+    sol_ui_ssh_window_tick();
 }

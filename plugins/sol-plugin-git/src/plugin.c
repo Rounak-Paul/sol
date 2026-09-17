@@ -1746,6 +1746,7 @@ static void git_panel_tick(void *user_data)
     GitPlugin *plugin = (GitPlugin *)user_data;
     if (!plugin || plugin->shutting_down) return;
     git_consume_task(plugin);
+    if (!sol_ui_system_is_active(sol_plugin_ui(plugin->ctx))) return;
 
     if (plugin->needs_commit_focus && plugin->commit_input) {
         ca_input_focus(plugin->commit_input);
@@ -1771,14 +1772,14 @@ static void git_panel_tick(void *user_data)
         SolUISystem *ui = sol_plugin_ui(plugin->ctx);
         if (ui) sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_TREE);
     }
-    if (plugin->commit_input &&
+    if (plugin->commit_input && ca_input_is_focused(plugin->commit_input) &&
         ca_input_key_pressed(plugin->commit_input, SOL_KEY_ENTER) &&
         plugin->snapshot.staged_count > 0u &&
         git_has_content(plugin->commit_message)) {
         (void)git_start_task(plugin, GIT_TASK_COMMIT,
                              plugin->commit_message, false);
     }
-    if (plugin->branch_input &&
+    if (plugin->branch_input && ca_input_is_focused(plugin->branch_input) &&
         ca_input_key_pressed(plugin->branch_input, SOL_KEY_ENTER) &&
         git_has_content(plugin->new_branch)) {
         (void)git_start_task(plugin, GIT_TASK_CREATE_BRANCH,

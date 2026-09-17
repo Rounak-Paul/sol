@@ -338,3 +338,15 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     endif()
     add_test(NAME sol_terminal_tests COMMAND sol_terminal_tests)
 endif()
+
+# Explicit GPU lifecycle harness: requires a desktop and two disposable folders.
+if(BUILD_TESTING AND NOT WIN32)
+    set(SOL_PROJECT_TEST_SOURCES ${SOL_SOURCES})
+    list(FILTER SOL_PROJECT_TEST_SOURCES EXCLUDE REGEX "/main\\.c$")
+    add_executable(sol_project_native_tests EXCLUDE_FROM_ALL
+        tests/test_projects_native.c ${SOL_PROJECT_TEST_SOURCES} ${SOL_PLATFORM_SOURCES})
+    set_target_properties(sol_project_native_tests PROPERTIES ENABLE_EXPORTS ON)
+    target_include_directories(sol_project_native_tests PRIVATE
+        $<TARGET_PROPERTY:sol,INCLUDE_DIRECTORIES>)
+    target_link_libraries(sol_project_native_tests PRIVATE $<TARGET_PROPERTY:sol,LINK_LIBRARIES>)
+endif()

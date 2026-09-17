@@ -51,6 +51,11 @@
    causality itself and not visible from sol's layout code. */
 #define SOL_UI_STATUS_BAR_HEIGHT      30.0f
 
+/* Project tab strip height — kept in sync with .project-tabs in style.h
+   so layout math (buffer-area rect, tree-sticky-host offset) doesn't
+   re-parse the stylesheet to find it. */
+#define SOL_UI_PROJECT_TABS_HEIGHT    19.0f
+
 /* File-tree panel layout constants — kept in sync with the CSS in style.h
    so C code can compute geometry without re-parsing the stylesheet. */
 #define SOL_UI_TREE_SECTION_H         28.0f   /* .tree-section-header height */
@@ -187,6 +192,11 @@ struct SolUISystem {
     SolThemeRegistry *themes;
     char              applied_theme_id[SOL_THEME_ID_MAX + 1u];
 
+    bool              active;
+    float             saved_tree_scroll;
+    Ca_Div           *project_tabs_host;
+    void            (*project_tabs_builder)(Ca_Div *, void *);
+    void             *project_tabs_data;
     Ca_Div           *workspace_host;
     Ca_Div           *workspace_content_host;
     /* These two are kept as struct fields purely for tooling/debug
@@ -445,6 +455,12 @@ void sol_ui_search_window_open_contents(SolUISystem *ui);
  * Update the search window each frame (process input, render).
  */
 void sol_ui_search_window_tick(void);
+/** Destroy search windows owned by ui. */
+void sol_ui_search_window_close_owner(SolUISystem *ui);
+/** Destroy settings windows owned by ui. */
+void sol_ui_settings_window_close_owner(SolUISystem *ui);
+/** Destroy plugin windows owned by plugin_manager. */
+void sol_ui_plugin_window_close_owner(SolPluginManager *plugin_manager);
 
 /*
  * Check if a key code represents a modifier key (Shift, Alt, Control, etc.).
