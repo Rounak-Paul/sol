@@ -135,6 +135,7 @@ static const char *const SOL_DEFAULT_BINDINGS_CONF =
     "bind L s n            project.next\n"
     "bind L s p            project.previous\n"
     "bind L s x            project.close\n"
+    "bind L s s            project.switcher\n"
     "bind L t c            terminal.tab.new\n"
     "bind L t n            terminal.tab.next\n"
     "bind L t p            terminal.tab.prev\n"

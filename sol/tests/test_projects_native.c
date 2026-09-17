@@ -83,6 +83,27 @@ int main(int argc, char **argv)
     CHECK(strcmp(sol_ui_system_file_tree_root(a->ui), argv[1]) == 0);
     CHECK(strcmp(sol_ui_system_file_tree_root(b->ui), argv[2]) == 0);
 
+    /* Session switcher (L s s): opens once, lists both live projects,
+       defaults selection to the active one, and jumping via the detail
+       panel's action both activates the target and closes the window. */
+    CHECK(sol_project_command(a, "project.switcher"));
+    CHECK(host.switcher && host.switcher->window);
+    project_test_frame(&host);
+    SolAppContext *visible[SOL_SWITCHER_MAX_ROWS];
+    CHECK(sol_switcher_visible_projects(host.switcher, visible) == 2u);
+    CHECK(host.switcher->selected_id == a->project_id);
+    /* Reopening while already open must be a no-op, not a second window. */
+    sol_project_switcher_open(&host);
+    Ca_Window *first_switcher_window = host.switcher->window;
+    CHECK(host.switcher->window == first_switcher_window);
+    sol_switcher_activate(host.switcher, b);
+    CHECK(host.activate_pending == b);
+    sol_project_apply_requests(&host);
+    project_test_frame(&host);
+    CHECK(host.active == b);
+    sol_project_switcher_tick(&host);
+    CHECK(host.switcher == NULL);
+
     /* Simulate confirmed closure at the same frame boundary as the host. */
     host.close_pending = b;
     sol_project_apply_requests(&host);

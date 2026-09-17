@@ -26,6 +26,7 @@
 
 #include <causality.h>
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -83,6 +84,17 @@ static bool sol_path_dirname(const char *path, char *buffer, size_t buffer_size)
     memcpy(buffer, path, len);
     buffer[len] = '\0';
     return true;
+}
+
+/** Return the final path component of root, or root itself if it has none. */
+static const char *sol_project_display_name(const char *root)
+{
+    const char *name = root;
+    if (root) {
+        for (const char *p = root; *p; ++p)
+            if (sol_platform_is_path_separator(*p) && p[1]) name = p + 1;
+    }
+    return name;
 }
 
 /* Resolve the plugin directory located beside the running executable.
@@ -187,6 +199,8 @@ typedef struct SolAppContext {
     bool                   deferred_init_done;
 } SolAppContext;
 
+typedef struct SolProjectSwitcher SolProjectSwitcher;
+
 struct SolProjectHost {
     Ca_Instance *instance;
     Ca_Window *window;
@@ -199,6 +213,7 @@ struct SolProjectHost {
     char create_path[4096];
     bool create_pending;
     bool picker_open;
+    SolProjectSwitcher *switcher;
     int argc;
     char **argv;
 };
@@ -207,6 +222,10 @@ struct SolProjectHost {
 static bool sol_project_command(SolAppContext *app, const char *action);
 /** Render project tabs for the host shared by all project runtimes. */
 static void sol_project_tabs(Ca_Div *div, void *data);
+/** Open (or focus) the session switcher window listing every project. */
+static void sol_project_switcher_open(SolProjectHost *host);
+/** Advance the switcher window's lifecycle; reaps it once closed. */
+static void sol_project_switcher_tick(SolProjectHost *host);
 
 /* Debounce interval: a dirty buffer is saved this long after its last
    edit, provided no further edit arrives first. Chosen to avoid writing
@@ -2057,10 +2076,12 @@ static void sol_project_destroy(SolAppContext *app)
 /** Register project flows before user bindings so explicit overrides win. */
 static void sol_register_project_commands(SolUISystem *ui)
 {
-    const char *actions[] = {"project.create", "project.next", "project.previous", "project.close"};
-    const char *labels[] = {"New project", "Next project", "Previous project", "Close project"};
-    const SolKeyCode keys[] = {'C', 'N', 'P', 'X'};
-    for (size_t i = 0; i < 4; ++i) {
+    const char *actions[] = {"project.create", "project.next", "project.previous",
+                              "project.close", "project.switcher"};
+    const char *labels[] = {"New project", "Next project", "Previous project",
+                             "Close project", "Switch project..."};
+    const SolKeyCode keys[] = {'C', 'N', 'P', 'X', 'S'};
+    for (size_t i = 0; i < 5; ++i) {
         const SolKeyCode sequence[] = {'S', keys[i]};
         sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
             .action = actions[i], .label = labels[i],
@@ -2242,6 +2263,10 @@ static bool sol_project_command(SolAppContext *app, const char *action)
         host->activate_pending = previous;
         return true;
     }
+    if (strcmp(action, "project.switcher") == 0) {
+        sol_project_switcher_open(host);
+        return true;
+    }
     return false;
 }
 
@@ -2268,6 +2293,344 @@ static void sol_project_tab_new(Ca_Button *button, void *data)
     if (host->active) sol_project_command(host->active, "project.create");
 }
 
+/* ------------------------------------------------------------------ */
+/* Session switcher (L s s)                                            */
+/* ------------------------------------------------------------------ */
+
+#define SOL_SWITCHER_MAX_ROWS 64u
+
+typedef struct SolSwitcherRowCtx {
+    SolProjectSwitcher *win;
+    uint64_t             project_id;
+} SolSwitcherRowCtx;
+
+struct SolProjectSwitcher {
+    Ca_Window       *window;
+    SolProjectHost  *host;
+    Ca_TextInput    *filter_input;
+    Ca_Signal       *sig_rev;
+    Ca_Div          *content_host;
+    bool             needs_focus;
+    char             filter[128];
+    uint64_t         selected_id;
+    SolSwitcherRowCtx row_ctxs[SOL_SWITCHER_MAX_ROWS];
+    SolSwitcherRowCtx detail_ctx;
+};
+
+/* Increment sig so subscribed reactive builders re-run next frame. */
+static void sol_switcher_bump(Ca_Signal *sig)
+{
+    if (sig) ca_signal_set_u32(sig, ca_signal_get_u32(sig) + 1u);
+}
+
+/* Return true when needle occurs case-insensitively anywhere in haystack;
+   an empty needle always matches (mirrors pm_contains_nocase). */
+static bool sol_switcher_contains_nocase(const char *haystack, const char *needle)
+{
+    if (!needle || !needle[0]) return true;
+    if (!haystack) return false;
+    const size_t nl = strlen(needle);
+    for (size_t i = 0; haystack[i]; ++i) {
+        size_t j = 0;
+        for (; j < nl; ++j) {
+            if (!haystack[i + j]) break;
+            if (tolower((unsigned char)haystack[i + j]) != tolower((unsigned char)needle[j])) break;
+        }
+        if (j == nl) return true;
+    }
+    return false;
+}
+
+/* Build the ordered, filter-matched list of live projects into out (capacity
+   SOL_SWITCHER_MAX_ROWS), returning the count written. */
+static size_t sol_switcher_visible_projects(SolProjectSwitcher *w, SolAppContext **out)
+{
+    size_t count = 0;
+    for (SolAppContext *app = w->host->projects; app && count < SOL_SWITCHER_MAX_ROWS; app = app->next) {
+        if (w->filter[0]) {
+            const char *root = sol_ui_system_file_tree_root(app->ui);
+            if (!sol_switcher_contains_nocase(root, w->filter)) continue;
+        }
+        out[count++] = app;
+    }
+    return count;
+}
+
+/* Jump to app and close the switcher window. */
+static void sol_switcher_activate(SolProjectSwitcher *w, SolAppContext *app)
+{
+    if (!app) return;
+    w->host->activate_pending = app;
+    if (w->window) ca_window_close(w->window);
+}
+
+/** Resolve ctx's project id back to a live SolAppContext and jump to it. */
+static void sol_switcher_on_row_click(Ca_Button *button, void *data)
+{
+    (void)button;
+    SolSwitcherRowCtx *ctx = data;
+    SolProjectSwitcher *w = ctx->win;
+    for (SolAppContext *app = w->host->projects; app; app = app->next) {
+        if (app->project_id == ctx->project_id) {
+            sol_switcher_activate(w, app);
+            return;
+        }
+    }
+}
+
+static void sol_switcher_on_filter_change(Ca_TextInput *input, void *data)
+{
+    SolProjectSwitcher *w = data;
+    const char *text = ca_input_text(input);
+    const size_t n = text ? strlen(text) : 0u;
+    const size_t copy = n < sizeof(w->filter) - 1u ? n : sizeof(w->filter) - 1u;
+    memcpy(w->filter, text ? text : "", copy);
+    w->filter[copy] = '\0';
+    sol_switcher_bump(w->sig_rev);
+}
+
+/* Reactive builder for the switcher body: left list of matching project
+   sessions (name, dirty/terminal badges) and a right detail panel for the
+   selected one. Subscribes to sig_rev so filter/selection edits re-render. */
+static void sol_switcher_content_builder(Ca_Div *div, void *data)
+{
+    (void)div;
+    SolProjectSwitcher *w = data;
+    (void)ca_signal_get_u32(w->sig_rev);
+
+    SolAppContext *visible[SOL_SWITCHER_MAX_ROWS];
+    const size_t count = sol_switcher_visible_projects(w, visible);
+    if (count > 0u && !w->selected_id) w->selected_id = visible[0]->project_id;
+    bool selection_visible = false;
+    for (size_t i = 0; i < count; ++i) {
+        if (visible[i]->project_id == w->selected_id) { selection_visible = true; break; }
+    }
+    if (!selection_visible && count > 0u) w->selected_id = visible[0]->project_id;
+    if (count == 0u) w->selected_id = 0u;
+
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-left" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-search-row" });
+    w->filter_input = ca_input(&(Ca_InputDesc){
+        .text = w->filter, .placeholder = "Filter sessions\xe2\x80\xa6",
+        .width = 240.0f, .height = 26.0f,
+        .on_change = sol_switcher_on_filter_change, .change_data = w,
+        .style = "pm-search-input",
+    });
+    ca_div_end(); /* pm-search-row */
+
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-list", .id = "switcher-list" });
+    if (count == 0u) {
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-empty" });
+        ca_text(&(Ca_TextDesc){
+            .text = w->filter[0] ? "No sessions match the filter." : "No sessions open.",
+            .style = "pm-empty-text",
+        });
+        ca_div_end();
+    }
+    for (size_t i = 0; i < count; ++i) {
+        SolAppContext *app = visible[i];
+        const char *root = sol_ui_system_file_tree_root(app->ui);
+        const char *name = sol_project_display_name(root);
+        const bool selected = app->project_id == w->selected_id;
+        const bool is_active = app == w->host->active;
+        SolSwitcherRowCtx *ctx = &w->row_ctxs[i];
+        ctx->win = w;
+        ctx->project_id = app->project_id;
+        char key[48];
+        snprintf(key, sizeof(key), "switcher-row-%llu", (unsigned long long)app->project_id);
+        ca_btn_begin(&(Ca_BtnDesc){
+            .direction = CA_VERTICAL,
+            .style = selected ? "sess-item sess-item-selected" : "sess-item",
+            .on_click = sol_switcher_on_row_click, .click_data = ctx,
+            .id = key, .skip_keyboard_focus = true,
+        });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sess-item-name-row" });
+        ca_div_begin(&(Ca_DivDesc){
+            .style = is_active ? "sess-active-dot sess-active-dot-on" : "sess-active-dot",
+        });
+        ca_div_end();
+        ca_text(&(Ca_TextDesc){
+            .text = name ? name : "Empty project",
+            .style = "pm-item-name",
+        });
+        ca_div_end(); /* sess-item-name-row */
+        ca_text(&(Ca_TextDesc){
+            .text = root ? root : "No folder open",
+            .style = "pm-item-version",
+        });
+        ca_btn_end();
+    }
+    ca_div_end(); /* pm-list */
+    ca_div_end(); /* pm-left */
+
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-right" });
+    SolAppContext *selected_app = NULL;
+    for (size_t i = 0; i < count; ++i) {
+        if (visible[i]->project_id == w->selected_id) { selected_app = visible[i]; break; }
+    }
+    if (selected_app) {
+        const char *root = sol_ui_system_file_tree_root(selected_app->ui);
+        const char *name = sol_project_display_name(root);
+        ca_text(&(Ca_TextDesc){ .text = name ? name : "Empty project", .style = "pm-detail-name" });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-badge-row" });
+        const bool is_active = selected_app == w->host->active;
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style = is_active ? "pm-badge pm-badge-enabled" : "pm-badge pm-badge-static",
+        });
+        ca_text(&(Ca_TextDesc){
+            .text = is_active ? "Active" : "Background",
+            .style = is_active ? "pm-badge-text pm-badge-text-enabled" : "pm-badge-text pm-badge-text-static",
+        });
+        ca_div_end();
+        const size_t dirty = sol_project_dirty_count(selected_app);
+        if (dirty > 0u) {
+            ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-badge pm-badge-disabled" });
+            char label[32];
+            snprintf(label, sizeof(label), "%zu unsaved", dirty);
+            ca_text(&(Ca_TextDesc){ .text = label, .style = "pm-badge-text pm-badge-text-disabled" });
+            ca_div_end();
+        }
+        ca_div_end(); /* pm-badge-row */
+
+        w->detail_ctx.win = w;
+        w->detail_ctx.project_id = selected_app->project_id;
+        ca_btn_begin(&(Ca_BtnDesc){
+            .style = "pm-btn pm-btn-enable",
+            .on_click = sol_switcher_on_row_click,
+            .click_data = &w->detail_ctx,
+        });
+        ca_text(&(Ca_TextDesc){ .text = "Jump to session", .style = "pm-btn-text pm-btn-enable-text" });
+        ca_btn_end();
+
+        ca_hr(&(Ca_HrDesc){ .style = "pm-hr" });
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-info-row" });
+        ca_text(&(Ca_TextDesc){ .text = "Folder", .style = "pm-info-key" });
+        ca_text(&(Ca_TextDesc){ .text = root ? root : "None", .style = "pm-info-value" });
+        ca_div_end();
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-info-row" });
+        ca_text(&(Ca_TextDesc){ .text = "Buffers", .style = "pm-info-key" });
+        char buffers_text[32];
+        snprintf(buffers_text, sizeof(buffers_text), "%zu open, %zu unsaved",
+                 sol_buffer_count(selected_app->buffers), dirty);
+        ca_text(&(Ca_TextDesc){ .text = buffers_text, .style = "pm-info-value" });
+        ca_div_end();
+
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-info-row" });
+        ca_text(&(Ca_TextDesc){ .text = "Terminals", .style = "pm-info-key" });
+        char term_text[16];
+        snprintf(term_text, sizeof(term_text), "%zu",
+                 sol_terminal_manager_count(selected_app->terminal_mgr));
+        ca_text(&(Ca_TextDesc){ .text = term_text, .style = "pm-info-value" });
+        ca_div_end();
+    } else {
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-empty" });
+        ca_text(&(Ca_TextDesc){ .text = "Select a session from the list.", .style = "pm-empty-text" });
+        ca_div_end();
+    }
+    ca_div_end(); /* pm-right */
+}
+
+/* Per-frame callback: keeps filter focused and handles Up/Down/Enter/Escape
+   navigation independent of mouse clicks, mirroring search_on_frame. */
+static void sol_switcher_on_frame(void *data)
+{
+    SolProjectSwitcher *w = data;
+    if (!w || !w->filter_input) return;
+    if (w->needs_focus) {
+        ca_input_focus(w->filter_input);
+        w->needs_focus = false;
+    }
+    if (ca_input_key_pressed(w->filter_input, CA_KEY_ESCAPE)) {
+        ca_window_close(w->window);
+        return;
+    }
+
+    const bool enter = ca_input_key_pressed(w->filter_input, CA_KEY_ENTER);
+    const bool down  = ca_input_key_pressed(w->filter_input, CA_KEY_DOWN);
+    const bool up    = ca_input_key_pressed(w->filter_input, CA_KEY_UP);
+    if (!enter && !down && !up) return;
+
+    SolAppContext *visible[SOL_SWITCHER_MAX_ROWS];
+    const size_t count = sol_switcher_visible_projects(w, visible);
+    if (count == 0u) return;
+
+    size_t index = 0;
+    for (size_t i = 0; i < count; ++i) {
+        if (visible[i]->project_id == w->selected_id) { index = i; break; }
+    }
+
+    if (enter) {
+        sol_switcher_activate(w, visible[index]);
+        return;
+    }
+
+    const size_t previous = index;
+    if (down) index = (index + 1u) % count;
+    if (up)   index = (index + count - 1u) % count;
+    if (index != previous) {
+        w->selected_id = visible[index]->project_id;
+        sol_switcher_bump(w->sig_rev);
+        ca_set_scroll_y(w->window, "switcher-list", (float)index * 54.0f);
+    }
+}
+
+/** Destroy the switcher's Causality window and free its state. */
+static void sol_project_switcher_destroy(SolProjectSwitcher *w)
+{
+    if (!w) return;
+    if (w->window && ca_window_is_open(w->window)) ca_window_close(w->window);
+    free(w);
+}
+
+/** Open (or focus) the session switcher window listing every project. */
+static void sol_project_switcher_open(SolProjectHost *host)
+{
+    if (!host || !host->instance) return;
+    if (host->switcher && host->switcher->window && ca_window_is_open(host->switcher->window)) {
+        return;
+    }
+    sol_project_switcher_destroy(host->switcher);
+    host->switcher = NULL;
+
+    SolProjectSwitcher *w = calloc(1, sizeof(*w));
+    if (!w) return;
+    w->host = host;
+    w->sig_rev = ca_signal_u32(host->instance, 0u);
+    if (!w->sig_rev) { free(w); return; }
+    if (host->active) w->selected_id = host->active->project_id;
+
+    w->window = ca_window_create(host->instance, &(Ca_WindowDesc){
+        .title = "Switch Session", .width = 720, .height = 460,
+    });
+    if (!w->window) { ca_signal_destroy(w->sig_rev); free(w); return; }
+
+    ca_ui_begin(w->window, &(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-root" });
+    w->content_host = ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-body" });
+    ca_div_set_builder(w->content_host, sol_switcher_content_builder, w);
+    ca_div_end(); /* pm-body */
+    ca_ui_end();
+
+    w->needs_focus = true;
+    ca_window_set_on_frame(w->window, sol_switcher_on_frame, w);
+    host->switcher = w;
+}
+
+/** Advance the switcher window's lifecycle; reaps it once closed. */
+static void sol_project_switcher_tick(SolProjectHost *host)
+{
+    if (!host || !host->switcher) return;
+    if (!host->switcher->window || !ca_window_is_open(host->switcher->window)) {
+        SolProjectSwitcher *w = host->switcher;
+        host->switcher = NULL;
+        w->window = NULL;
+        sol_project_switcher_destroy(w);
+    }
+}
+
 /** Render stable project tabs and their close controls for host. */
 static void sol_project_tabs(Ca_Div *div, void *data)
 {
@@ -2275,11 +2638,7 @@ static void sol_project_tabs(Ca_Div *div, void *data)
     SolProjectHost *host = data;
     for (SolAppContext *app = host->projects; app; app = app->next) {
         const char *root = sol_ui_system_file_tree_root(app->ui);
-        const char *name = root;
-        if (root) {
-            for (const char *p = root; *p; ++p)
-                if (sol_platform_is_path_separator(*p) && p[1]) name = p + 1;
-        }
+        const char *name = sol_project_display_name(root);
         const bool tab_active = app == host->active;
         char key[48];
         snprintf(key, sizeof(key), "project-%llu", (unsigned long long)app->project_id);
@@ -2396,8 +2755,10 @@ int main(int argc, char **argv)
             sol_system_pump_events(app->systems, 128);
             sol_system_end_frame(app->systems);
         }
+        sol_project_switcher_tick(&host);
         sol_project_apply_requests(&host);
     }
+    sol_project_switcher_destroy(host.switcher);
     sol_file_picker_cancel_owner(&host);
     sol_input_router_destroy(host.router);
     sol_crash_track_events(NULL);
