@@ -210,6 +210,21 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "  backdrop-filter: blur(0px);"
         "}"
 
+        /* ---- Native overlay scrollbars (explorer, diff view, search,
+           picker, plugin list): flat fills in the same well/surface
+           tones as the buffer trough/thumb below, square like every
+           other retro edge. Width is owned by the appearance overlay's
+           scrollbar-width setting and deliberately untouched here.
+           Without this these views keep the glass look while the
+           buffers go bevelled. */
+        ".tree-scroll-area, .fp-list, .pm-list, .search-results,"
+        " .search-preview-code, .scm-content, .scm-view {"
+        "  scrollbar-track-color: #%06x;"
+        "  scrollbar-thumb-color: #%06x;"
+        "  scrollbar-thumb-active-color: #%06x;"
+        "  scrollbar-radius: 0px;"
+        "}"
+
         /* ---- Workspace panels: framed surfaces holding content ---- */
         ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel,"
         ".welcome-pane, .term-float-panel {"
@@ -397,6 +412,8 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "  background: transparent;"
         "}",
 
+        /* native overlay scrollbars: sunken track, raised thumb tones */
+        well, surface, pressed,
         /* panels: raised frame on the widget surface */
         surface, light, light, dark, dark,
         /* wells */

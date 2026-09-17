@@ -570,6 +570,16 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         /* Scrollbar geometry — wildcard wins by appending after theme. */
         "* { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx;"
         " scrollbar-track-color: transparent; }"
+        /* Native overlay scrollbars (explorer, file picker, plugin list,
+           search results/preview, SCM sidebar + diff view) follow the same
+           width setting as the buffer's custom scrollbars. The wildcard
+           above already covers them, but this explicit class rule wins by
+           specificity over any theme/plugin `*` or class rule so every
+           scrollbar in the app stays the same size. */
+        ".tree-scroll-area,.fp-list,.pm-list,.search-results,"
+        ".search-preview-code,.scm-content,.scm-view"
+        " { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx;"
+        " scrollbar-track-color: transparent; }"
         ".buffer-scrollbar { width: %.1fpx; padding: 0px 2px; background: transparent; }"
         ".buffer-scrollbar-spacer { width: 100%%; }"
         ".buffer-hscrollbar { height: %.1fpx; padding: 2px 0px; background: transparent; }"
@@ -676,6 +686,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".scm-tab,"
         ".scm-tab-active"
         " { border-radius: %.1fpx; }",
+        (double)sw, (double)sr,
         (double)sw, (double)sr,
         (double)sw, (double)sw, (double)sr, (double)sr,
         (double)cr, (double)cr, (double)cr,

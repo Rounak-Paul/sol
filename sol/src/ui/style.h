@@ -2325,16 +2325,20 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  background: rgba(5, 10, 18, " SOL_UI_SURFACE_CHROME_ALPHA_CSS "); "
     "}"
     ".buffer-gutter-col { background: rgba(8, 16, 27, 0.68);  }"
-    ".buffer-scrollbar { width: 9px; background: rgba(7, 10, 15, 0.28);  }"
-    ".buffer-scrollbar-spacer { width: 9px; }"
-    ".buffer-hscrollbar { height: 9px; background: rgba(7, 10, 15, 0.28);  }"
-    ".buffer-hscrollbar-spacer { height: 9px; }"
+    /* Buffer trough/thumb widths match the `*` scrollbar-width default
+       above (and the scrollbar_width setting default) so custom buffer
+       bars and native overlay bars (explorer, diff view, …) agree even
+       before the appearance overlay is applied. */
+    ".buffer-scrollbar { width: 8px; background: rgba(7, 10, 15, 0.28);  }"
+    ".buffer-scrollbar-spacer { width: 8px; }"
+    ".buffer-hscrollbar { height: 8px; background: rgba(7, 10, 15, 0.28);  }"
+    ".buffer-hscrollbar-spacer { height: 8px; }"
     ".buffer-scrollbar-thumb, .buffer-scrollbar-thumb-active,"
     ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
     "  background: rgba(129, 148, 172, 0.40); border-radius: 0px;"
-    "   width: 9px;"
+    "   width: 8px;"
     "}"
-    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active { height: 9px; }"
+    ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active { height: 8px; }"
     ".buffer-scrollbar-thumb:hover, .buffer-scrollbar-thumb-active,"
     ".buffer-hscrollbar-thumb:hover, .buffer-hscrollbar-thumb-active {"
     "  background: rgba(150, 174, 202, 0.58);"

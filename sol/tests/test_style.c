@@ -150,6 +150,47 @@ int main(void)
     /* A surface already inside the band is left alone. */
     CHECK(sol_retro_widget_surface(0x808080u) == 0x808080u);
 
+    /* Scrollbar uniformity: every native-scroll view (explorer, picker,
+       plugin list, search, SCM sidebar + diff view) must follow the
+       scrollbar_width setting through an explicit class rule — not just
+       the `*` wildcard — so no theme or plugin `*` rule can silently
+       diverge them from the buffer's custom scrollbars. Use a
+       distinctive width so the assertion can't pass on defaults. */
+    {
+        SolSettings s = sol_settings_defaults();
+        s.scrollbar_width = 13.5f;
+        char overlay[8192];
+        CHECK(sol_settings_build_appearance_css(&s, overlay,
+                                                (int)sizeof(overlay)) > 0);
+        CHECK(strstr(overlay, "scrollbar-width: 13.5px") != NULL);
+        CHECK(strstr(overlay, ".tree-scroll-area") != NULL);
+        CHECK(strstr(overlay, ".fp-list") != NULL);
+        CHECK(strstr(overlay, ".pm-list") != NULL);
+        CHECK(strstr(overlay, ".search-results") != NULL);
+        CHECK(strstr(overlay, ".search-preview-code") != NULL);
+        CHECK(strstr(overlay, ".scm-content") != NULL);
+        CHECK(strstr(overlay, ".scm-view") != NULL);
+        CHECK(style_parses(overlay));
+    }
+
+    /* Retro must restyle the native overlay scrollbars in the same
+       bevel language as the buffer trough/thumb — otherwise the
+       explorer and diff view keep the glass look while buffers go
+       bevelled. Width stays owned by the appearance overlay. */
+    {
+        char retro[SOL_RETRO_CSS_MAX];
+        CHECK(sol_retro_build_css(0x1e1e26u, retro,
+                                  (int)sizeof(retro)) > 0);
+        CHECK(strstr(retro, "scrollbar-track-color") != NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-color") != NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-active-color") != NULL);
+        CHECK(strstr(retro, "scrollbar-radius") != NULL);
+        CHECK(strstr(retro, "scrollbar-width") == NULL);
+        CHECK(strstr(retro, ".tree-scroll-area") != NULL);
+        CHECK(strstr(retro, ".scm-view") != NULL);
+        CHECK(style_composition_parses(SOL_UI_DEFAULT_THEME_CSS, retro));
+    }
+
     puts("style overlay parsing and theme-aware bevel visibility passed");
     return 0;
 }
