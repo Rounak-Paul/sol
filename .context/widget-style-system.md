@@ -96,6 +96,28 @@ and selected. **Because the CSS depends on the theme, it is regenerated on
 every theme change too** — which already works, since both registries share
 `sol_ui_on_theme_change` and that always recomposes from scratch.
 
+## Chrome symmetry: top strip vs status bar
+
+Both styles now treat the two window-edge chrome bands the same way: the
+project tab strip is flush under the menu bar, and the status bar is flush
+against the bottom edge, each spanning the full window width, with the
+workspace's own 8px `.workspace-main-content` padding providing the gap
+between them and the panels.
+
+The glass theme previously floated `.status-bar` as an inset pill
+(`width: auto`, `margin: 0 8px 8px 8px`, `border-radius: 10px`), which read
+as an alignment bug against the flush top strip — and for Retro a bevelled
+pill actively contradicts the relief language.
+
+`.status-bar` uses `height: 100%` rather than a fixed `22px`: Causality
+reserves `SOL_UI_STATUS_BAR_HEIGHT` (30px, scaled) for the bottom node, and
+the old pill filled 22px of that with its 8px bottom margin making up the
+rest. Now that the margin is gone, a fixed 22px would leave an 8px gap
+*below* the bar; filling the reserved band keeps it flush.
+
+Verified geometry on a 1080x720 window: `x=0 w=1080` (full width),
+`y=690 h=30` (690+30=720, flush to the bottom edge).
+
 ## Persistence
 
 - `SolSettings.style_id`, default `SOL_SETTINGS_STYLE_ID_DEFAULT`.

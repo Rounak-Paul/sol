@@ -340,12 +340,29 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         ".pm-root, .sw-root, .pm-left, .sw-left, .fp-toolbar, .fp-footer,"
         ".fp-colhdr, .search-header, .search-footer, .pm-search-row,"
         ".scm-toolbar, .scm-repository, .scm-commit-box, .scm-section-header,"
-        ".status-bar, .ca-titlebar {"
+        ".ca-titlebar {"
         "  background: #%06x;"
         "  border-top-width: 2px; border-left-width: 2px;"
         "  border-bottom-width: 2px; border-right-width: 2px;"
         "  border-top-color: #%06x; border-left-color: #%06x;"
         "  border-bottom-color: #%06x; border-right-color: #%06x;"
+        "  border-radius: 0px;"
+        "}"
+        /* Status bar: window-width chrome flush to the bottom edge, the
+           mirror of the project tab strip at the top. The glass theme
+           floats it as an inset pill (width:auto + side/bottom margins +
+           pill radius), which has to be reset here — a bevelled pill
+           contradicts the relief language, and an inset bottom bar
+           against a flush top strip reads as an alignment bug. */
+        ".status-bar {"
+        "  background: #%06x;"
+        "  width: 100%%;"
+        "  margin: 8px 0px 0px 0px;"
+        "  padding: 0px 8px;"
+        "  flex-grow: 0; flex-shrink: 0;"
+        "  border-top-width: 1px; border-left-width: 0px;"
+        "  border-bottom-width: 0px; border-right-width: 0px;"
+        "  border-top-color: #%06x;"
         "  border-radius: 0px;"
         "}"
         /* Hard-edged shadow rather than a soft blur: a gaussian falloff
@@ -398,8 +415,10 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         well, well_dark, well_dark, well_light, well_light,
         /* scrollbar thumb: raised */
         surface, light, light, dark, dark,
-        /* floating cards + chrome: raised */
+        /* floating cards + titlebar: raised */
         surface, light, light, dark, dark,
+        /* status bar: flush chrome, highlight along its top edge only */
+        surface, light,
         /* selected rows: sunken */
         dark, dark, light, light,
         /* separator groove */

@@ -46,15 +46,24 @@
 #define SOL_UI_CONTEXT_PATH_MAX       4096u
 #define SOL_UI_MAX_GLASS_PANELS       64u
 
-/* Causality manages the title and status strips; sol only declares the
-   status-bar height it wants reserved. The title bar height is fixed by
-   causality itself and not visible from sol's layout code. */
-#define SOL_UI_STATUS_BAR_HEIGHT      30.0f
-
 /* Project tab strip height — kept in sync with .project-tabs in style.h
    so layout math (buffer-area rect, tree-sticky-host offset) doesn't
    re-parse the stylesheet to find it. */
 #define SOL_UI_PROJECT_TABS_HEIGHT    19.0f
+
+/* Causality manages the title and status strips; sol only declares the
+   status-bar height it wants reserved. The title bar height is fixed by
+   causality itself and not visible from sol's layout code.
+   The reserved band holds the visible bar plus the gap above it, so the
+   bar reads as the mirror of the project tab strip at the top of the
+   window: same bar height, and the same panel margin separating it from
+   the workspace. The gap must come from the bar's own top margin — the
+   status bar is a root-level sibling of the workspace host, so the
+   workspace's .workspace-main-content padding cannot reach it. */
+#define SOL_UI_STATUS_BAR_BAR_HEIGHT  SOL_UI_PROJECT_TABS_HEIGHT
+#define SOL_UI_STATUS_BAR_GAP         8.0f   /* = SOL_UI_PANEL_MARGIN_PX */
+#define SOL_UI_STATUS_BAR_HEIGHT \
+    (SOL_UI_STATUS_BAR_BAR_HEIGHT + SOL_UI_STATUS_BAR_GAP)
 
 /* File-tree panel layout constants — kept in sync with the CSS in style.h
    so C code can compute geometry without re-parsing the stylesheet. */

@@ -2513,10 +2513,20 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".term-tab, .term-tab-active {"
     "  height: 17px; border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS ";"
     "}"
+    /* Status bar mirrors the project tab strip at the top of the window:
+       the same bar height, full width, flush to the window edge, and the
+       same panel margin separating it from the workspace.
+       The gap is this element's own top margin, not workspace padding:
+       the status bar is a root-level sibling of the workspace host, so
+       .workspace-main-content's padding cannot reach it. Causality
+       reserves SOL_UI_STATUS_BAR_HEIGHT (bar + gap) for the band and
+       rewrites the node's height each frame, so the margin is what
+       positions the bar within it.
+       Previously an inset floating pill, which read as an alignment bug
+       against the flush top strip. */
     ".status-bar {"
-    "  width: auto; height: 22px; margin: 0px " SOL_UI_PANEL_MARGIN_PX_CSS
-    " 8px " SOL_UI_PANEL_MARGIN_PX_CSS "; padding: 0px 8px;"
-    "  flex-grow: 1; flex-shrink: 1; border-radius: " SOL_UI_PILL_RADIUS_PX_CSS ";"
+    "  width: 100%; margin: 8px 0px 0px 0px; padding: 0px 8px;"
+    "  flex-grow: 0; flex-shrink: 0; border-radius: 0px;"
     "}"
     ".status-bar-badge { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"
     ".cf-panel { border-radius: " SOL_UI_PANEL_RADIUS_PX_CSS "; padding: 8px; gap: 3px; }"
