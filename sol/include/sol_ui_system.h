@@ -420,6 +420,23 @@ size_t sol_ui_system_theme_count(const SolUISystem *ui);
 bool sol_ui_system_theme_info(const SolUISystem *ui, size_t index,
                               const char **out_id, const char **out_name);
 
+/* ---- Widget style ------------------------------------------------------
+ * A style supplies the UI's relief/shape language (flat vs bevelled edges,
+ * corner radii) and is orthogonal to the colour theme. Its CSS is layered
+ * after both the theme and the appearance overlay, so it has the final say
+ * on the properties it sets. */
+
+/* Select a registered style and apply it to every live window. */
+bool sol_ui_system_set_active_style(SolUISystem *ui, const char *id);
+
+/* Return the active style id, or NULL when unavailable. */
+const char *sol_ui_system_active_style(const SolUISystem *ui);
+
+/* Enumerate registered styles. Returned strings remain registry-owned. */
+size_t sol_ui_system_style_count(const SolUISystem *ui);
+bool sol_ui_system_style_info(const SolUISystem *ui, size_t index,
+                              const char **out_id, const char **out_name);
+
 /* ================================================================== */
 /* Background effect registry integration                             */
 /* ================================================================== */

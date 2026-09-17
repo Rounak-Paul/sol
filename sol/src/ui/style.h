@@ -19,6 +19,22 @@
 #define SOL_UI_DEFAULT_THEME_ID   "com.sol.theme.glass"
 #define SOL_UI_DEFAULT_THEME_NAME "Glass"
 
+/* Built-in widget styles. "Classic" is the identity style: the theme CSS
+   already describes Sol's flat/soft-radius look, so it adds no rules of
+   its own and exists to give that look a name in the picker.
+   Its CSS is a bare comment rather than "" because sol_theme_register
+   rejects an empty body — and a style that fails to register would take
+   the whole UI system down with it. */
+#define SOL_UI_STYLE_CLASSIC_ID   "com.sol.style.classic"
+#define SOL_UI_STYLE_CLASSIC_NAME "Classic"
+#define SOL_UI_STYLE_CLASSIC_CSS  "/* classic: no overrides */"
+#define SOL_UI_STYLE_RETRO_ID     "com.sol.style.retro"
+#define SOL_UI_STYLE_RETRO_NAME   "Retro"
+/* Retro's real CSS is generated from the active theme background by
+   sol_retro_build_css (style_retro.h); the registry only stores this
+   marker so the style can be listed and selected. */
+#define SOL_UI_STYLE_RETRO_CSS_PLACEHOLDER "/* retro: generated per theme */"
+
 /* Split bar presentation defaults. */
 #define SOL_UI_SPLIT_BAR_SIZE        SOL_UI_PANEL_GAP_PX
 

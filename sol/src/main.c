@@ -1442,6 +1442,12 @@ static void sol_drain_settings_watcher(SolAppContext *app)
         }
     }
 
+    if (strcmp(fresh.style_id, cur->style_id) != 0) {
+        if (sol_ui_system_set_active_style(app->ui, fresh.style_id)) {
+            snprintf(cur->style_id, sizeof(cur->style_id), "%s", fresh.style_id);
+        }
+    }
+
     const bool appearance_changed =
         fresh.corner_radius   != cur->corner_radius   ||
         fresh.panel_blur      != cur->panel_blur      ||
@@ -1995,6 +2001,15 @@ static void sol_run_deferred_init(SolAppContext *app, int argc, char **argv)
             (void)sol_ui_system_set_active_theme(app->ui, app->settings.theme_id);
         }
     }
+    /* Restore the saved widget style. Falls back to the built-in default
+     * when the saved id names a style this build doesn't have. */
+    if (app->settings.style_id[0] != '\0' &&
+        !sol_ui_system_set_active_style(app->ui, app->settings.style_id)) {
+        snprintf(app->settings.style_id, sizeof(app->settings.style_id), "%s",
+                 SOL_SETTINGS_STYLE_ID_DEFAULT);
+        (void)sol_ui_system_set_active_style(app->ui, app->settings.style_id);
+    }
+
     /* Always apply appearance overlay after themes load — set_active_theme
      * skips the callback when the theme index hasn't changed, so the overlay
      * would otherwise be missing on startup. */

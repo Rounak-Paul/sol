@@ -51,6 +51,7 @@ SolSettings sol_settings_defaults(void)
         .autosave_enabled = false,
     };
     snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
+    snprintf(s.style_id, sizeof(s.style_id), "%s", SOL_SETTINGS_STYLE_ID_DEFAULT);
     snprintf(s.bg_effect_id, sizeof(s.bg_effect_id), "%s",
              SOL_SETTINGS_BG_EFFECT_ID_DEFAULT);
     return s;
@@ -267,7 +268,10 @@ static void jp_parse_theme(JP *j, SolSettings *s)
                 v <= SOL_SETTINGS_UI_SCALE_MAX)
                 s->ui_scale = v;
         } else if (strcmp(key, "style") == 0) {
+            /* Legacy key: names the colour theme, not the widget style. */
             jp_string(j, s->theme_id, sizeof(s->theme_id));
+        } else if (strcmp(key, "widget_style") == 0) {
+            jp_string(j, s->style_id, sizeof(s->style_id));
         } else if (strcmp(key, "effect") == 0) {
             jp_string(j, s->bg_effect_id, sizeof(s->bg_effect_id));
         } else if (strcmp(key, "opacity") == 0) {
@@ -423,6 +427,21 @@ bool sol_settings_load(SolSettings *out)
 }
 
 /*
+ * Copy an id into a JSON string body, backslash-escaping quotes.
+ *
+ * src  Null-terminated source id.
+ * dst  Destination buffer of at least strlen(src) * 2 + 1 bytes.
+ */
+static void sol_settings_escape_json(const char *src, char *dst)
+{
+    while (*src) {
+        if (*src == '"' || *src == '\\') *dst++ = '\\';
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+}
+
+/*
  * Save settings to disk.
  *
  * Writes to a per-process temp file in the config directory and atomically
@@ -459,34 +478,21 @@ bool sol_settings_save(const SolSettings *settings)
         return false;
     }
 
-    /* Escape quotes in the effect id for JSON safety (effect ids are
-       expected to be simple dotted identifiers, but guard anyway). */
+    /* Escape quotes in the ids for JSON safety (ids are expected to be
+       simple dotted identifiers, but guard anyway). */
     char esc_id[sizeof(settings->bg_effect_id) * 2 + 1];
     char esc_theme[sizeof(settings->theme_id) * 2 + 1];
-    {
-        const char *src = settings->bg_effect_id;
-        char       *dst = esc_id;
-        while (*src) {
-            if (*src == '"' || *src == '\\') *dst++ = '\\';
-            *dst++ = *src++;
-        }
-        *dst = '\0';
-    }
-    {
-        const char *src = settings->theme_id;
-        char *dst = esc_theme;
-        while (*src) {
-            if (*src == '"' || *src == '\\') *dst++ = '\\';
-            *dst++ = *src++;
-        }
-        *dst = '\0';
-    }
+    char esc_style[sizeof(settings->style_id) * 2 + 1];
+    sol_settings_escape_json(settings->bg_effect_id, esc_id);
+    sol_settings_escape_json(settings->theme_id, esc_theme);
+    sol_settings_escape_json(settings->style_id, esc_style);
 
     int n = fprintf(fp,
         "{\n"
         "  \"theme\": {\n"
         "    \"scale\": %.2f,\n"
         "    \"style\": \"%s\",\n"
+        "    \"widget_style\": \"%s\",\n"
         "    \"effect\": \"%s\",\n"
         "    \"opacity\": %.2f\n"
         "  },\n"
@@ -503,6 +509,7 @@ bool sol_settings_save(const SolSettings *settings)
         "}\n",
         (double)settings->ui_scale,
         esc_theme,
+        esc_style,
         esc_id,
         (double)settings->bg_opacity,
         (double)settings->corner_radius,

@@ -49,6 +49,10 @@
 #define SOL_SETTINGS_THEME_ID_FALLBACK  "com.sol.theme.glass"
 #define SOL_SETTINGS_BG_EFFECT_ID_DEFAULT "com.sol.bfx.aurora"
 
+/* Widget style (shape/relief language, orthogonal to the colour theme). */
+#define SOL_SETTINGS_STYLE_ID_MAX       63
+#define SOL_SETTINGS_STYLE_ID_DEFAULT   "com.sol.style.classic"
+
 /* Appearance overlay tunables */
 #define SOL_SETTINGS_CORNER_RADIUS_MIN     0.0f
 #define SOL_SETTINGS_CORNER_RADIUS_MAX     20.0f
@@ -88,6 +92,10 @@ typedef struct SolSettings {
 
     /* Active complete CSS theme id. */
     char theme_id[SOL_SETTINGS_THEME_ID_MAX + 1];
+
+    /* Active widget style id — the relief/shape language (flat vs bevelled)
+     * layered over the theme's colours. Empty string selects the default. */
+    char style_id[SOL_SETTINGS_STYLE_ID_MAX + 1];
 
     /* Active background shader effect id (dotted, e.g. "com.sol.shaders.aurora").
      * Empty string means no effect is active. */

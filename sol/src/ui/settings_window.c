@@ -51,6 +51,7 @@ static const char * const SW_TAB_LABELS[SW_TAB_COUNT] = { "Theme" };
 
 #define SW_MAX_EFFECTS  33   /* 1 "None" + up to SOL_BG_EFFECT_MAX */
 #define SW_MAX_THEMES   SOL_THEME_MAX
+#define SW_MAX_STYLES   SOL_THEME_MAX  /* styles reuse the theme registry */
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -88,6 +89,13 @@ struct SolSettingsWindow {
     int           theme_count;
     int           theme_selected;              /* committed selection index */
     char          preview_theme_id[SOL_THEME_ID_MAX + 1]; /* snapshot before open */
+
+    /* Style select state (same registry shape as themes) */
+    const char   *style_names[SW_MAX_STYLES];   /* pointers into registry (stable) */
+    char          style_ids[SW_MAX_STYLES][SOL_THEME_ID_MAX + 1];
+    int           style_count;
+    int           style_selected;              /* committed selection index */
+    char          preview_style_id[SOL_THEME_ID_MAX + 1]; /* snapshot before open */
 
     /* Effect select state */
     char          effect_names_buf[SW_MAX_EFFECTS][64];
@@ -142,6 +150,33 @@ static void sw_rebuild_theme_table(SolSettingsWindow *w)
         if (active && strcmp(active, id) == 0)
             w->theme_selected = w->theme_count;
         ++w->theme_count;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Style select table rebuild                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Refresh the style names/ids arrays from the live registry and recompute
+ * style_selected to match the active style.
+ *
+ * w  Settings window to refresh.
+ */
+static void sw_rebuild_style_table(SolSettingsWindow *w)
+{
+    w->style_count = 0;
+    const char *active = sol_ui_system_active_style(w->ui);
+    w->style_selected = 0;
+    size_t count = sol_ui_system_style_count(w->ui);
+    for (size_t i = 0; i < count && i < SW_MAX_STYLES; ++i) {
+        const char *id = NULL, *name = NULL;
+        if (!sol_ui_system_style_info(w->ui, i, &id, &name) || !id || !name) continue;
+        snprintf(w->style_ids[w->style_count], sizeof(w->style_ids[0]), "%s", id);
+        w->style_names[w->style_count] = name;
+        if (active && strcmp(active, id) == 0)
+            w->style_selected = w->style_count;
+        ++w->style_count;
     }
 }
 
@@ -248,6 +283,51 @@ static void sw_on_theme_change(Ca_Select *sel, void *user_data)
     sol_ui_bump_u32(w->sig_rev);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* Style select callbacks                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Called each time the highlighted item in the style dropdown changes.
+ * idx >= 0: apply hovered style as live preview.
+ * idx = -1: dropdown closed without commit — revert to snapshot.
+ *
+ * sel        The select widget.
+ * user_data  SolSettingsWindow pointer.
+ */
+static void sw_on_style_hover(Ca_Select *sel, void *user_data)
+{
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    int idx = ca_select_get_hover(sel);
+    if (idx < 0) {
+        if (w->preview_style_id[0] != '\0')
+            sol_ui_system_set_active_style(w->ui, w->preview_style_id);
+        return;
+    }
+    if (idx >= w->style_count) return;
+    sol_ui_system_set_active_style(w->ui, w->style_ids[idx]);
+}
+
+/*
+ * Called when the user clicks to commit a style selection.
+ * Applies, persists, and updates the committed snapshot.
+ *
+ * sel        The select widget.
+ * user_data  SolSettingsWindow pointer.
+ */
+static void sw_on_style_change(Ca_Select *sel, void *user_data)
+{
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    int idx = ca_select_get(sel);
+    if (idx < 0 || idx >= w->style_count) return;
+    w->style_selected = idx;
+    snprintf(w->preview_style_id, sizeof(w->preview_style_id), "%s", w->style_ids[idx]);
+    sol_ui_system_set_active_style(w->ui, w->style_ids[idx]);
+    snprintf(w->settings->style_id, sizeof(w->settings->style_id), "%s", w->style_ids[idx]);
+    sol_settings_save(w->settings);
+    sol_ui_bump_u32(w->sig_rev);
+}
 
 /* ------------------------------------------------------------------ */
 /* Effect select callbacks                                             */
@@ -374,6 +454,7 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
 
     /* Rebuild tables each render so they reflect any plugin-driven changes. */
     sw_rebuild_theme_table(w);
+    sw_rebuild_style_table(w);
 
     ca_text(&(Ca_TextDesc){ .text = "THEME", .style = "sw-section-title" });
     ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
@@ -390,6 +471,25 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
         .on_change    = sw_on_theme_change,
         .change_data  = w,
         .on_hover     = sw_on_theme_hover,
+        .hover_data   = w,
+        .style        = "sw-select",
+    });
+
+    ca_div_end();
+    ca_div_end();
+
+    /* ---- Style selector ---- */
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
+    ca_text(&(Ca_TextDesc){ .text = "Style", .style = "sw-setting-label" });
+
+    ca_select(&(Ca_SelectDesc){
+        .options      = w->style_names,
+        .option_count = w->style_count,
+        .selected     = w->style_selected,
+        .on_change    = sw_on_style_change,
+        .change_data  = w,
+        .on_hover     = sw_on_style_hover,
         .hover_data   = w,
         .style        = "sw-select",
     });
@@ -597,6 +697,10 @@ void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
     const char *active_theme = sol_ui_system_active_theme(ui);
     if (active_theme)
         snprintf(w->preview_theme_id, sizeof(w->preview_theme_id), "%s", active_theme);
+
+    const char *active_style = sol_ui_system_active_style(ui);
+    if (active_style)
+        snprintf(w->preview_style_id, sizeof(w->preview_style_id), "%s", active_style);
 
     if (bg_effects) {
         const char *active_fx = sol_bg_effect_active_id(bg_effects);

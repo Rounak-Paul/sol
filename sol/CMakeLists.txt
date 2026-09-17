@@ -186,6 +186,29 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_compile_definitions(sol_theme_tests PRIVATE ${SOL_TEST_DEFS})
     add_test(NAME sol_theme_tests COMMAND sol_theme_tests)
 
+    # ---- Widget style overlay tests -------------------------------------
+    # Links the real causality library: these tests exist to prove the
+    # style CSS actually parses, which needs the real ca_css_parse.
+    add_executable(sol_style_tests
+        tests/test_style.c
+        tests/stubs/sol_config_path_stub.c
+        src/core/sol_settings.c
+        src/core/sol_platform.c
+    )
+    target_include_directories(sol_style_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CAUSALITY_TEST_INCLUDES}
+    )
+    target_compile_definitions(sol_style_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_style_tests PRIVATE
+        causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
+    if(WIN32)
+        target_compile_definitions(sol_style_tests PRIVATE causality_EXPORTS)
+    endif()
+    add_test(NAME sol_style_tests COMMAND sol_style_tests)
+
     # ---- Event-bus unit tests -------------------------------------------
     add_executable(sol_event_tests
         tests/test_event.c

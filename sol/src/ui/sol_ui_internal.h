@@ -191,6 +191,11 @@ struct SolUISystem {
     Ca_Stylesheet    *stylesheet;
     SolThemeRegistry *themes;
     char              applied_theme_id[SOL_THEME_ID_MAX + 1u];
+    /* Widget styles (relief/shape language) reuse the theme registry: the
+       data shape is identical — id, display name, CSS body — and only the
+       composition order differs (style CSS is appended last). Registered
+       styles carry no SolThemeColors; the colour theme owns those. */
+    SolThemeRegistry *styles;
 
     bool              active;
     float             saved_tree_scroll;

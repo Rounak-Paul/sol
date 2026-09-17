@@ -48,6 +48,7 @@
 #include "sol_settings.h"
 #include "sol_text_buffer.h"
 #include "style.h"
+#include "style_retro.h"
 
 #include <ca_gpu.h>
 #include <stdio.h>
@@ -1505,28 +1506,67 @@ static void sol_ui_push_theme_colors(const SolThemeRegistry *themes,
         (float)(colors.accent_rgb & 0xffu) / 255.0f);
 }
 
-/* Build and apply a stylesheet from theme CSS + appearance overlay.
+/* Build and apply a stylesheet from theme CSS + appearance overlay + the
+ * active widget style.
+ *
+ * Layer order is load-bearing. The style comes last because it owns the
+ * relief language: a bevelled style has to be able to override the
+ * appearance overlay's corner-radius slider (a rounded bevel renders as a
+ * clipped, broken edge) and the theme's own radii. Equal-specificity
+ * later rules win in Causality's cascade, so appending is what gives the
+ * style the final say without needing !important anywhere.
+ *
  * active_id must be non-NULL; css must be the full theme CSS string.
  * Returns true on success. */
 static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
                                       const char *active_id,
                                       const char *css)
 {
-    /* Compose: theme CSS + appearance overlay (if settings attached). */
-    char *composed = NULL;
+    char overlay[8192];
+    int olen = 0;
     if (ui->settings) {
-        char overlay[8192];
-        int olen = sol_settings_build_appearance_css(ui->settings,
-                                                      overlay, (int)sizeof(overlay));
-        if (olen > 0) {
-            size_t tlen = strlen(css);
-            composed = (char *)malloc(tlen + (size_t)olen + 1);
-            if (composed) {
-                memcpy(composed, css, tlen);
-                memcpy(composed + tlen, overlay, (size_t)olen + 1);
-            }
+        olen = sol_settings_build_appearance_css(ui->settings,
+                                                 overlay, (int)sizeof(overlay));
+        if (olen < 0) olen = 0;
+    }
+
+    /* The Retro style's bevel tones are derived from the active theme's
+       background: a fixed highlight/shadow pair is invisible on one side
+       at either end of the luminance range (see style_retro.h), so its
+       CSS is generated here rather than stored in the registry, and is
+       regenerated on every theme change as well as every style change. */
+    char *retro = NULL;
+    const char *style_css = NULL;
+    size_t slen = 0u;
+    const char *style_id = ui->styles ? sol_theme_active_id(ui->styles) : NULL;
+    if (style_id && strcmp(style_id, SOL_UI_STYLE_RETRO_ID) == 0) {
+        SolThemeColors colors;
+        const uint32_t background = sol_theme_active_colors(ui->themes, &colors)
+            ? colors.background_rgb : 0x1e1e26u;
+        retro = (char *)malloc(SOL_RETRO_CSS_MAX);
+        if (retro) {
+            const int rlen = sol_retro_build_css(background, retro,
+                                                 (int)SOL_RETRO_CSS_MAX);
+            if (rlen > 0) { style_css = retro; slen = (size_t)rlen; }
+        }
+    } else if (ui->styles) {
+        style_css = sol_theme_active_css(ui->styles);
+        slen = style_css ? strlen(style_css) : 0u;
+    }
+
+    char *composed = NULL;
+    if (olen > 0 || slen > 0u) {
+        const size_t tlen = strlen(css);
+        composed = (char *)malloc(tlen + (size_t)olen + slen + 1u);
+        if (composed) {
+            char *dst = composed;
+            memcpy(dst, css, tlen);              dst += tlen;
+            if (olen > 0) { memcpy(dst, overlay, (size_t)olen); dst += olen; }
+            if (slen > 0u) { memcpy(dst, style_css, slen); dst += slen; }
+            *dst = '\0';
         }
     }
+    free(retro);
 
     Ca_Stylesheet *stylesheet = ca_css_parse(composed ? composed : css);
     free(composed);
@@ -1544,7 +1584,10 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
     return true;
 }
 
-/* Apply the active registry theme to every live Causality window. */
+/* Recompose and apply the stylesheet for every live Causality window.
+ * Serves as the change observer for both the theme and the style registry:
+ * either one changing requires the same full recomposition, which always
+ * reads the current theme CSS and the current style CSS. */
 static void sol_ui_on_theme_change(void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
@@ -1784,6 +1827,29 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
         return NULL;
     }
 
+    /* Styles are registered in selection order: "Classic" is the identity
+       style (no CSS of its own — the theme already describes the flat
+       look), so it must be first to remain the default on a fresh config. */
+    ui->styles = sol_theme_registry_create();
+    if (!ui->styles ||
+        !sol_theme_register(ui->styles, &(SolThemeDesc){
+            .id = SOL_UI_STYLE_CLASSIC_ID,
+            .name = SOL_UI_STYLE_CLASSIC_NAME,
+            .css = SOL_UI_STYLE_CLASSIC_CSS,
+        }) ||
+        !sol_theme_register(ui->styles, &(SolThemeDesc){
+            .id = SOL_UI_STYLE_RETRO_ID,
+            .name = SOL_UI_STYLE_RETRO_NAME,
+            /* Placeholder: the real CSS is generated per theme background
+               in sol_ui_rebuild_stylesheet, which special-cases this id.
+               The registry only needs the entry to exist so the style can
+               be listed and selected. */
+            .css = SOL_UI_STYLE_RETRO_CSS_PLACEHOLDER,
+        })) {
+        sol_ui_system_destroy(ui);
+        return NULL;
+    }
+
     ui->stylesheet = ca_css_parse(sol_theme_active_css(ui->themes));
     if (!ui->stylesheet) {
         sol_ui_system_destroy(ui);
@@ -1794,6 +1860,9 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
              sol_theme_active_id(ui->themes));
 
     sol_theme_set_change_callback(ui->themes, sol_ui_on_theme_change, ui);
+    /* Both registries drive the same rebuild: a style change recomposes
+       exactly the same layers, just with different style CSS at the end. */
+    sol_theme_set_change_callback(ui->styles, sol_ui_on_theme_change, ui);
     return ui;
 }
 
@@ -1850,6 +1919,8 @@ void sol_ui_system_destroy(SolUISystem *ui)
     }
     sol_theme_registry_destroy(ui->themes);
     ui->themes = NULL;
+    sol_theme_registry_destroy(ui->styles);
+    ui->styles = NULL;
 
     ca_signal_destroy(ui->sig_buffer_rev);
     ca_signal_destroy(ui->sig_file_tree_rev);
@@ -2991,6 +3062,31 @@ bool sol_ui_system_theme_info(const SolUISystem *ui, size_t index,
                               const char **out_id, const char **out_name)
 {
     return ui && sol_theme_get_info(ui->themes, index, out_id, out_name);
+}
+
+/** Select a registered widget style, recomposing every window's stylesheet. */
+bool sol_ui_system_set_active_style(SolUISystem *ui, const char *id)
+{
+    return ui && ui->styles && sol_theme_set_active(ui->styles, id);
+}
+
+/** Return the active widget style id, or NULL when unavailable. */
+const char *sol_ui_system_active_style(const SolUISystem *ui)
+{
+    return ui ? sol_theme_active_id(ui->styles) : NULL;
+}
+
+/** Return the number of registered widget styles. */
+size_t sol_ui_system_style_count(const SolUISystem *ui)
+{
+    return ui ? sol_theme_count(ui->styles) : 0u;
+}
+
+/** Return id and display name for an indexed widget style. */
+bool sol_ui_system_style_info(const SolUISystem *ui, size_t index,
+                              const char **out_id, const char **out_name)
+{
+    return ui && sol_theme_get_info(ui->styles, index, out_id, out_name);
 }
 
 /*
