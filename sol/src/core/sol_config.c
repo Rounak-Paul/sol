@@ -218,16 +218,32 @@ char *sol_config_path(const char *filename)
  */
 static bool sol_write_default_bindings(const char *path)
 {
-    FILE *fp = fopen(path, "wb");
+    /* Publish via temp + rename like every other config write: an
+       interrupted direct write leaves a truncated or empty bindings.conf,
+       which is a config that parses but binds nothing. The loader now
+       recovers from that, but not producing it is better than healing it. */
+    char tmp_path[4160];
+    const int n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp%ld",
+                           path, sol_platform_process_id());
+    if (n < 0 || (size_t)n >= sizeof(tmp_path)) {
+        fprintf(stderr, "sol: path too long for '%s'\n", path);
+        return false;
+    }
+
+    FILE *fp = fopen(tmp_path, "wb");
     if (!fp) {
-        fprintf(stderr, "sol: cannot create '%s': %s\n", path, strerror(errno));
+        fprintf(stderr, "sol: cannot create '%s': %s\n", tmp_path, strerror(errno));
         return false;
     }
     const size_t len = strlen(SOL_DEFAULT_BINDINGS_CONF);
-    const bool ok = (fwrite(SOL_DEFAULT_BINDINGS_CONF, 1u, len, fp) == len);
-    fclose(fp);
+    bool ok = (fwrite(SOL_DEFAULT_BINDINGS_CONF, 1u, len, fp) == len);
+    ok = ok && (fflush(fp) == 0) && sol_platform_sync_file(fp);
+    if (fclose(fp) != 0) ok = false;
+
+    if (ok) ok = sol_platform_replace_file(tmp_path, path);
     if (!ok) {
-        fprintf(stderr, "sol: short write to '%s'\n", path);
+        remove(tmp_path);
+        fprintf(stderr, "sol: failed to write '%s'\n", path);
     }
     return ok;
 }

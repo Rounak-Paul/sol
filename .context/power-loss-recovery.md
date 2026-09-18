@@ -126,6 +126,38 @@ The temp path used the SPIR-V buffer's heap address while its own comment claime
 the rename exists to prevent. Now uses pid + pointer. Verified with 4 concurrent instances
 on a cold shared cache: no crashes, no orphan temp files, all entries valid.
 
+## Third sweep — completion pass
+
+Ran ASan + UBSan mutation fuzzing over every corruption-reachable parser. Results:
+
+- **ssh_connections.json**: 140 mutated inputs — 0 memory errors, 0 hangs (post-fix).
+- **settings.json**: 133 mutated inputs — 0 memory errors, 0 hangs. Confirms this parser
+  never had the array-loop hang; only arrays have an element loop.
+- **shader cache container**: 133 mutated binary inputs — 0 memory errors, 0 hangs, only
+  the 2 genuinely valid containers accepted; everything malformed correctly rejected.
+- **bindings.conf**: adversarial tokenizer inputs (5000-char tokens, 500-step sequences,
+  2000 tokens/line, binary garbage, missing action, no trailing newline) — all handled.
+- **crash report path builder**: exhaustively tested every out_size 0..140 against every
+  directory length 0..120 on exact-size heap buffers under ASan — no overflow. The manual
+  bounds checks are correct; an undersized buffer makes it fail cleanly, never overrun.
+
+### Last non-durable write fixed
+
+`sol_write_default_bindings` still wrote `bindings.conf` directly. A power cut during the
+first-launch write is exactly what produces the empty-config state fixed above. Now uses
+temp + fsync + atomic rename like every other config write, so that state is not produced
+in the first place rather than only healed afterwards.
+
+### Durability audit — final state
+
+Every config write in the repo is now temp-file + fsync + atomic rename:
+`sol_settings_save`, `sol_ssh_config_save`, `sol_text_buffer` saves,
+`sol_write_default_bindings`, and `ca_shader_cache_store` (which also fsyncs the directory).
+
+The two remaining direct `fopen(..,"wb")` sites are correct as-is:
+`sol_platform_copy_path_recursive` (a file-copy utility, not config persistence) and the
+shader cache's `.ca_write_probe` (created and deleted immediately to test writability).
+
 ## If it recurs on another machine
 
 Deleting `~/.sol/shader_cache/` is a safe manual workaround — it is a pure cache and is
