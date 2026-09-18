@@ -519,11 +519,13 @@ bool sol_settings_save(const SolSettings *settings)
         (double)settings->scrollbar_width,
         settings->autosave_enabled ? "true" : "false");
 
-    /* fflush + fclose before replace: the atomic rename only guarantees
-       the destination sees a complete *file*, not that our own buffered
-       writes reached disk before we ask the OS to swap it in. */
-    const bool flushed = (n > 0) && (fflush(fp) == 0);
-    fclose(fp);
+    /* fflush + sync before replace: the atomic rename only guarantees the
+       destination sees a complete *file*, and fflush only moves our
+       buffered writes into the kernel. Without the sync a power loss can
+       land the rename while the data behind it is still in the page
+       cache, publishing a correctly named but empty settings file. */
+    bool flushed = (n > 0) && (fflush(fp) == 0) && sol_platform_sync_file(fp);
+    if (fclose(fp) != 0) flushed = false;
 
     bool ok = false;
     if (flushed) {

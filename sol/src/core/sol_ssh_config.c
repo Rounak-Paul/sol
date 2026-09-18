@@ -12,6 +12,7 @@
 
 #include "sol_ssh_config.h"
 #include "sol_config.h"   /* sol_config_path() */
+#include "sol_platform.h" /* sol_platform_replace_file() */
 
 #include <ctype.h>
 #include <stdio.h>
@@ -274,9 +275,25 @@ bool sol_ssh_config_save(const SolSshConnectionList *list)
     char *path = sol_config_path(SOL_SSH_CONFIG_FILENAME);
     if (!path) return false;
 
-    FILE *fp = fopen(path, "wb");
-    free(path);
-    if (!fp) return false;
+    /* Write a temp file and rename it over the target rather than
+       truncating the live file in place: an interrupted in-place rewrite
+       leaves the user's saved connections empty or half-written, while a
+       rename publishes either the previous file or the complete new one. */
+    char tmp_name[64];
+    snprintf(tmp_name, sizeof(tmp_name), "%s.tmp%ld",
+             SOL_SSH_CONFIG_FILENAME, (long)sol_platform_process_id());
+    char *tmp_path = sol_config_path(tmp_name);
+    if (!tmp_path) {
+        free(path);
+        return false;
+    }
+
+    FILE *fp = fopen(tmp_path, "wb");
+    if (!fp) {
+        free(path);
+        free(tmp_path);
+        return false;
+    }
 
     fprintf(fp, "[\n");
     for (size_t i = 0u; i < list->count; ++i) {
@@ -309,8 +326,17 @@ bool sol_ssh_config_save(const SolSshConnectionList *list)
     }
     int n = fprintf(fp, "]\n");
 
-    fclose(fp);
-    return n > 0;
+    /* Push stdio's buffer to the kernel and the kernel's copy to stable
+       storage before publishing, so the rename cannot outlive its data. */
+    bool ok = (n > 0) && (fflush(fp) == 0) && sol_platform_sync_file(fp);
+    if (fclose(fp) != 0) ok = false;
+
+    if (ok) ok = sol_platform_replace_file(tmp_path, path);
+    if (!ok) remove(tmp_path);
+
+    free(path);
+    free(tmp_path);
+    return ok;
 }
 
 bool sol_ssh_config_upsert(const SolSshConnection *conn)

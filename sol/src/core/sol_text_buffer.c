@@ -938,8 +938,13 @@ static bool tb_atomic_write(const SolRope *rope, const char *dest_path,
         if (out_error) *out_error = "cannot create temp file";
         return false;
     }
+    /* fflush moves the bytes into the kernel; the sync is what puts them
+       on the device. Without it the rename below can be durable while the
+       file contents behind it are not, turning a power loss into a saved
+       file that reads back empty. */
     const bool wrote_ok = tb_write_rope_to_stream(rope, fp);
-    const bool flush_ok = wrote_ok && (fflush(fp) == 0);
+    const bool flush_ok = wrote_ok && (fflush(fp) == 0) &&
+                          sol_platform_sync_file(fp);
     const int close_rc = fclose(fp);
     if (!wrote_ok || !flush_ok || close_rc != 0) {
         (void)remove(tmp_path);

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /* File-system metadata for a path, returned by sol_platform_get_path_info. */
 typedef struct SolPathInfo {
@@ -176,6 +177,23 @@ bool sol_platform_move_path(const char *source_path, const char *dest_path);
  * Returns     true on success.
  */
 bool sol_platform_replace_file(const char *temp_path, const char *dest_path);
+
+/*
+ * Force a written file's bytes to stable storage.
+ *
+ * Call after fflush and before sol_platform_replace_file: the atomic
+ * replace publishes a complete file, but only a sync guarantees the
+ * bytes behind it survive a power loss rather than sitting in the
+ * kernel's page cache. On macOS plain fsync only hands the write to the
+ * drive, so F_FULLFSYNC is preferred where the filesystem supports it.
+ *
+ * fp       Open stream, already flushed.
+ * Returns  true if the file's contents are durable.
+ */
+bool sol_platform_sync_file(FILE *fp);
+
+/* Returns the current process id, for building per-process temp names. */
+long sol_platform_process_id(void);
 
 /* Returns the number of logical CPU cores available to the process. */
 uint32_t sol_platform_cpu_count(void);

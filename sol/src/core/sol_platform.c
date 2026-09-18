@@ -554,6 +554,37 @@ bool sol_platform_move_path(const char *source_path, const char *dest_path)
     return true;
 }
 
+bool sol_platform_sync_file(FILE *fp)
+{
+    if (!fp) return false;
+#if defined(_WIN32)
+    const int fd = _fileno(fp);
+    if (fd < 0) return false;
+    const HANDLE handle = (HANDLE)_get_osfhandle(fd);
+    if (handle == INVALID_HANDLE_VALUE) return false;
+    return FlushFileBuffers(handle) != 0;
+#else
+    const int fd = fileno(fp);
+    if (fd < 0) return false;
+  #ifdef F_FULLFSYNC
+    /* Preferred on macOS: fsync alone only schedules the write with the
+       drive, which a power loss can still discard. Not every filesystem
+       implements it, so fall through to fsync when it is refused. */
+    if (fcntl(fd, F_FULLFSYNC, 0) == 0) return true;
+  #endif
+    return fsync(fd) == 0;
+#endif
+}
+
+long sol_platform_process_id(void)
+{
+#if defined(_WIN32)
+    return (long)GetCurrentProcessId();
+#else
+    return (long)getpid();
+#endif
+}
+
 bool sol_platform_replace_file(const char *temp_path, const char *dest_path)
 {
     if (!temp_path || !dest_path || temp_path[0] == '\0' ||
