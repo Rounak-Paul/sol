@@ -238,6 +238,15 @@ bool sol_ssh_config_load(SolSshConnectionList *out)
                     while (*j.p) {
                         jp_skip_ws(&j);
                         if (*j.p == ']') { ++j.p; break; }
+
+                        /* jp_parse_connection leaves the cursor untouched
+                           when the element does not start with '{', so the
+                           cursor position before the attempt is what proves
+                           the loop advanced. Without this check a stray '}'
+                           here (a hand-edited or truncated file) is retried
+                           forever and the load never returns. */
+                        const char *before = j.p;
+
                         if (out->count < SOL_SSH_CONNECTION_MAX) {
                             if (jp_parse_connection(&j, &out->items[out->count])) {
                                 out->count++;
@@ -254,8 +263,14 @@ bool sol_ssh_config_load(SolSshConnectionList *out)
                             SolSshConnection discard;
                             jp_parse_connection(&j, &discard);
                         }
+
                         jp_skip_ws(&j);
                         if (*j.p == ',') ++j.p;
+
+                        /* Nothing was consumed: the element is unparseable
+                           where it stands. Skip one byte so the scan makes
+                           progress and the rest of the file still loads. */
+                        if (j.p == before) ++j.p;
                     }
                 }
                 ok = true;

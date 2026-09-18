@@ -71,6 +71,61 @@ updated to real minimal modules now that lookup validates structure.
 
 Full suite: 19/19 pass. Live `~/.sol` was never modified (all runs used sandboxed HOMEs).
 
+## Second sweep — additional bugs found (same session)
+
+Found by fuzzing the config loaders and crash handler, not by reading code.
+
+### 1. Infinite hang on corrupt ssh_connections.json (startup hang)
+
+`sol_ssh_config_load`'s array loop called `jp_parse_connection`, which calls
+`jp_expect(j, '{')` — and that returns false **without advancing the cursor** on a
+non-`{` character. A file like `[}]}]}` (reachable from a truncated/hand-edited save)
+spun forever: Sol hung at startup with no error and no crash report.
+
+Fixed by recording the cursor before each element and skipping one byte if nothing was
+consumed, so the scan always makes progress. A file with junk followed by a valid entry
+now still recovers the valid entry.
+
+The `settings.json` parser was fuzzed with the same corpus and does **not** have this bug —
+its object loops `break` on a failed key/colon parse. Arrays have an element loop that
+objects don't, which is why only the SSH path was affected.
+
+### 2. Process wedge on a fault inside the crash handler
+
+`sigaction` used `SA_SIGINFO` with `sigemptyset(&sa.sa_mask)` and no alternate stack.
+A fault raised *inside* the handler (damaged stack faulting in `backtrace()`) is a
+synchronous signal that cannot be delivered because it is blocked during handling — on
+macOS that wedges the thread permanently. Verified empirically: the test process printed
+`handler depth=1` and then hung forever, never dying, never reporting.
+
+Fixed with `SA_NODEFER | SA_ONSTACK` plus a `sigaltstack` and a `sig_atomic_t` reentrancy
+guard. `SA_NODEFER` lets the nested fault be delivered, the guard catches the re-entry and
+terminates, and `SA_ONSTACK` keeps that second entry off the exhausted/corrupt stack —
+which also makes stack-overflow SIGSEGVs reportable for the first time. Verified: nested
+fault now terminates with 139 instead of hanging, and normal crash reports still produce
+full backtraces.
+
+Note: the guard alone did **not** work (the handler was never re-entered — the kernel wedged
+before dispatch). `SA_NODEFER` is the load-bearing part; the guard prevents the resulting
+infinite re-entry loop.
+
+### 3. Empty bindings.conf silently disabled every keyboard command
+
+A zero-length `bindings.conf` (interrupted first-launch write) parsed fine, registered zero
+bindings, and set `input_binding_active = false` — no save, no open, no explorer, and **no
+diagnostic whatsoever**. Because the file existed, defaults were never re-emitted.
+
+Now a zero-length file is treated as absent (defaults regenerated), and any config that
+parses but binds nothing prints a warning naming the file. A comments-only config is
+preserved rather than clobbered — it warns but keeps user content.
+
+### 4. Shader cache temp name was not actually per-process
+
+The temp path used the SPIR-V buffer's heap address while its own comment claimed
+"per-process". Two instances compiling the same shader could collide and tear the write
+the rename exists to prevent. Now uses pid + pointer. Verified with 4 concurrent instances
+on a cold shared cache: no crashes, no orphan temp files, all entries valid.
+
 ## If it recurs on another machine
 
 Deleting `~/.sol/shader_cache/` is a safe manual workaround — it is a pure cache and is

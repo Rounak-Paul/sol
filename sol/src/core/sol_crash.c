@@ -372,10 +372,29 @@ static void sol_crash_write_report(int fd, int sig, void *fault_addr)
         "\nPlease attach this file when reporting the crash.\n");
 }
 
+/* Set once the handler starts, so a fault raised *by the handler itself*
+   (a damaged stack that faults inside backtrace(), a report_dir string
+   corrupted along with the rest of memory) is not handled a second time.
+   Without this the process wedges instead of dying: the nested fault
+   re-enters, faults again at the same place, and never reaches the
+   re-raise below — leaving no report and a process that must be killed
+   by hand. sig_atomic_t is the only type a handler may safely touch. */
+static volatile sig_atomic_t g_crash_in_handler = 0;
+
 static void sol_crash_signal_handler(int sig, siginfo_t *info, void *ucontext)
 {
     (void)ucontext;
     void *fault_addr = info ? info->si_addr : NULL;
+
+    if (g_crash_in_handler) {
+        /* Already reporting — the report is unreachable, so give up on it
+           and terminate the way the OS would have. Restoring the default
+           disposition first keeps core-dump semantics intact. */
+        signal(sig, SIG_DFL);
+        raise(sig);
+        _exit(128 + sig);   /* only reached if the signal is blocked here */
+    }
+    g_crash_in_handler = 1;
 
     if (g_crash_state.has_report_dir) {
         char path[SOL_CRASH_PATH_MAX + 64u];
@@ -423,10 +442,28 @@ void sol_crash_install(const char *app_name, const char *app_version)
     }
     free(dir);
 
+    /* Run the handler on its own stack. A stack-overflow SIGSEGV leaves no
+       room to run a handler on the faulting stack, and the report writer
+       needs a frame plus backtrace()'s buffer — without this the handler
+       cannot start and the crash goes unreported. */
+    static char alt_stack[SIGSTKSZ * 4];
+    stack_t ss;
+    memset(&ss, 0, sizeof(ss));
+    ss.ss_sp    = alt_stack;
+    ss.ss_size  = sizeof(alt_stack);
+    ss.ss_flags = 0;
+    (void)sigaltstack(&ss, NULL);
+
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = sol_crash_signal_handler;
-    sa.sa_flags = SA_SIGINFO;
+    /* SA_NODEFER so a fault raised inside the handler is delivered rather
+       than blocked: a synchronous fault that cannot be delivered wedges
+       the thread, hanging the process with no report and no exit. Letting
+       it through means it re-enters, where g_crash_in_handler catches it
+       and terminates. SA_ONSTACK keeps that second entry off the (likely
+       exhausted or corrupt) faulting stack. */
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
 
     const int signals[] = { SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE };

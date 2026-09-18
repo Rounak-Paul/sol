@@ -473,14 +473,19 @@ int sol_config_load_bindings(SolUISystem *ui)
     char *path = sol_config_path("bindings.conf");
     if (!path) return -1;
 
-    /* Auto-emit defaults the first time. The file is then user-editable. */
+    /* Auto-emit defaults the first time. The file is then user-editable.
+       A zero-length file counts as absent: the only ways to get one are an
+       interrupted first-launch write or a truncated save, and treating it
+       as a real (bindingless) config would leave the user with no working
+       keys and no hint as to why. */
     struct stat st;
-    if (stat(path, &st) != 0) {
-        if (errno != ENOENT) {
-            fprintf(stderr, "sol: stat('%s'): %s\n", path, strerror(errno));
-            free(path);
-            return -1;
-        }
+    const bool stat_ok = (stat(path, &st) == 0);
+    if (!stat_ok && errno != ENOENT) {
+        fprintf(stderr, "sol: stat('%s'): %s\n", path, strerror(errno));
+        free(path);
+        return -1;
+    }
+    if (!stat_ok || st.st_size == 0) {
         if (!sol_write_default_bindings(path)) {
             free(path);
             return -1;
@@ -547,6 +552,17 @@ int sol_config_load_bindings(SolUISystem *ui)
     }
 
     fclose(fp);
+
+    /* A file that parses but binds nothing leaves the editor with no
+       keyboard commands at all. That is indistinguishable from a broken
+       install unless it is said out loud, so say it and name the file. */
+    if (registered == 0) {
+        fprintf(stderr,
+                "sol: no key bindings registered from '%s' — every keyboard "
+                "command is disabled. Delete the file to regenerate the "
+                "defaults.\n", path);
+    }
+
     free(path);
     return registered;
 }
