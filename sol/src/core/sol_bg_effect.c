@@ -43,7 +43,6 @@ typedef struct {
     float accent_r, accent_g, accent_b, _pad1;
 } BgPushConst;
 
-
 typedef struct {
     VkImage        image;
     VkDeviceMemory memory;
@@ -717,8 +716,10 @@ void sol_bg_effect_set_change_callback(SolBgEffectRegistry *reg,
 /*
  * Per-frame background render callback matching Ca_BgRenderFn.
  * Renders before the UI pass. The primary shader-mode window is shaded into a
- * half-resolution target and linearly composed into the swapchain; Causality
- * owns all CSS backdrop filtering after this callback returns.
+ * half-resolution target and linearly composed into the swapchain — these
+ * effects animate continuously behind a code editor, so resolution is traded
+ * for GPU headroom rather than spent on a background element. Causality owns
+ * all CSS backdrop filtering after this callback returns.
  *
  * cmd              Command buffer already recording (outside any render pass).
  * window           Window owning the target swapchain.

@@ -45,8 +45,8 @@ static const char k_waves_frag[] = BFX_HEADER
     " vec2 uv=v_uv;float t=pc.time;vec3 col=vec3(0.0);float alpha=0.0;\n"
     " for(int i=0;i<4;i++){float fi=float(i);float center=0.48+fi*0.12;float amp=0.035-fi*0.003;\n"
     "  float wave=center+sin(uv.x*(7.0+fi*3.1)+t*(0.18+fi*0.035))*amp+sin(uv.x*(13.0+fi*2.0)-t*0.11)*amp*0.42;\n"
-    "  float fill=smoothstep(wave-0.035,wave+0.01,uv.y);float edge=exp(-abs(uv.y-wave)*75.0);\n"
-    "  vec3 hue=(i==1||i==3)?accent():primary();float strength=(0.14-fi*0.018)*fill+0.20*edge;col+=hue*strength;alpha=max(alpha,fill*(0.28-fi*0.025)+edge*0.22);\n"
+    "  float fill=smoothstep(wave-0.002,wave+0.001,uv.y);\n"
+    "  vec3 hue=(i==1||i==3)?accent():primary();float strength=(0.14-fi*0.018)*fill;col+=hue*strength;alpha=max(alpha,fill*(0.28-fi*0.025));\n"
     " }\n"
     " out_color=finish(col,alpha);\n"
     "}\n";

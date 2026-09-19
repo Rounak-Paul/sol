@@ -5,7 +5,9 @@
  *
  * Shader-mode effects render into a reduced-resolution composition target before
  * the UI pass and are linearly composed into the swapchain. This keeps animated
- * background work below native UI resolution while preserving sharp UI content.
+ * background work below native UI resolution while preserving sharp UI content —
+ * a code editor should not spend GPU/power budget rendering its background at
+ * full resolution when the UI on top of it is what needs to be sharp.
  *
  * Two registration modes:
  *
