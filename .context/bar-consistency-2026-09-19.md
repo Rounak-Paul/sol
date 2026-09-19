@@ -108,3 +108,85 @@ Two more real inconsistencies surfaced after the above:
   for this round; **needs a restart + the user's next screenshot to
   confirm visually**, more so than usual since the running instance is
   still on the pre-fix binary.
+
+## Round 2 — the actual deep bug: `height:100%` + `flex-grow:1` conflict
+
+User's screenshot (first real visual evidence) showed the status bar
+clipped with unrelated stdout log text ("[pipeline] SSBO layout
+created...") visible below it, then separately reported "the panels
+bottom bevel is not even showing." Both symptoms turned out to be the
+SAME single root cause, confirmed via live instrumentation (temporary
+`fprintf` diagnostics in `paint.c`, fully removed after — see method
+below), not the height/bevel changes from Round 1 above (those were
+real, separate, smaller fixes that still stand).
+
+- **Root cause: `.workspace-main-full` (`style.h`) declared BOTH
+  `height: 100%` and `flex-grow: 1`.** In this engine's flexbox layout
+  (`layout.c`), a percentage height on a vertical flex child resolves
+  as an explicit main-axis size (`ms = avail_main * height_pct`) BEFORE
+  flex-grow distribution ever runs — explicit size always wins over
+  flex-grow. `.workspace-main-full` sits inside `.workspace-host` (a
+  vertical column) as the sibling AFTER the fixed-height `.project-tabs`
+  strip. `height:100%` made it claim 100% of `.workspace-host`'s FULL
+  height, completely ignoring that `.project-tabs` had already consumed
+  space at the top — so it started correctly (after project-tabs) but
+  ended `project_tabs_h` (~20.5px logical) past where `.workspace-host`
+  actually ends. Since `.workspace-main-full`/`.workspace-main-content`
+  both have `overflow: hidden`, this overflow amount became a hard clip
+  boundary — but the actual content underneath (the split-tree panels:
+  `.tree-panel`, `.buffer-pane`, `.term-panel`, `.plugin-side-panel`,
+  `.welcome-pane`) laid out fine relative to their own (correct) parent
+  chain, and ended up TALLER than their true visible bound. Their
+  bottom border, and the last ~20px of their content, silently clipped
+  away by the ancestor's own self-inflicted overflow.
+- **Method — live instrumentation, not more guessing.** Added temporary
+  `fprintf` diagnostics in `causality/src/ui/paint.c`'s `paint_border`
+  (per this codebase's own established debugging convention — see
+  [[floating-glass-ui-overhaul-2026-08-29]]'s many rounds): first logged
+  a node's own resolved `border_top/right/bottom/left` width+color
+  (confirmed CSS resolution was completely correct — all 4 sides had
+  correct nonzero raised-bevel colors), then logged the incoming
+  `clip` rect vs the node's own `y+h` (found a precise `gap=-11.88`
+  logical px — the clip's bottom sat above the node's own bottom), then
+  walked the full ancestor chain logging each node's `y`/`h`/`overflow_y`/
+  `flex_grow` (found `.workspace-main-full`/`.workspace-main-content`
+  both resolved to `662.76` — exactly `.workspace-host`'s OWN height,
+  proving they were claiming space that included `.project-tabs`'s
+  slice instead of the space actually remaining after it). Hand-computed
+  the expected correct height two ways (`window_h - top - status_h` and
+  cross-checked against Sol's own independent `sol_ui_buffer_area_rect_
+  internal` C-side geometry helper, which had ALWAYS been computing the
+  right number, `624.96` — this parallel Sol-side geometry math was
+  never the problem, confirming the bug was purely in the CSS/flex
+  layer) before making the one-line fix.
+- **Fix:** removed the conflicting `height: 100%;` from
+  `.workspace-main-full` in `style.h` — `flex-grow: 1` alone already
+  correctly fills the remaining space after `.project-tabs`. Re-ran the
+  same diagnostic after the fix: `gap=0.000` exactly,
+  `.workspace-main-full`/`.workspace-main-content` now resolve to
+  `642.24`/`624.96` matching Sol's own hand-computed/C-side expectation
+  precisely. All temporary diagnostics fully removed — confirmed via
+  `git diff --stat vendors/causality/` showing zero diff on the
+  submodule (the entire fix lives in Sol's own `style.h`, one CSS
+  property removed).
+- **Blast radius:** this affected EVERY panel inside the main workspace
+  splitter simultaneously — tree panel, buffer pane, terminal panel,
+  plugin side panel, and the welcome pane all silently lost their
+  bottom ~20px (bottom border/bevel invisible, last content row
+  potentially clipped) whenever `.project-tabs` was present (i.e.
+  whenever a project tab strip is shown at all, which is normal/default
+  operation). This was probably present long before this session's
+  other bar-consistency work and is unrelated to any of the earlier
+  Round 1 changes — it's a pre-existing CSS bug this investigation
+  happened to surface.
+- Build clean, 20/20 CTest, `git diff --check` clean, live launch under
+  `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation` zero stderr output.
+  Net diff: `sol/src/ui/style.h`, 11 insertions / 1 deletion (mostly the
+  explanatory comment; the actual fix is a single removed CSS line).
+- **Not yet visually confirmed by the user** — needs a fresh relaunch
+  and screenshot; the numeric proof (gap=0.000, matching Sol's own
+  independent geometry helper exactly) is about as strong as static+
+  runtime verification gets without an actual frame capture, but this
+  codebase's own history has examples of "numerically correct but still
+  visually wrong for an unrelated reason" (Round 5 of the floating-glass
+  file), so treat this as high-confidence, not proven-on-screen.

@@ -132,9 +132,19 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  align-items: stretch;"
     "  overflow: hidden;"
     "}"
+    /* height:100% deliberately omitted: this node is flex-grow:1 inside a
+       vertical column (workspace-host) alongside the fixed-height
+       .project-tabs strip. height:100% resolves as an explicit main-axis
+       size in the layout engine's flexbox math, which wins over flex-grow
+       distribution entirely — the node would then claim 100% of
+       workspace-host's full height regardless of how much .project-tabs
+       already consumed, overflowing past the container's true bottom edge
+       by exactly .project-tabs's height. This is what caused every panel
+       inside the workspace to overflow its own clip by ~20px (at 1x scale)
+       and clip their own bottom border/content. flex-grow:1 alone already
+       makes this node fill the remaining space correctly. */
     ".workspace-main-full {"
     "  width: 100%;"
-    "  height: 100%;"
     "  min-width: 0px;"
     "  min-height: 0px;"
     "  flex-grow: 1;"
