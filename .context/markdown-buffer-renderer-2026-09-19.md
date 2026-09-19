@@ -33,5 +33,9 @@ and an accent separator. The default palette is blue; curated themes override
 all table tones from their semantic primary, surface, elevated, text, and
 secondary colors.
 
+The full rendered Markdown vocabulary is theme-owned: headings, paragraphs,
+emphasis, links, quotes, inline and fenced code, rules, lists, and tasks use
+the same semantic colors as the normal buffer and syntax highlighter.
+
 Validation: `cmake --build build --target sol_text_buffer_tests sol --parallel
 6`, `ctest --test-dir build --output-on-failure` (20/20), and `git diff --check`.

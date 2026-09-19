@@ -222,6 +222,19 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->success, theme->primary, theme->warning);
 
     css_append(&css,
+        ".markdown-heading-1,.markdown-heading-2,.markdown-heading-3{color:%s;}"
+        ".markdown-paragraph,.markdown-list{color:%s;}"
+        ".markdown-strong{color:%s;}.markdown-emphasis,.markdown-quote{color:%s;}"
+        ".markdown-strikethrough,.markdown-fence{color:%s;}"
+        ".markdown-inline-code{color:%s;background:%s;}"
+        ".markdown-link{color:%s;}.markdown-rule{color:%s;}"
+        ".markdown-code{color:%s;background:%s;}.markdown-code-line{background:%s;}"
+        ".markdown-list-marker{color:%s;}.markdown-task-done{color:%s;}",
+        theme->text, theme->secondary, theme->text, theme->secondary,
+        theme->muted, theme->accent, editor, theme->primary, theme->primary,
+        theme->secondary, editor, editor, theme->primary, theme->success);
+
+    css_append(&css,
         ".markdown-table{color:%s;}"
         ".markdown-table-cell{background:%s;border-left-color:%s;}"
         ".markdown-table-cell-alt{background:%s;}"
