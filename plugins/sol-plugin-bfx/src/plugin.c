@@ -33,9 +33,9 @@ static const char k_particles_frag[] = BFX_HEADER
     " vec2 scale=vec2(pc.width,pc.height)/140.0;vec2 p=v_uv*scale;vec2 base=floor(p);\n"
     " float dots=0.0,links=0.0;\n"
     " for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 c=base+vec2(x,y);vec2 a=point(c);\n"
-    "  dots=max(dots,1.0-smoothstep(0.025,0.075,length(p-a)));\n"
-    "  vec2 b=point(c+vec2(1,0));float d=segment(p,a,b);float fade=1.0-smoothstep(0.65,1.35,length(a-b));links=max(links,(1.0-smoothstep(0.006,0.018,d))*fade);\n"
-    "  b=point(c+vec2(0,1));d=segment(p,a,b);fade=1.0-smoothstep(0.65,1.35,length(a-b));links=max(links,(1.0-smoothstep(0.006,0.018,d))*fade);\n"
+    "  dots=max(dots,1.0-smoothstep(0.040,0.052,length(p-a)));\n"
+    "  vec2 b=point(c+vec2(1,0));float d=segment(p,a,b);float fade=1.0-smoothstep(0.65,1.35,length(a-b));links=max(links,(1.0-smoothstep(0.010,0.013,d))*fade);\n"
+    "  b=point(c+vec2(0,1));d=segment(p,a,b);fade=1.0-smoothstep(0.65,1.35,length(a-b));links=max(links,(1.0-smoothstep(0.010,0.013,d))*fade);\n"
     " }\n"
     " vec3 col=primary()*(dots*1.15+links*0.40)+accent()*dots*0.30;out_color=finish(col,dots*0.90+links*0.34);\n"
     "}\n";
@@ -56,7 +56,7 @@ static const char k_matrix_frag[] = BFX_HEADER
     " vec2 cells=vec2(pc.width,pc.height)/16.0;vec2 g=v_uv*cells;vec2 id=floor(g),f=fract(g);\n"
     " float rows=cells.y;float seed=h11(id.x+17.0);float speed=2.2+seed*2.4;float head=mod(pc.time*speed+seed*rows*1.7,rows+28.0)-10.0;\n"
     " float behind=head-id.y;behind=behind<0.0?behind+rows+28.0:behind;float trail=(1.0-smoothstep(0.0,22.0,behind))*step(0.0,behind);\n"
-    " vec2 pix=floor(f*vec2(5.0,7.0));float glyph=step(0.53,h21(id*19.7+pix))*step(0.10,f.x)*step(f.x,0.90)*step(0.08,f.y)*step(f.y,0.92);\n"
+    " vec2 pix=floor(f*vec2(5.0,7.0));float glyph=step(0.53,h21(id*19.7+pix))*step(0.06,f.x)*step(f.x,0.94)*step(0.05,f.y)*step(f.y,0.95);\n"
     " float headGlow=exp(-behind*behind*1.8);vec3 col=mix(primary()*0.82,vec3(0.82,1.0,0.88),headGlow)*glyph*(trail+headGlow);\n"
     " out_color=finish(col,glyph*clamp(trail*0.84+headGlow,0.0,0.96));\n"
     "}\n";
@@ -114,8 +114,8 @@ static const char k_fireflies_frag[] = BFX_HEADER
 static const char k_circuit_frag[] = BFX_HEADER
     "void main(){\n"
     " vec2 grid=vec2(pc.width,pc.height)/44.0;vec2 g=v_uv*grid,id=floor(g),f=fract(g);float choice=h21(id);\n"
-    " float horizontal=1.0-smoothstep(0.025,0.055,abs(f.y-0.5));float vertical=1.0-smoothstep(0.025,0.055,abs(f.x-0.5));\n"
-    " float trace=choice>0.5?horizontal:vertical;float node=1.0-smoothstep(0.055,0.105,length(f-0.5));\n"
+    " float horizontal=1.0-smoothstep(0.038,0.048,abs(f.y-0.5));float vertical=1.0-smoothstep(0.038,0.048,abs(f.x-0.5));\n"
+    " float trace=choice>0.5?horizontal:vertical;float node=1.0-smoothstep(0.075,0.090,length(f-0.5));\n"
     " float phase=fract(pc.time*0.035+h21(id*3.7));float along=choice>0.5?f.x:f.y;float pulse=exp(-pow(abs(along-phase),2.0)*420.0)*trace;\n"
     " vec3 col=primary()*(trace*0.18+node*0.42)+accent()*pulse*1.15;out_color=finish(col,trace*0.23+node*0.48+pulse*0.78);\n"
     "}\n";
@@ -124,7 +124,7 @@ static const char k_voronoi_frag[] = BFX_HEADER
     "vec2 seed(int i,float t){float fi=float(i),spd=0.03+fi*0.007;return vec2(0.5+0.42*sin(t*spd+fi*2.3999),0.5+0.42*cos(t*spd*0.71+fi*1.6180));}\n"
     "void main(){\n"
     " vec2 uv=v_uv;float d1=9.0,d2=9.0;int ci=0;for(int i=0;i<14;i++){float d=distance(uv,seed(i,pc.time));if(d<d1){d2=d1;d1=d;ci=i;}else if(d<d2)d2=d;}\n"
-    " float edge=1.0-smoothstep(0.0,0.012,d2-d1);float interior=smoothstep(0.0,0.18,d2-d1)*(1.0-smoothstep(0.18,0.55,d1));float hue=fract(float(ci)*0.618);\n"
+    " float edge=1.0-smoothstep(0.0,0.006,d2-d1);float interior=smoothstep(0.0,0.18,d2-d1)*(1.0-smoothstep(0.18,0.55,d1));float hue=fract(float(ci)*0.618);\n"
     " vec3 cell=mix(primary(),accent(),hue);vec3 col=mix(cell*interior*0.55,accent(),edge);out_color=finish(col,edge*0.76+interior*0.25);\n"
     "}\n";
 
