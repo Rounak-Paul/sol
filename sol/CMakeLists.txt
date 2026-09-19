@@ -255,6 +255,17 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     target_link_libraries(sol_text_buffer_tests PRIVATE tree_sitter_runtime Threads::Threads ${CMAKE_DL_LIBS})
     add_test(NAME sol_text_buffer_tests COMMAND sol_text_buffer_tests)
 
+    add_executable(sol_markdown_tests
+        tests/test_markdown.c
+        src/core/sol_markdown.c
+    )
+    target_include_directories(sol_markdown_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+    )
+    target_compile_definitions(sol_markdown_tests PRIVATE ${SOL_TEST_DEFS})
+    add_test(NAME sol_markdown_tests COMMAND sol_markdown_tests)
+
     # ---- Command-flow unit tests ----------------------------------------
     add_executable(sol_command_flow_tests
         tests/test_command_flow.c

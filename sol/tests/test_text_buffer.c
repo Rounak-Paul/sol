@@ -791,6 +791,26 @@ static void test_null_safety(SolTestCtx *T)
     SOL_CHECK_NULL(T, sol_text_buffer_source_path(NULL));
 }
 
+static void test_markdown_document_detection(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolBufferId markdown_id = sol_text_buffer_open_string(
+        sys, "notes", "# Notes", 7u, "/tmp/notes.MD", NULL);
+    SolTextBuffer *markdown = sol_text_buffer_state(
+        sol_buffer_get(sys, markdown_id));
+    SOL_CHECK_NOT_NULL(T, markdown);
+    SOL_CHECK(T, sol_text_buffer_is_markdown_document(markdown));
+
+    SolBufferId text_id = sol_text_buffer_open_string(
+        sys, "text", "plain", 5u, "/tmp/plain.txt", NULL);
+    SolTextBuffer *text = sol_text_buffer_state(sol_buffer_get(sys, text_id));
+    SOL_CHECK_NOT_NULL(T, text);
+    SOL_CHECK(T, !sol_text_buffer_is_markdown_document(text));
+    SOL_CHECK(T, !sol_text_buffer_is_markdown_document(NULL));
+
+    sol_buffer_system_destroy(sys);
+}
+
 /* ------------------------------------------------------------------ */
 /* Performance benchmark                                               */
 /* ------------------------------------------------------------------ */
@@ -858,6 +878,7 @@ int main(void)
     SOL_RUN(s, test_save_writes_correct_bytes);
     SOL_RUN(s, test_reload_from_disk_clamps_cursor);
     SOL_RUN(s, test_null_safety);
+    SOL_RUN(s, test_markdown_document_detection);
 
     run_benchmarks();
 

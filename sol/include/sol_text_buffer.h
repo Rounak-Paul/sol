@@ -106,6 +106,9 @@ SolRope *sol_text_buffer_rope(SolBuffer *buffer);
 /* Returns the source path registered with the text buffer, or NULL if none. */
 const char *sol_text_buffer_source_path(const SolTextBuffer *tb);
 
+/* Returns whether this buffer is a Markdown document rendered inline. */
+bool sol_text_buffer_is_markdown_document(const SolTextBuffer *tb);
+
 /* Returns true when the buffer has edits not yet reflected on disk. */
 bool sol_text_buffer_is_dirty(const SolTextBuffer *tb);
 

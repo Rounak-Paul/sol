@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "sol_platform.h"
+#include "sol_markdown.h"
 #include "sol_rope.h"
 #include "sol_syntax_highlight.h"
 #include "sol_text_buffer.h"
@@ -73,6 +74,19 @@ static const size_t SOL_TEXT_RULER_COLUMNS[] = { 80u, 100u };
 #define SOL_TEXT_VIEW_LINE_RING 256
 static char g_line_ring[SOL_TEXT_VIEW_LINE_RING][SOL_TEXT_VIEW_MAX_LINE_BYTES];
 static int  g_line_ring_cursor = 0;
+
+/* Inline Markdown spans borrow stable storage through the current frame. */
+#define SOL_MARKDOWN_PREVIEW_LINE_RING 4096u
+static char g_markdown_preview_ring[SOL_MARKDOWN_PREVIEW_LINE_RING]
+                                   [SOL_TEXT_VIEW_MAX_LINE_BYTES];
+static size_t g_markdown_preview_ring_cursor = 0u;
+
+/* Return a stable string slot for a rendered Markdown block. */
+static char *acquire_markdown_preview_slot(void)
+{
+    return g_markdown_preview_ring[
+        g_markdown_preview_ring_cursor++ & (SOL_MARKDOWN_PREVIEW_LINE_RING - 1u)];
+}
 
 /* Same idea for the line-number labels in the gutter. */
 #define SOL_TEXT_VIEW_NUM_RING 256
@@ -216,6 +230,75 @@ static ScrollbarDragCtx *acquire_scrollbar_slot(void)
 {
     return &g_scrollbar_ring[
         g_scrollbar_ring_cursor++ & (SOL_TEXT_VIEW_SCROLLBAR_RING - 1)];
+}
+
+/* Emit a stable substring into the current Markdown block. */
+static void markdown_emit_range(const char *text, size_t length, const char *style)
+{
+    if (!text || length == 0u) return;
+    char *slot = acquire_markdown_preview_slot();
+    if (length >= SOL_TEXT_VIEW_MAX_LINE_BYTES) length = SOL_TEXT_VIEW_MAX_LINE_BYTES - 1u;
+    memcpy(slot, text, length);
+    slot[length] = '\0';
+    ca_text(&(Ca_TextDesc){ .text = slot, .style = style });
+}
+
+/* Render inline strong and code spans while retaining safe plain-text output. */
+static void markdown_emit_inline(const char *text, const char *base_style)
+{
+    if (!text || !text[0]) {
+        ca_text(&(Ca_TextDesc){ .text = " ", .style = base_style });
+        return;
+    }
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL });
+    SolMarkdownInlineToken tokens[128];
+    const size_t count = sol_markdown_inline_tokens(text, tokens, 128u);
+    for (size_t i = 0u; i < count; ++i) {
+        const char *style = base_style;
+        switch (tokens[i].style) {
+        case SOL_MARKDOWN_INLINE_EMPHASIS:      style = "markdown-emphasis"; break;
+        case SOL_MARKDOWN_INLINE_STRONG:        style = "markdown-strong"; break;
+        case SOL_MARKDOWN_INLINE_STRIKETHROUGH: style = "markdown-strikethrough"; break;
+        case SOL_MARKDOWN_INLINE_CODE:          style = "markdown-inline-code"; break;
+        case SOL_MARKDOWN_INLINE_LINK:          style = "markdown-link"; break;
+        case SOL_MARKDOWN_INLINE_PLAIN:         break;
+        }
+        markdown_emit_range(text + tokens[i].start_byte,
+                            tokens[i].byte_length, style);
+    }
+    ca_div_end();
+}
+
+/* Render a parsed Markdown block without changing the editor's row geometry. */
+static void markdown_emit_block(const char *line, const SolMarkdownBlock *block)
+{
+    if (!line || !block) return;
+    const char *content = line + block->content_start_byte;
+    switch (block->kind) {
+    case SOL_MARKDOWN_BLOCK_HEADING:
+        markdown_emit_inline(content, block->heading_level == 1u ? "markdown-heading-1" :
+                                     block->heading_level == 2u ? "markdown-heading-2" : "markdown-heading-3"); break;
+    case SOL_MARKDOWN_BLOCK_QUOTE: markdown_emit_inline(content, "markdown-quote"); break;
+    case SOL_MARKDOWN_BLOCK_UNORDERED_LIST:
+        ca_text(&(Ca_TextDesc){ .text = "• ", .style = "markdown-list-marker" });
+        markdown_emit_inline(content, "markdown-list"); break;
+    case SOL_MARKDOWN_BLOCK_ORDERED_LIST:
+        ca_text(&(Ca_TextDesc){ .text = "# ", .style = "markdown-list-marker" });
+        markdown_emit_inline(content, "markdown-list"); break;
+    case SOL_MARKDOWN_BLOCK_TASK:
+        ca_text(&(Ca_TextDesc){ .text = block->task_checked ? "☑ " : "☐ ", .style = "markdown-list-marker" });
+        markdown_emit_inline(content, block->task_checked ? "markdown-task-done" : "markdown-list"); break;
+    case SOL_MARKDOWN_BLOCK_FENCE:
+        ca_text(&(Ca_TextDesc){ .text = block->fence_language && block->fence_language[0] ? block->fence_language : "code", .style = "markdown-fence" }); break;
+    case SOL_MARKDOWN_BLOCK_CODE:
+        ca_text(&(Ca_TextDesc){ .text = line[0] ? line : " ", .style = "markdown-code" }); break;
+    case SOL_MARKDOWN_BLOCK_RULE:
+        ca_text(&(Ca_TextDesc){ .text = "────────────────────────", .style = "markdown-rule" }); break;
+    case SOL_MARKDOWN_BLOCK_TABLE:
+        markdown_emit_inline(line, "markdown-table"); break;
+    case SOL_MARKDOWN_BLOCK_PARAGRAPH:
+        markdown_emit_inline(line, "markdown-paragraph"); break;
+    }
 }
 
 /* Per-frame token-segment storage.
@@ -961,6 +1044,16 @@ void sol_text_view_render(const SolBuffer *buffer,
     const float sel_adv = adv_css;
     /* Rope reference for per-line byte offset queries. */
     const SolRope *rope_ref = sol_text_buffer_rope((SolBuffer *)buffer);
+    const bool markdown_document = sol_text_buffer_is_markdown_document(tb);
+    SolMarkdownParserState markdown_state;
+    sol_markdown_parser_init(&markdown_state);
+    if (markdown_document) {
+        for (int line = 0; line < scroll_top; ++line) {
+            char prior[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+            sol_text_buffer_copy_line(tb, (size_t)line, prior, sizeof(prior));
+            (void)sol_markdown_parse_line(prior, &markdown_state);
+        }
+    }
     for (int i = 0; i < rendered; ++i) {
         const int line_idx = scroll_top + i;
         if (line_idx >= total) {
@@ -973,6 +1066,9 @@ void sol_text_view_render(const SolBuffer *buffer,
         char *line_buf = acquire_line_slot();
         const size_t line_bytes = sol_text_buffer_copy_line(
             tb, (size_t)line_idx, line_buf, SOL_TEXT_VIEW_MAX_LINE_BYTES);
+        SolMarkdownBlock markdown_block = {0};
+        if (markdown_document)
+            markdown_block = sol_markdown_parse_line(line_buf, &markdown_state);
 
         const bool is_cursor_line =
             args && args->is_active && (size_t)line_idx == cur_line;
@@ -1026,10 +1122,13 @@ void sol_text_view_render(const SolBuffer *buffer,
             }
         }
 
-        /* Emit line content — tokenized when a syntax highlighter is
-         * available, plain otherwise. */
-        SolSyntaxHighlighter *hl = sol_text_buffer_highlighter(tb);
-        if (hl && sol_syntax_highlight_is_valid(hl)) {
+        /* Markdown keeps the normal editor's row geometry and input path.
+           Only inactive lines swap their source markers for presentation. */
+        if (markdown_document && !is_cursor_line) {
+            markdown_emit_block(line_buf, &markdown_block);
+        } else {
+            SolSyntaxHighlighter *hl = sol_text_buffer_highlighter(tb);
+            if (hl && sol_syntax_highlight_is_valid(hl)) {
             const SolRope *rope =
                 sol_text_buffer_rope((SolBuffer *)buffer);
             uint32_t line_start = rope
@@ -1042,11 +1141,12 @@ void sol_text_view_render(const SolBuffer *buffer,
                 spans, 64u);
             emit_highlighted_line(
                 line_buf, line_bytes, line_start, spans, span_count);
-        } else {
-            ca_text(&(Ca_TextDesc){
-                .text  = line_bytes > 0u ? line_buf : " ",
-                .style = "buffer-line",
-            });
+            } else {
+                ca_text(&(Ca_TextDesc){
+                    .text  = line_bytes > 0u ? line_buf : " ",
+                    .style = "buffer-line",
+                });
+            }
         }
 
         if (is_cursor_line) {

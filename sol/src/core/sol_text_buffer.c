@@ -62,6 +62,7 @@ struct SolTextBuffer {
     int                   scroll_top_line; /* first visible line                 */
     int                   scroll_left_col; /* first visible visual column        */
     char                 *source_path;     /* owned; NULL for unsaved/scratch    */
+    bool                  markdown_document;
 
     SolEventBus          *events;
     SolBufferId           self_id;
@@ -146,6 +147,27 @@ static char *tb_strdup(const char *s)
     if (!o) return NULL;
     memcpy(o, s, n + 1u);
     return o;
+}
+
+/* Return true when path names a Markdown document, case-insensitively. */
+static bool tb_path_is_markdown(const char *path)
+{
+    if (!path) return false;
+    const char *extension = strrchr(path, '.');
+    if (!extension) return false;
+    const char *markdown_extensions[] = { ".md", ".markdown", ".mdown" };
+    for (size_t i = 0u; i < sizeof(markdown_extensions) / sizeof(markdown_extensions[0]); ++i) {
+        const char *a = extension;
+        const char *b = markdown_extensions[i];
+        while (*a && *b) {
+            char ac = *a++;
+            const char bc = *b++;
+            if (ac >= 'A' && ac <= 'Z') ac = (char)(ac + ('a' - 'A'));
+            if (ac != bc) break;
+        }
+        if (*a == '\0' && *b == '\0') return true;
+    }
+    return false;
 }
 
 /*
@@ -563,6 +585,7 @@ static SolTextBuffer *tb_create_from_rope(SolRope *rope, const char *source_path
     tb->rope = rope;
     if (source_path) {
         tb->source_path = tb_strdup(source_path);
+        tb->markdown_document = tb_path_is_markdown(source_path);
         /* tb_strdup failure is non-fatal — we just can't dedupe. */
     }
     return tb;
@@ -847,6 +870,11 @@ const char *sol_text_buffer_source_path(const SolTextBuffer *tb)
     return tb ? tb->source_path : NULL;
 }
 
+bool sol_text_buffer_is_markdown_document(const SolTextBuffer *tb)
+{
+    return tb && tb->markdown_document;
+}
+
 /*
  * Report whether a buffer has unsaved edits.
  *
@@ -995,6 +1023,7 @@ bool sol_text_buffer_save_as(SolTextBuffer *tb, const char *path,
     }
     free(tb->source_path);
     tb->source_path = new_path;
+    tb->markdown_document = tb_path_is_markdown(path);
     tb->dirty = false;
     tb->external_change_pending = false;
 
