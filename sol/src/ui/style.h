@@ -1121,11 +1121,17 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  text-wrap: nowrap;"
     "  padding-right: 4px;"
     "}"
-    /* ===== Status bar ===== */
+    /* ===== Status bar =====
+       Height matches .project-tabs (19px) and SOL_UI_STATUS_BAR_BAR_HEIGHT
+       (sol_ui_internal.h), which is what the workspace's reserved-band
+       math assumes this bar occupies. A taller CSS height than the
+       reserved band expects pushes the bar's content out of vertical
+       center within its own row and off-position relative to the band
+       Causality allotted it. */
     ".status-bar {"
     "  background: rgba(17, 17, 24, 0.88);"
     "  width: 100%;"
-    "  height: 22px;"
+    "  height: 19px;"
     "  box-sizing: border-box;"
     "  padding: 0px 8px;"
     "  gap: 0px;"
@@ -2325,6 +2331,11 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".buffer-tab-dirty-active { color: #f0b840; }"
     ".buffer-tab-close { border-radius: 0px; }"
     ".buffer-tab-close:hover { background: rgba(220, 92, 106, 0.20); }"
+    /* Project tab strip and status bar are the app's two full-span chrome
+       bars (top and bottom) and must read as the same element repeated
+       twice: same surface tone/opacity, both flush full-width edge to
+       edge (deliberately not gutter-inset like the floating panels —
+       full width reads better for a window-spanning chrome bar). */
     ".project-tabs {"
     "  height: 19px; padding: 1px 3px; gap: 1px; align-items: center;"
     "  background: rgba(5, 12, 21, " SOL_UI_SURFACE_RAISED_ALPHA_CSS "); "
@@ -2368,7 +2379,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "}"
 
     ".status-bar {"
-    "  height: 22px; padding: 0px 10px; background: rgba(3, 8, 15, " SOL_UI_SURFACE_CHROME_ALPHA_CSS ");"
+    "  height: 19px; padding: 0px 10px; background: rgba(3, 8, 15, " SOL_UI_SURFACE_CHROME_ALPHA_CSS ");"
     "}"
     ".status-bar-badge { border-radius: 0px; }"
     ".status-bar-text { color: #8795aa; }"
@@ -2540,19 +2551,18 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".term-tab, .term-tab-active {"
     "  height: 17px; border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS ";"
     "}"
-    /* Status bar mirrors the project tab strip at the top of the window:
-       the same bar height, full width, flush to the window edge, and the
-       same panel margin separating it from the workspace.
-       The gap is this element's own top margin, not workspace padding:
-       the status bar is a root-level sibling of the workspace host, so
-       .workspace-main-content's padding cannot reach it. Causality
-       reserves SOL_UI_STATUS_BAR_HEIGHT (bar + gap) for the band and
-       rewrites the node's height each frame, so the margin is what
-       positions the bar within it.
-       Previously an inset floating pill, which read as an alignment bug
-       against the flush top strip. */
+    /* Status bar mirrors the project tab strip: same bar height, same
+       surface tone, both flush full-width edge to edge.
+       The top gap is this element's own top margin, not workspace
+       padding: the status bar is a root-level sibling of the workspace
+       host, so .workspace-main-content's padding cannot reach it.
+       Causality reserves SOL_UI_STATUS_BAR_HEIGHT (bar + gap) for the
+       band and rewrites the node's height each frame, so the margin is
+       what positions the bar within it. */
     ".status-bar {"
-    "  width: 100%; margin: 8px 0px 0px 0px; padding: 0px 8px;"
+    "  width: 100%; margin: " SOL_UI_PANEL_MARGIN_PX_CSS " 0px 0px 0px;"
+    "  padding: 0px 8px;"
+    "  background: rgba(5, 12, 21, " SOL_UI_SURFACE_RAISED_ALPHA_CSS ");"
     "  flex-grow: 0; flex-shrink: 0; border-radius: 0px;"
     "}"
     ".status-bar-badge { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"

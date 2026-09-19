@@ -596,11 +596,14 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".buffer-body, .buffer-scroll-row { border-bottom-left-radius: %.1fpx;"
         " border-bottom-right-radius: %.1fpx; overflow: hidden; }"
         ".buffer-gutter-col { border-bottom-left-radius: %.1fpx; }"
-        /* Buffer panes + side panel: corner-radius, backdrop blur, opacity. */
+        /* Buffer panes + side panel: corner-radius, backdrop blur, opacity.
+           .project-tabs and .status-bar are the app's two full-span chrome
+           bars (top/bottom) and share this rule so they stay visually
+           identical to each other and to every other floating surface. */
         ".tree-panel, .tree-panel-focused, .plugin-side-panel,"
         ".plugin-side-panel-focused, .buffer-pane, .buffer-pane-focused,"
         ".term-panel, .term-panel-focused, .welcome-pane, .cf-panel,"
-        ".status-bar {"
+        ".project-tabs, .status-bar {"
         "  border-radius: %.1fpx;"
         "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
