@@ -35,6 +35,20 @@ static char markdown_rule_marker(const char *line)
     return count >= 3u ? marker : '\0';
 }
 
+/* Return true when a pipe row is a Markdown table alignment separator. */
+static bool markdown_table_separator(const char *line)
+{
+    size_t dashes = 0u;
+    bool pipe = false;
+    for (; line && *line; ++line) {
+        if (*line == '|') { pipe = true; continue; }
+        if (*line == ' ' || *line == '\t' || *line == ':') continue;
+        if (*line != '-') return false;
+        ++dashes;
+    }
+    return pipe && dashes >= 3u;
+}
+
 void sol_markdown_parser_init(SolMarkdownParserState *state)
 {
     if (!state) return;
@@ -114,8 +128,9 @@ SolMarkdownBlock sol_markdown_parse_line(const char *line,
         block.content_byte_length = length - block.content_start_byte;
         return block;
     }
-    if (line[0] == '|' && strchr(line + 1, '|')) {
-        block.kind = SOL_MARKDOWN_BLOCK_TABLE;
+    if (strchr(line, '|') && strchr(strchr(line, '|') + 1, '|')) {
+        block.kind = markdown_table_separator(line)
+            ? SOL_MARKDOWN_BLOCK_TABLE_SEPARATOR : SOL_MARKDOWN_BLOCK_TABLE;
     }
     block.content_byte_length = length;
     return block;

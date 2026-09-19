@@ -48,6 +48,11 @@ static void test_blocks_and_fenced_language(SolTestCtx *T)
     block = sol_markdown_parse_line("- [x] Done", &state);
     SOL_CHECK_EQ_INT(T, block.kind, SOL_MARKDOWN_BLOCK_TASK);
     SOL_CHECK(T, block.task_checked);
+
+    block = sol_markdown_parse_line("| Name | Value |", &state);
+    SOL_CHECK_EQ_INT(T, block.kind, SOL_MARKDOWN_BLOCK_TABLE);
+    block = sol_markdown_parse_line("| --- | :---: |", &state);
+    SOL_CHECK_EQ_INT(T, block.kind, SOL_MARKDOWN_BLOCK_TABLE_SEPARATOR);
 }
 
 int main(void)

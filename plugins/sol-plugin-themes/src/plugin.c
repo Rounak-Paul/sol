@@ -150,6 +150,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
 {
     if (!theme || !out || capacity == 0u) return false;
     char chrome[32], panel[32], editor[32], raised[32], popup_bg[32], hover[32], selected[32];
+    char table_header[32], table_row[32], table_row_alt[32], table_divider[32];
     const float surface_alpha = theme->light ? 0.62f : 0.48f;
     const float editor_alpha = theme->light ? 0.58f : 0.45f;
     if (!color_with_alpha(theme->background, theme->light ? 0.78f : 0.68f, chrome) ||
@@ -158,7 +159,11 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         !color_with_alpha(theme->elevated, theme->light ? 0.88f : 0.78f, raised) ||
         !color_with_alpha(theme->elevated, 1.0f, popup_bg) ||
         !color_with_alpha(theme->primary, 0.15f, hover) ||
-        !color_with_alpha(theme->primary, 0.32f, selected))
+        !color_with_alpha(theme->primary, 0.32f, selected) ||
+        !color_with_alpha(theme->primary, theme->light ? 0.24f : 0.30f, table_header) ||
+        !color_with_alpha(theme->surface, theme->light ? 0.32f : 0.20f, table_row) ||
+        !color_with_alpha(theme->elevated, theme->light ? 0.44f : 0.30f, table_row_alt) ||
+        !color_with_alpha(theme->primary, theme->light ? 0.50f : 0.58f, table_divider))
         return false;
 
     ThemeCssBuilder css = { .data = out, .capacity = capacity, .valid = true };
@@ -215,6 +220,15 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->accent, theme->warning, theme->secondary, theme->accent,
         theme->danger, theme->warning, theme->danger, theme->accent,
         theme->success, theme->primary, theme->warning);
+
+    css_append(&css,
+        ".markdown-table{color:%s;}"
+        ".markdown-table-cell{background:%s;border-left-color:%s;}"
+        ".markdown-table-cell-alt{background:%s;}"
+        ".markdown-table-header-cell{color:%s;background:%s;border-left-color:%s;}"
+        ".markdown-table-separator-cell{background:%s;}",
+        theme->secondary, table_row, hover, table_row_alt, theme->text,
+        table_header, selected, table_divider);
 
     css_append(&css,
         ".welcome-pane,.fp-list,.search-results,.pm-right,.sw-right,.scm-root,.scm-view{background:%s;}"

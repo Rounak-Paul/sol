@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "sol_platform.h"
@@ -269,8 +270,263 @@ static void markdown_emit_inline(const char *text, const char *base_style)
     ca_div_end();
 }
 
+#define SOL_MARKDOWN_TABLE_LEFT_INSET_COLUMNS 1u
+#define SOL_MARKDOWN_TABLE_RIGHT_INSET_COLUMNS 2u
+#define SOL_MARKDOWN_TABLE_FONT_SIZE_PX 13.0f
+
+typedef struct MarkdownTableLayout {
+    size_t column_count;
+    float *column_widths;
+    float cell_left_inset;
+    float cell_right_inset;
+} MarkdownTableLayout;
+
+/* Return the number of non-empty structural cells in a pipe-delimited row. */
+static size_t markdown_table_cell_count(const char *line)
+{
+    if (!line) return 0u;
+    const char *cell = line[0] == '|' ? line + 1u : line;
+    size_t count = 0u;
+    while (*cell) {
+        const char *end = strchr(cell, '|');
+        const char *start = cell;
+        const char *finish = end ? end : cell + strlen(cell);
+        while (start < finish && (*start == ' ' || *start == '\t')) ++start;
+        while (finish > start && (finish[-1] == ' ' || finish[-1] == '\t')) --finish;
+        if (finish > start) ++count;
+        if (!end) break;
+        cell = end + 1u;
+    }
+    return count;
+}
+
+/* Find the first contiguous pipe-table row containing a source line. */
+static size_t markdown_table_first_line(const SolTextBuffer *tb, size_t line_index)
+{
+    if (!tb) return line_index;
+    char row[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+    while (line_index > 0u) {
+        sol_text_buffer_copy_line(tb, line_index - 1u, row, sizeof(row));
+        if (markdown_table_cell_count(row) < 2u) break;
+        --line_index;
+    }
+    return line_index;
+}
+
+/* Release storage held by one measured table layout. */
+static void markdown_table_layout_destroy(MarkdownTableLayout *layout)
+{
+    if (!layout) return;
+    free(layout->column_widths);
+    *layout = (MarkdownTableLayout){0};
+}
+
+/* Measure a Markdown cell using the same font size used by its text style. */
+static float markdown_table_text_width(Ca_Window *window, const char *text,
+                                       size_t text_length, float ui_scale,
+                                       float fallback_glyph_width)
+{
+    if (!text || text_length == 0u) return 0.0f;
+    if (text_length >= SOL_TEXT_VIEW_MAX_LINE_BYTES)
+        text_length = SOL_TEXT_VIEW_MAX_LINE_BYTES - 1u;
+
+    char measured[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+    memcpy(measured, text, text_length);
+    measured[text_length] = '\0';
+    const float measured_width = window
+        ? ca_measure_text_px(window, measured, SOL_MARKDOWN_TABLE_FONT_SIZE_PX)
+        : 0.0f;
+    if (measured_width > 0.0f && ui_scale > 0.0f)
+        return measured_width / ui_scale;
+    return (float)tv_visual_col_count(text, text_length) * fallback_glyph_width;
+}
+
+/* Update table width requirements from one source row. */
+static void markdown_table_measure_row(const char *line, size_t column_count,
+                                       float *widths, Ca_Window *window,
+                                       float ui_scale, float fallback_glyph_width)
+{
+    if (!line || column_count == 0u || !widths) return;
+    const char *cell = line[0] == '|' ? line + 1u : line;
+    size_t column = 0u;
+    while (*cell && column < column_count) {
+        const char *end = strchr(cell, '|');
+        const char *start = cell;
+        const char *finish = end ? end : cell + strlen(cell);
+        while (start < finish && (*start == ' ' || *start == '\t')) ++start;
+        while (finish > start && (finish[-1] == ' ' || finish[-1] == '\t')) --finish;
+        if (finish > start) {
+            const float width = markdown_table_text_width(
+                window, start, (size_t)(finish - start), ui_scale,
+                fallback_glyph_width);
+            if (width > widths[column]) widths[column] = width;
+        }
+        ++column;
+        if (!end) break;
+        cell = end + 1u;
+    }
+}
+
+/* Build one table-wide schema from every contiguous source row. */
+static MarkdownTableLayout markdown_table_layout(const SolTextBuffer *tb,
+                                                 size_t current_line,
+                                                 Ca_Window *window,
+                                                 float ui_scale,
+                                                 float fallback_glyph_width)
+{
+    MarkdownTableLayout layout = {0};
+    if (!tb) return layout;
+    const size_t first = markdown_table_first_line(tb, current_line);
+    char row[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+    const size_t total = sol_text_buffer_line_count(tb);
+    for (size_t line = first; line < total; ++line) {
+        sol_text_buffer_copy_line(tb, line, row, sizeof(row));
+        if (markdown_table_cell_count(row) < 2u) break;
+        const size_t columns = markdown_table_cell_count(row);
+        if (columns > layout.column_count) layout.column_count = columns;
+    }
+    if (layout.column_count == 0u) return layout;
+
+    layout.column_widths = calloc(layout.column_count, sizeof(*layout.column_widths));
+    if (!layout.column_widths) {
+        markdown_table_layout_destroy(&layout);
+        return layout;
+    }
+    for (size_t line = first; line < total; ++line) {
+        sol_text_buffer_copy_line(tb, line, row, sizeof(row));
+        if (markdown_table_cell_count(row) < 2u) break;
+        markdown_table_measure_row(row, layout.column_count, layout.column_widths,
+                                   window, ui_scale, fallback_glyph_width);
+    }
+    layout.cell_left_inset = markdown_table_text_width(
+        window, "M", SOL_MARKDOWN_TABLE_LEFT_INSET_COLUMNS, ui_scale,
+        fallback_glyph_width);
+    layout.cell_right_inset = markdown_table_text_width(
+        window, "MM", SOL_MARKDOWN_TABLE_RIGHT_INSET_COLUMNS, ui_scale,
+        fallback_glyph_width);
+    for (size_t column = 0u; column < layout.column_count; ++column)
+        layout.column_widths[column] += layout.cell_left_inset +
+            layout.cell_right_inset;
+    return layout;
+}
+
+/* Select header and alternating body treatments from source-table position. */
+static const char *markdown_table_cell_style(const SolTextBuffer *tb,
+                                             size_t line_index, bool separator)
+{
+    if (separator) return "markdown-table-separator-cell";
+    const size_t first = markdown_table_first_line(tb, line_index);
+    if (line_index == first) return "markdown-table-cell markdown-table-header-cell";
+    return ((line_index - first) & 1u)
+        ? "markdown-table-cell markdown-table-cell-alt"
+        : "markdown-table-cell";
+}
+
+/* Return the full rendered width of the table containing a source row. */
+static float markdown_table_width(const SolTextBuffer *tb, size_t line_index,
+                                  Ca_Window *window, float ui_scale,
+                                  float fallback_glyph_width)
+{
+    MarkdownTableLayout layout = markdown_table_layout(
+        tb, line_index, window, ui_scale, fallback_glyph_width);
+    if (layout.column_count == 0u) return 0.0f;
+
+    float width = 2.0f * (float)(layout.column_count - 1u);
+    for (size_t column = 0u; column < layout.column_count; ++column)
+        width += layout.column_widths[column];
+    markdown_table_layout_destroy(&layout);
+    return width;
+}
+
+/* Measure rendered table rows in the viewport for native horizontal scrolling. */
+static float markdown_visible_table_width(const SolTextBuffer *tb, int scroll_top,
+                                          int rendered, Ca_Window *window,
+                                          float ui_scale, float fallback_glyph_width)
+{
+    if (!tb || scroll_top < 0 || rendered <= 0) return 0.0f;
+
+    SolMarkdownParserState state;
+    sol_markdown_parser_init(&state);
+    char line[SOL_TEXT_VIEW_MAX_LINE_BYTES];
+    for (int index = 0; index < scroll_top; ++index) {
+        sol_text_buffer_copy_line(tb, (size_t)index, line, sizeof(line));
+        (void)sol_markdown_parse_line(line, &state);
+    }
+
+    const int total = (int)sol_text_buffer_line_count(tb);
+    float width = 0.0f;
+    for (int offset = 0; offset < rendered; ++offset) {
+        const int index = scroll_top + offset;
+        if (index >= total) break;
+        sol_text_buffer_copy_line(tb, (size_t)index, line, sizeof(line));
+        const SolMarkdownBlock block = sol_markdown_parse_line(line, &state);
+        if (block.kind != SOL_MARKDOWN_BLOCK_TABLE &&
+            block.kind != SOL_MARKDOWN_BLOCK_TABLE_SEPARATOR)
+            continue;
+        const float table_width = markdown_table_width(
+            tb, (size_t)index, window, ui_scale, fallback_glyph_width);
+        if (table_width > width) width = table_width;
+    }
+    return width;
+}
+
+/* Render one fixed-grid table row or alignment separator. */
+static void markdown_emit_table_row(const char *line,
+                                    const MarkdownTableLayout *layout,
+                                    const SolTextBuffer *tb, size_t line_index,
+                                    bool separator)
+{
+    const size_t count = layout ? layout->column_count : 0u;
+    if (!line || count == 0u) return;
+    const float gap = 2.0f;
+    float table_width = gap * (float)(count - 1u);
+    for (size_t column = 0u; column < count; ++column)
+        table_width += layout->column_widths[column];
+    const char *const cell_style = markdown_table_cell_style(tb, line_index,
+                                                              separator);
+    const char *cell = line[0] == '|' ? line + 1u : line;
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .width = table_width,
+                                .height = (float)SOL_TEXT_LINE_HEIGHT_PX,
+                                .style = "markdown-table-row" });
+    size_t column = 0u;
+    while (*cell && column < count) {
+        const char *end = strchr(cell, '|');
+        const char *trimmed_end = end ? end : cell + strlen(cell);
+        while (trimmed_end > cell && (trimmed_end[-1] == ' ' || trimmed_end[-1] == '\t')) --trimmed_end;
+        while (*cell == ' ' || *cell == '\t') ++cell;
+        if (trimmed_end <= cell) {
+            if (!end) break;
+            cell = end + 1u;
+            continue;
+        }
+        ca_div_begin(&(Ca_DivDesc){ .width = layout->column_widths[column++],
+            .height = (float)SOL_TEXT_LINE_HEIGHT_PX,
+            .style = cell_style });
+        if (!separator) {
+        ca_div_begin(&(Ca_DivDesc){ .width = layout->cell_left_inset,
+                                    .height = (float)SOL_TEXT_LINE_HEIGHT_PX });
+        ca_div_end();
+        char *cell_text = acquire_markdown_preview_slot();
+        size_t cell_length = (size_t)(trimmed_end - cell);
+        if (cell_length >= SOL_TEXT_VIEW_MAX_LINE_BYTES)
+            cell_length = SOL_TEXT_VIEW_MAX_LINE_BYTES - 1u;
+        memcpy(cell_text, cell, cell_length);
+        cell_text[cell_length] = '\0';
+        markdown_emit_inline(cell_text, "markdown-table");
+        }
+        ca_div_end();
+        if (!end) break;
+        cell = end + 1u;
+        if (*cell == '\0') break;
+    }
+    ca_div_end();
+}
+
 /* Render a parsed Markdown block without changing the editor's row geometry. */
-static void markdown_emit_block(const char *line, const SolMarkdownBlock *block)
+static void markdown_emit_block(const char *line, const SolMarkdownBlock *block,
+                                const SolTextBuffer *tb, size_t line_index,
+                                float line_width, Ca_Window *window,
+                                float ui_scale, float fallback_glyph_width)
 {
     if (!line || !block) return;
     const char *content = line + block->content_start_byte;
@@ -291,11 +547,25 @@ static void markdown_emit_block(const char *line, const SolMarkdownBlock *block)
     case SOL_MARKDOWN_BLOCK_FENCE:
         ca_text(&(Ca_TextDesc){ .text = block->fence_language && block->fence_language[0] ? block->fence_language : "code", .style = "markdown-fence" }); break;
     case SOL_MARKDOWN_BLOCK_CODE:
+        ca_div_begin(&(Ca_DivDesc){ .position = CA_POSITION_ABSOLUTE, .pos_x = 0.0f,
+            .pos_y = 0.0f, .width = line_width, .height = (float)SOL_TEXT_LINE_HEIGHT_PX,
+            .style = "markdown-code-line" });
+        ca_div_end();
         ca_text(&(Ca_TextDesc){ .text = line[0] ? line : " ", .style = "markdown-code" }); break;
     case SOL_MARKDOWN_BLOCK_RULE:
         ca_text(&(Ca_TextDesc){ .text = "────────────────────────", .style = "markdown-rule" }); break;
     case SOL_MARKDOWN_BLOCK_TABLE:
-        markdown_emit_inline(line, "markdown-table"); break;
+        { MarkdownTableLayout layout = markdown_table_layout(
+              tb, line_index, window, ui_scale, fallback_glyph_width);
+          markdown_emit_table_row(line, &layout, tb, line_index, false);
+          markdown_table_layout_destroy(&layout); }
+        break;
+    case SOL_MARKDOWN_BLOCK_TABLE_SEPARATOR:
+        { MarkdownTableLayout layout = markdown_table_layout(
+              tb, line_index, window, ui_scale, fallback_glyph_width);
+          markdown_emit_table_row(line, &layout, tb, line_index, true);
+          markdown_table_layout_destroy(&layout); }
+        break;
     case SOL_MARKDOWN_BLOCK_PARAGRAPH:
         markdown_emit_inline(line, "markdown-paragraph"); break;
     }
@@ -941,7 +1211,14 @@ void sol_text_view_render(const SolBuffer *buffer,
     const float adv_css = glyph_advance_px_for(primary_win) / ui_scale;
     const int viewport_cols = sol_text_view_visible_cols_for_width(
         args ? args->rect.w : 0.0f, ui_scale, adv_css * ui_scale);
-    const size_t max_line_cols = visible_max_line_cols(tb, scroll_top, rendered);
+    size_t max_line_cols = visible_max_line_cols(tb, scroll_top, rendered);
+    if (sol_text_buffer_is_markdown_document(tb) && adv_css > 0.0f) {
+        const float table_width = markdown_visible_table_width(
+            tb, scroll_top, rendered, primary_win, ui_scale, adv_css);
+        const size_t table_columns = (size_t)((table_width + adv_css - 0.001f) /
+                                              adv_css);
+        if (table_columns > max_line_cols) max_line_cols = table_columns;
+    }
     const int max_left = max_line_cols > (size_t)viewport_cols
         ? (int)(max_line_cols - (size_t)viewport_cols) : 0;
     int scroll_left = has_leaf_scroll
@@ -1125,7 +1402,8 @@ void sol_text_view_render(const SolBuffer *buffer,
         /* Markdown keeps the normal editor's row geometry and input path.
            Only inactive lines swap their source markers for presentation. */
         if (markdown_document && !is_cursor_line) {
-            markdown_emit_block(line_buf, &markdown_block);
+            markdown_emit_block(line_buf, &markdown_block, tb, (size_t)line_idx,
+                                line_content_w, primary_win, ui_scale, adv_css);
         } else {
             SolSyntaxHighlighter *hl = sol_text_buffer_highlighter(tb);
             if (hl && sol_syntax_highlight_is_valid(hl)) {

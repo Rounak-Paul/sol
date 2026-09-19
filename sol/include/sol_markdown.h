@@ -33,6 +33,7 @@ typedef enum SolMarkdownBlockKind {
     SOL_MARKDOWN_BLOCK_CODE,
     SOL_MARKDOWN_BLOCK_RULE,
     SOL_MARKDOWN_BLOCK_TABLE,
+    SOL_MARKDOWN_BLOCK_TABLE_SEPARATOR,
 } SolMarkdownBlockKind;
 
 typedef struct SolMarkdownParserState {
