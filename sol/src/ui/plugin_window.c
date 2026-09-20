@@ -229,7 +229,7 @@ static void pm_content_builder(Ca_Div *div, void *user_data)
     /* Scrollable plugin list */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style     = "pm-list",
+        .style     = "pm-list native-scrollbar",
     });
 
     if (w->plugin_manager) {

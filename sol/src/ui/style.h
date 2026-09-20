@@ -48,7 +48,7 @@
 static const char *SOL_UI_DEFAULT_THEME_CSS =
     "* {"
     "  scrollbar-width: 8px; scrollbar-radius: 0px;"
-    "  scrollbar-track-color: rgba(4, 7, 11, 0.30);"
+    "  scrollbar-track-color: transparent;"
     "  scrollbar-thumb-color: rgba(126, 145, 168, 0.38);"
     "  scrollbar-thumb-active-color: rgba(154, 180, 210, 0.62);"
     "}"
@@ -2365,9 +2365,10 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".project-tab-new:hover { background: rgba(118, 151, 192, 0.14); }"
     ".project-tab-close-icon, .project-tab-new-icon { color: #8d99a9; }"
     ".project-tab-active .project-tab-close-icon { color: #f0f4f8; }"
-    ".buffer-body {"
+    ".buffer-body, .term-panel {"
     "  background: rgba(5, 10, 18, " SOL_UI_SURFACE_CHROME_ALPHA_CSS "); "
     "}"
+    ".term-viewport, .term-filler { background: transparent; }"
     ".buffer-gutter-col { background: rgba(8, 16, 27, 0.68);  }"
     /* Buffer trough/thumb widths match the `*` scrollbar-width default
        above (and the scrollbar_width setting default) so custom buffer
@@ -2465,7 +2466,11 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".pm-btn:hover { background: rgba(110, 155, 208, 0.20); }"
     ".sw-hr, .pm-hr { background: #344154; }"
 
-    ".scm-root, .scm-view { background: rgba(10, 15, 23, " SOL_UI_SURFACE_CHROME_ALPHA_CSS "); }"
+    ".scm-root, .scm-view { background: transparent; }"
+    ".tree-section-header, .scm-header, .buffer-tabs-row, .term-header {"
+    "  background: rgba(5, 12, 21, " SOL_UI_SURFACE_RAISED_ALPHA_CSS ");"
+    "}"
+    ".scm-header { height: 30px; padding: 0px 10px; }"
     ".scm-toolbar, .scm-repository, .scm-commit-box, .scm-section-header {"
     "  background: rgba(20, 28, 40, " SOL_UI_SURFACE_RAISED_ALPHA_CSS "); "
     "}"
@@ -2494,8 +2499,14 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     /* ===== Floating rounded glass composition ===== */
     ".workspace-main-content { padding: " SOL_UI_PANEL_MARGIN_PX_CSS " "
     SOL_UI_PANEL_MARGIN_PX_CSS " 0px; }"
-    ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel, .welcome-pane {"
+    ".workspace-panel, .tree-panel, .plugin-side-panel, .buffer-pane, .term-panel, .welcome-pane {"
     "  border-radius: " SOL_UI_PANEL_RADIUS_PX_CSS "; overflow: hidden;"
+    "}"
+    ".workspace-panel-chrome {"
+    "  background: rgba(5, 12, 21, " SOL_UI_SURFACE_RAISED_ALPHA_CSS ");"
+    "}"
+    ".workspace-panel-well {"
+    "  background: rgba(5, 10, 18, " SOL_UI_SURFACE_CHROME_ALPHA_CSS ");"
     "}"
     /* Floating terminal card: same rounding as docked panels, plus a
        drop shadow so it reads as an overlay rather than a workspace pane.

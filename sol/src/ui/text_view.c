@@ -1251,7 +1251,7 @@ void sol_text_view_render(const SolBuffer *buffer,
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
-        .style     = "buffer-scroll-row",
+        .style     = "buffer-scroll-row workspace-panel-well",
     });
 
     /* -------- Gutter (line numbers) -------- */

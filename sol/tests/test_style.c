@@ -106,6 +106,16 @@ int main(void)
        margin, so only its top and sides contribute panel padding. */
     CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS,
                  ".workspace-main-content { padding: 8px 8px 0px; }") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS,
+                 ".tree-section-header, .scm-header, .buffer-tabs-row, .term-header") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS,
+                 ".scm-root, .scm-view { background: transparent; }") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS,
+                 ".buffer-body, .term-panel {") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS,
+                 ".term-viewport, .term-filler { background: transparent; }") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".workspace-panel-chrome {") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".workspace-panel-well {") != NULL);
 
     /* "Classic" adds no rules, but its body is a comment rather than ""
        because sol_theme_register rejects an empty CSS body — and a style
@@ -168,13 +178,9 @@ int main(void)
         CHECK(sol_settings_build_appearance_css(&s, overlay,
                                                 (int)sizeof(overlay)) > 0);
         CHECK(strstr(overlay, "scrollbar-width: 13.5px") != NULL);
-        CHECK(strstr(overlay, ".tree-scroll-area") != NULL);
-        CHECK(strstr(overlay, ".fp-list") != NULL);
-        CHECK(strstr(overlay, ".pm-list") != NULL);
-        CHECK(strstr(overlay, ".search-results") != NULL);
-        CHECK(strstr(overlay, ".search-preview-code") != NULL);
-        CHECK(strstr(overlay, ".scm-content") != NULL);
-        CHECK(strstr(overlay, ".scm-view") != NULL);
+        CHECK(strstr(overlay, ".native-scrollbar") != NULL);
+        CHECK(strstr(overlay, ".workspace-panel-well, .buffer-body, .buffer-scroll-row { border-bottom-left-radius") != NULL);
+        CHECK(strstr(overlay, ".buffer-body, .buffer-scroll-row { overflow: hidden; }") != NULL);
         CHECK(style_parses(overlay));
     }
 
@@ -191,8 +197,11 @@ int main(void)
         CHECK(strstr(retro, "scrollbar-thumb-active-color") != NULL);
         CHECK(strstr(retro, "scrollbar-radius") != NULL);
         CHECK(strstr(retro, "scrollbar-width") == NULL);
-        CHECK(strstr(retro, ".tree-scroll-area") != NULL);
-        CHECK(strstr(retro, ".scm-view") != NULL);
+        CHECK(strstr(retro, ".native-scrollbar") != NULL);
+        CHECK(strstr(retro, ".scm-root") != NULL);
+        CHECK(strstr(retro, ".scm-header") != NULL);
+        CHECK(strstr(retro, ".term-viewport") != NULL);
+        CHECK(strstr(retro, ".workspace-panel") != NULL);
         CHECK(style_composition_parses(SOL_UI_DEFAULT_THEME_CSS, retro));
     }
 

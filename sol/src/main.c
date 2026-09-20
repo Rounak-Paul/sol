@@ -2433,7 +2433,7 @@ static void sol_switcher_content_builder(Ca_Div *div, void *data)
     });
     ca_div_end(); /* pm-search-row */
 
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-list", .id = "switcher-list" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-list native-scrollbar", .id = "switcher-list" });
     if (count == 0u) {
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "pm-empty" });
         ca_text(&(Ca_TextDesc){

@@ -334,7 +334,7 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
     (void)basename; /* used in header label below */
 
     /* ---- Sticky section header ---- */
-    ca_div_begin(&(Ca_DivDesc){ .style = "tree-section-header" });
+    ca_div_begin(&(Ca_DivDesc){ .style = "tree-section-header workspace-panel-chrome" });
     ca_text(&(Ca_TextDesc){ .text = "EXPLORER", .style = "tree-section-title" });
     ca_div_end();
 
@@ -354,7 +354,7 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui)
     /* ---- Scrollable file list ---- */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style     = "tree-scroll-area",
+        .style     = "tree-scroll-area workspace-panel-well native-scrollbar",
         .id        = "tree-list",
     });
 
@@ -386,7 +386,7 @@ void sol_ui_render_file_tree_panel(SolUISystem *ui)
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style     = "tree-panel",
+        .style     = "tree-panel workspace-panel",
     });
     sol_ui_render_file_tree_panel_body(ui);
     ca_div_end();

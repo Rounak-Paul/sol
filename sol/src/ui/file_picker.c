@@ -1108,7 +1108,7 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
     fp_render_column_header(p);
 
     /* ── Scrollable file list ── */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "fp-list" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "fp-list native-scrollbar" });
     if (p->entry_count == 0u) {
         ca_text(&(Ca_TextDesc){ .text = "(empty directory)", .style = "fp-empty" });
     } else {

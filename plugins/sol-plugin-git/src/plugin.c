@@ -1202,7 +1202,7 @@ static void git_render_file_group(GitPlugin *plugin,
     snprintf(heading, sizeof(heading), "%s (%zu)", title, count);
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
-        .style = "scm-section-header",
+        .style = "scm-section-header workspace-panel-chrome",
     });
     ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
     git_render_button(plugin, staged ? "Unstage All" : "Stage All",
@@ -1288,7 +1288,7 @@ static void git_render_changes(GitPlugin *plugin)
                  plugin->snapshot.submodule_count);
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_HORIZONTAL,
-            .style = "scm-section-header",
+            .style = "scm-section-header workspace-panel-chrome",
         });
         ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
         ca_div_end();
@@ -1580,7 +1580,7 @@ static void git_panel_render(void *user_data)
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
-        .style = "scm-header",
+        .style = "scm-header workspace-panel-chrome",
     });
     ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_SOURCE_CONTROL, .style = "scm-title-icon" });
     ca_text(&(Ca_TextDesc){ .text = "Source Control", .style = "scm-title" });
@@ -1705,7 +1705,7 @@ static void git_panel_render(void *user_data)
      * removes the divergence outright instead of chasing it further. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
-        .style = "scm-tabs",
+        .style = "scm-tabs workspace-panel-chrome",
     });
     git_render_button(plugin, "Changes", GIT_UI_CHANGES, NULL, false, false,
                       plugin->tab == GIT_PANEL_CHANGES ? "scm-tab-active" : "scm-tab");
@@ -1717,7 +1717,7 @@ static void git_panel_render(void *user_data)
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style = "scm-content",
+        .style = "scm-content workspace-panel-well native-scrollbar",
         .id = "scm-content-scroll",
     });
     switch (plugin->tab) {

@@ -211,14 +211,9 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "}"
 
         /* ---- Native overlay scrollbars (explorer, diff view, search,
-           picker, plugin list): flat fills in the same well/surface
-           tones as the buffer trough/thumb below, square like every
-           other retro edge. Width is owned by the appearance overlay's
-           scrollbar-width setting and deliberately untouched here.
-           Without this these views keep the glass look while the
-           buffers go bevelled. */
-        ".tree-scroll-area, .fp-list, .pm-list, .search-results,"
-        " .search-preview-code, .scm-content, .scm-view {"
+           picker, plugin list): share the buffer's surface tones. Width
+           remains owned by the appearance overlay. */
+        ".native-scrollbar {"
         "  scrollbar-track-color: #%06x;"
         "  scrollbar-thumb-color: #%06x;"
         "  scrollbar-thumb-active-color: #%06x;"
@@ -226,7 +221,7 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "}"
 
         /* ---- Workspace panels: framed surfaces holding content ---- */
-        ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel,"
+        ".workspace-panel, .tree-panel, .plugin-side-panel, .buffer-pane, .term-panel,"
         ".welcome-pane, .term-float-panel {"
         "  background: #%06x;"
         "  border-top-width: 2px; border-left-width: 2px;"
@@ -246,7 +241,8 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "}"
 
         /* ---- Wells: content sits inside, so sunken and a step darker ---- */
-        ".buffer-body, .buffer-scroll-row, .tree-scroll-area,"
+        ".workspace-panel-well, .buffer-body, .buffer-scroll-row, .term-viewport, .term-filler,"
+        ".tree-scroll-area, .scm-root,"
         ".pm-list, .fp-list, .search-results, .pm-right, .sw-right {"
         "  background: #%06x;"
         "  border-top-width: 1px; border-left-width: 1px;"
@@ -257,7 +253,8 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "}"
 
         /* ---- Tab strips: raised surface carrying the tabs ---- */
-        ".buffer-tabs-row, .term-header, .project-tabs {"
+        ".workspace-panel-chrome, .buffer-tabs-row, .term-header, .project-tabs, .scm-header,"
+        ".scm-tabs, .scm-section-header {"
         "  background: #%06x;"
         "  border-top-width: 1px; border-left-width: 1px;"
         "  border-bottom-width: 1px; border-right-width: 1px;"
@@ -416,7 +413,7 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "  background: transparent;"
         "}",
 
-        /* native overlay scrollbars: sunken track, raised thumb tones */
+        /* native overlay scrollbars */
         well, surface, pressed,
         /* panels: raised frame on the widget surface */
         surface, light, light, dark, dark,

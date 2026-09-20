@@ -46,7 +46,7 @@ static void git_view_render(const SolBuffer *buffer,
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style = "scm-view",
+        .style = "scm-view native-scrollbar",
     });
     size_t offset = 0u;
     while (offset < view->length) {

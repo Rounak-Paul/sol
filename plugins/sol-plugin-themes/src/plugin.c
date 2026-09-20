@@ -168,20 +168,28 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
 
     ThemeCssBuilder css = { .data = out, .capacity = capacity, .valid = true };
     css_append(&css,
-        "*{scrollbar-track-color:transparent;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}"
-        ".ca-titlebar{background:%s;}"
-        ".ca-titlebar-title,.ca-titlebar-menu-item,.ca-titlebar-control{color:%s;}"
-        ".ca-titlebar-menu-item:hover,.ca-titlebar-control:hover{background:%s;color:%s;}"
-        ".ca-titlebar-close{color:%s;}.ca-titlebar-close:hover{background:%s;}"
-        "splitter{background:transparent;color:%s;}"
-        ".status-bar,.term-panel{background:%s;}"
-        ".term-filler,.term-viewport{background:transparent;}"
-        ".status-bar-text{color:%s;}"
-        ".status-bar-badge-key{background:%s;}.status-bar-badge-command{background:%s;}"
-        ".status-bar-badge-leader{background:%s;}",
-        selected, theme->primary, chrome, theme->secondary, hover,
-        theme->text, theme->danger, hover, theme->primary, chrome, theme->muted,
-        selected, hover, raised);
+        "*{scrollbar-track-color:transparent;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}",
+        selected, theme->primary);
+    css_append(&css,
+        ".native-scrollbar{scrollbar-track-color:transparent;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}",
+        selected, theme->primary);
+    css_append(&css, ".ca-titlebar{background:%s;}", chrome);
+    css_append(&css,
+        ".ca-titlebar-title,.ca-titlebar-menu-item,.ca-titlebar-control{color:%s;}",
+        theme->secondary);
+    css_append(&css,
+        ".ca-titlebar-menu-item:hover,.ca-titlebar-control:hover{background:%s;color:%s;}",
+        hover, theme->text);
+    css_append(&css, ".ca-titlebar-close{color:%s;}.ca-titlebar-close:hover{background:%s;}",
+        theme->danger, hover);
+    css_append(&css, "splitter{background:transparent;color:%s;}", theme->primary);
+    css_append(&css, ".status-bar{background:%s;}.term-panel{background:%s;}", chrome, panel);
+    css_append(&css, ".term-filler,.term-viewport{background:transparent;}");
+    css_append(&css, ".status-bar-text{color:%s;}", theme->muted);
+    css_append(&css,
+        ".status-bar-badge-key{background:%s;}.status-bar-badge-command{background:%s;}",
+        selected, hover);
+    css_append(&css, ".status-bar-badge-leader{background:%s;}", raised);
 
     css_append(&css,
         ".tree-panel,.plugin-side-panel{background:%s;}"
@@ -199,8 +207,8 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".buffer-gutter-line{color:%s;}"
         ".buffer-line,.buffer-body-text,.hl-plain{color:%s;}"
         ".buffer-selection{background:%s;}.buffer-caret{background:%s;}"
-        ".buffer-scrollbar-thumb,.buffer-scrollbar-thumb-active,.buffer-hscrollbar-thumb,.buffer-hscrollbar-thumb-active{background:%s;}"
-        ".buffer-scrollbar-thumb:hover,.buffer-hscrollbar-thumb:hover{background:%s;}",
+        ".buffer-scrollbar-thumb,.buffer-hscrollbar-thumb{background:%s;}"
+        ".buffer-scrollbar-thumb-active,.buffer-hscrollbar-thumb-active,.buffer-scrollbar-thumb:hover,.buffer-hscrollbar-thumb:hover{background:%s;}",
         panel, theme->muted, hover, raised, theme->primary, theme->secondary,
         theme->text, panel, hover, selected, theme->muted, theme->text, editor,
         theme->muted, theme->text, selected, theme->primary, selected,
@@ -244,7 +252,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         table_header, selected, table_divider);
 
     css_append(&css,
-        ".welcome-pane,.fp-list,.search-results,.pm-right,.sw-right,.scm-root,.scm-view{background:%s;}"
+        ".welcome-pane,.fp-list,.search-results,.pm-right,.sw-right{background:%s;}"
         ".welcome-title{color:%s;}"
         ".welcome-subtitle,.welcome-section-label,.term-tab{color:%s;}"
         ".welcome-desc{color:%s;}.welcome-hr,.sw-hr,.pm-hr{background:%s;}"
@@ -266,7 +274,13 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->text, hover, selected, theme->text);
 
     css_append(&css,
-        ".scm-toolbar,.scm-repository,.scm-commit-box,.scm-section-header,.term-header{background:%s;}"
+        ".workspace-panel{background:%s;}"
+        ".workspace-panel-chrome{background:%s;}"
+        ".workspace-panel-well{background:transparent;}",
+        panel, raised);
+
+    css_append(&css,
+        ".scm-header,.scm-toolbar,.scm-repository,.scm-commit-box,.scm-section-header,.term-header{background:%s;}"
         ".scm-file-row:hover,.scm-commit-row:hover,.scm-branch-row:hover,.scm-submodule-row:hover{background:%s;}"
         ".scm-commit-input,.scm-branch-input{background:%s;color:%s;}"
         ".scm-branch-row-current,.term-tab-active{background:%s;color:%s;}"
@@ -275,7 +289,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".tree-icon-c,.tree-icon-ts{color:%s;}.tree-icon-h{color:%s;}"
         ".tree-icon-py{color:%s;}.tree-icon-js{color:%s;}"
         ".tree-icon-json,.tree-icon-html{color:%s;}.tree-icon-css{color:%s;}",
-        panel, hover, editor, theme->text, selected, theme->text, theme->primary,
+        raised, hover, editor, theme->text, selected, theme->text, theme->primary,
         theme->primary, theme->accent, theme->primary, theme->success,
         theme->warning, theme->danger, theme->accent);
 

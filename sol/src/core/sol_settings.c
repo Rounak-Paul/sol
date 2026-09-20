@@ -578,8 +578,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
            above already covers them, but this explicit class rule wins by
            specificity over any theme/plugin `*` or class rule so every
            scrollbar in the app stays the same size. */
-        ".tree-scroll-area,.fp-list,.pm-list,.search-results,"
-        ".search-preview-code,.scm-content,.scm-view"
+        ".native-scrollbar"
         " { scrollbar-width: %.1fpx; scrollbar-radius: %.1fpx;"
         " scrollbar-track-color: transparent; }"
         ".buffer-scrollbar { width: %.1fpx; padding: 0px 2px; background: transparent; }"
@@ -593,14 +592,15 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".buffer-tabs-row { border-top-left-radius: %.1fpx;"
         " border-top-right-radius: %.1fpx; overflow: hidden; }"
         ".project-tabs { border-radius: %.1fpx; overflow: hidden; }"
-        ".buffer-body, .buffer-scroll-row { border-bottom-left-radius: %.1fpx;"
-        " border-bottom-right-radius: %.1fpx; overflow: hidden; }"
+        ".workspace-panel-well, .buffer-body, .buffer-scroll-row { border-bottom-left-radius: %.1fpx;"
+        " border-bottom-right-radius: %.1fpx; }"
+        ".buffer-body, .buffer-scroll-row { overflow: hidden; }"
         ".buffer-gutter-col { border-bottom-left-radius: %.1fpx; }"
         /* Buffer panes + side panel: corner-radius, backdrop blur, opacity.
            .project-tabs and .status-bar are the app's two full-span chrome
            bars (top/bottom) and share this rule so they stay visually
            identical to each other and to every other floating surface. */
-        ".tree-panel, .tree-panel-focused, .plugin-side-panel,"
+        ".workspace-panel, .tree-panel, .tree-panel-focused, .plugin-side-panel,"
         ".plugin-side-panel-focused, .buffer-pane, .buffer-pane-focused,"
         ".term-panel, .term-panel-focused, .welcome-pane, .cf-panel,"
         ".project-tabs, .status-bar {"
@@ -622,10 +622,9 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         "  backdrop-filter: blur(%.1fpx);"
         "  opacity: %.3f;"
         "}"
-        /* Titlebar: independent backdrop blur (opacity shared) */
+        /* Titlebar blur must not fade its labels and controls. */
         ".ca-titlebar {"
         "  backdrop-filter: blur(%.1fpx);"
-        "  opacity: %.3f;"
         "}"
         /* Corner-radius on every interactive / card element. */
         ".ca-popup-card,"
@@ -698,7 +697,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         (double)cr, (double)cr, (double)cr,
         (double)cr, (double)pblur, (double)op,
         (double)pblur, (double)op,
-        (double)tblur, (double)op,
+        (double)tblur,
         (double)control_radius);
 
     if (written < 0 || written >= bufsz) return 0;

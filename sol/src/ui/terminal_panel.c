@@ -345,7 +345,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
     /* ---- Tab strip ---- */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
-        .style     = "term-header",
+        .style     = "term-header workspace-panel-chrome",
     });
     for (size_t i = 0u; i < count; ++i) {
         const SolTerminal *t      = sol_terminal_manager_at(mgr, i);
@@ -389,7 +389,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
     /* ---- Viewport (clickable to claim focus) ---- */
     g_term_viewport_ctx.ui = ui;
     ui->term_viewport_host = ca_btn_begin(&(Ca_BtnDesc){
-        .style      = "term-viewport",
+        .style      = "term-viewport workspace-panel-well",
         .direction  = CA_VERTICAL,
         .background = 0u,
         .on_click   = on_term_viewport_click,
@@ -427,7 +427,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
        truncation leaves below the last rendered row. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style     = "term-filler",
+        .style     = "term-filler workspace-panel-well",
     });
     ca_div_end();
 

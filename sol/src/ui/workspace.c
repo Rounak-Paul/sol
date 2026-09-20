@@ -567,7 +567,7 @@ static void sol_ui_render_pane_tab_strip(SolUISystem *ui,
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
-        .style     = "buffer-tabs-row",
+        .style     = "buffer-tabs-row workspace-panel-chrome",
         .on_scroll = scroll_ctx ? sol_ui_on_tab_strip_scroll : NULL,
         .scroll_data = scroll_ctx,
     });
@@ -678,9 +678,9 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
     const bool panel_focused = is_active &&
         sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_BUFFER;
     const char *pane_style =
-        panel_focused  ? "buffer-pane buffer-pane-active buffer-pane-focused" :
-        is_active      ? "buffer-pane buffer-pane-active" :
-                         "buffer-pane";
+        panel_focused  ? "buffer-pane workspace-panel buffer-pane-active buffer-pane-focused" :
+        is_active      ? "buffer-pane workspace-panel buffer-pane-active" :
+                         "buffer-pane workspace-panel";
 
     Ca_Div *pane_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
@@ -704,7 +704,7 @@ static void sol_ui_visit_render_leaf(SolBuffer *buffer, SolBufferNodeId leaf_id,
             cb->tab_buffer_id = 0u;
         }
         ca_btn_begin(&(Ca_BtnDesc){
-            .style      = "buffer-body",
+            .style      = "buffer-body workspace-panel-well",
             .direction  = CA_VERTICAL,
             .background = 0u,
             .on_click   = cb ? sol_ui_on_pane_click : NULL,
@@ -997,7 +997,7 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
     ui->term_panel_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .corner_radius = sol_ui_panel_corner_radius(ui),
-        .style     = term_focused ? "term-panel term-panel-focused" : "term-panel",
+        .style     = term_focused ? "term-panel workspace-panel term-panel-focused" : "term-panel workspace-panel",
     });
     sol_ui_render_terminal_panel(ui);
     ca_div_end();   /* term-panel */
@@ -1078,9 +1078,9 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         const bool tree_focused =
             sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TREE;
         const char *tree_style = active_panel ?
-            (tree_focused ? "plugin-side-panel plugin-side-panel-focused"
-                          : "plugin-side-panel") :
-            (tree_focused ? "tree-panel tree-panel-focused" : "tree-panel");
+            (tree_focused ? "plugin-side-panel workspace-panel plugin-side-panel-focused"
+                          : "plugin-side-panel workspace-panel") :
+            (tree_focused ? "tree-panel workspace-panel tree-panel-focused" : "tree-panel workspace-panel");
         ui->tree_panel_host = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .corner_radius = sol_ui_panel_corner_radius(ui),
@@ -1256,8 +1256,8 @@ static void sol_ui_term_float_builder(Ca_Div *div, void *user_data)
         .width         = panel_w,
         .height        = panel_h,
         .corner_radius = sol_ui_panel_corner_radius(ui),
-        .style         = term_focused ? "term-panel term-float-panel term-panel-focused"
-                                       : "term-panel term-float-panel",
+        .style         = term_focused ? "term-panel workspace-panel term-float-panel term-panel-focused"
+                                       : "term-panel workspace-panel term-float-panel",
     });
     sol_ui_render_terminal_panel(ui);
     ca_div_end();   /* term-panel term-float-panel */

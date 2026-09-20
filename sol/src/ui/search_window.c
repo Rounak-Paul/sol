@@ -511,7 +511,7 @@ static void search_render_preview(SolSearchWindow *w)
 
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .style = "search-preview-code",
+        .style = "search-preview-code native-scrollbar",
     });
 
     if (!search_prepare_preview(w, result->full_path)) {
@@ -619,7 +619,7 @@ static void search_content_builder(Ca_Div *div, void *user_data)
     {
         ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
-            .style     = "search-results",
+            .style     = "search-results native-scrollbar",
             .id        = "search-results-list",
         });
         if (w->result_count == 0u) {
