@@ -278,9 +278,9 @@ else()
     install(TARGETS sol RUNTIME DESTINATION "${SOL_INSTALL_RUNTIME_DIR}" COMPONENT Sol)
     install(TARGETS ${SOL_PLUGIN_TARGETS}
         LIBRARY DESTINATION "${SOL_INSTALL_RUNTIME_DIR}/plugins" COMPONENT Sol)
-    install(FILES ${CMAKE_SOURCE_DIR}/assets/sol.svg
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
-        RENAME "com.sol.Sol.svg" COMPONENT Sol)
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/sol.png
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/1024x1024/apps"
+        RENAME "com.sol.Sol.png" COMPONENT Sol)
     install(FILES ${CMAKE_SOURCE_DIR}/cmake/sol.desktop
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications" COMPONENT Sol)
     install(CODE [[
