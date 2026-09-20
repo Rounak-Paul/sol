@@ -102,6 +102,11 @@ int main(void)
     /* The theme layer must parse standalone. */
     CHECK(style_parses(SOL_UI_DEFAULT_THEME_CSS));
 
+    /* The workspace reserves its lower gutter through the status bar's
+       margin, so only its top and sides contribute panel padding. */
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS,
+                 ".workspace-main-content { padding: 8px 8px 0px; }") != NULL);
+
     /* "Classic" adds no rules, but its body is a comment rather than ""
        because sol_theme_register rejects an empty CSS body — and a style
        that fails to register aborts UI-system creation entirely. */

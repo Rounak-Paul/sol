@@ -2492,7 +2492,8 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".hl-tag { color: #ee8d9a; }"
 
     /* ===== Floating rounded glass composition ===== */
-    ".workspace-main-content { padding: " SOL_UI_PANEL_MARGIN_PX_CSS "; }"
+    ".workspace-main-content { padding: " SOL_UI_PANEL_MARGIN_PX_CSS " "
+    SOL_UI_PANEL_MARGIN_PX_CSS " 0px; }"
     ".tree-panel, .plugin-side-panel, .buffer-pane, .term-panel, .welcome-pane {"
     "  border-radius: " SOL_UI_PANEL_RADIUS_PX_CSS "; overflow: hidden;"
     "}"

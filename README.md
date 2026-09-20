@@ -21,7 +21,6 @@ A modal-flow code editor written in C11, built on the [Causality](vendors/causal
 ## Requirements
 
 | Requirement | Version |
-|---|---|
 | CMake | ≥ 3.20 |
 | C compiler | C11 (clang or gcc) |
 | C++ compiler | C++17 (for Causality / VMA) |
@@ -122,7 +121,6 @@ ctest --test-dir build/sol -V
 ### Test suites
 
 | Binary | What it covers | Tests |
-|---|---|---|
 | `sol_rope_tests` | B-tree rope: insert, remove, line indexing, iteration | 10 |
 | `sol_event_tests` | Event bus: subscribe, publish, priority, queue drain | 15 |
 | `sol_buffer_tests` | Split-pane system: create, close, splits, cycling, layout hit-test | 17 |
