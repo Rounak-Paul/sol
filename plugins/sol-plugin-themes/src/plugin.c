@@ -190,6 +190,16 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".status-bar-badge-key{background:%s;}.status-bar-badge-command{background:%s;}",
         selected, hover);
     css_append(&css, ".status-bar-badge-leader{background:%s;}", raised);
+    /* Project-session tab strip: same chrome tier as .status-bar/.ca-titlebar
+       (it's the top chrome bar, not a workspace-interior surface like
+       .buffer-tabs-row), same interactive-state tokens as .buffer-tab so
+       switching projects reads consistently with switching buffers. */
+    css_append(&css,
+        ".project-tabs{background:%s;}"
+        ".project-tab{background:%s;}.project-tab:hover{background:%s;}"
+        ".project-tab-active{background:%s;}"
+        ".project-tab-label{color:%s;}.project-tab-active .project-tab-label{color:%s;}",
+        chrome, panel, hover, selected, theme->muted, theme->text);
 
     css_append(&css,
         ".tree-panel,.plugin-side-panel{background:%s;}"
@@ -341,6 +351,25 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         /* 22 */ theme->primary,
         /* 23 */ theme->primary,
         /* 24 */ theme->accent);
+    /* Disabled state for every .scm-* action button (Commit, Stage/Unstage,
+       Discard, Create Branch, Fetch/Pull/Push, ...): style.h has no
+       :disabled rule for these at all, so a deliberately disabled button
+       (no staged changes, empty commit message, task in flight) rendered
+       identically to a clickable one — a correctly-refused click looked
+       like the button was just randomly unresponsive. theme->muted at low
+       alpha keeps it visibly dimmed without hardcoding an off-palette gray. */
+    css_append(&css,
+        ".scm-header-action:disabled,.scm-action:disabled,.scm-section-action:disabled,"
+        ".scm-primary-action:disabled,.scm-danger-action:disabled{background:%s;color:%s;}"
+        ".scm-header-action:disabled:hover,.scm-action:disabled:hover,"
+        ".scm-section-action:disabled:hover,.scm-primary-action:disabled:hover,"
+        ".scm-danger-action:disabled:hover{background:%s;color:%s;}"
+        ".scm-icon-action:disabled,.scm-header-icon-action:disabled,"
+        ".scm-action-icon:disabled,.scm-remote-action:disabled{color:%s;}"
+        ".scm-icon-action:disabled:hover,.scm-header-icon-action:disabled:hover,"
+        ".scm-action-icon:disabled:hover,.scm-remote-action:disabled:hover"
+        "{background:transparent;color:%s;}",
+        panel, theme->muted, panel, theme->muted, theme->muted, theme->muted);
     css_append(&css,
         ".scm-graph-connector{background:%s;}"
         ".scm-submodule-clean{color:%s;}"

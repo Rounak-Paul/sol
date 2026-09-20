@@ -353,6 +353,14 @@ static bool sol_set_explorer_root(SolAppContext *app, const char *path)
     }
     if (ok && app->host && app->host->active)
         sol_ui_system_refresh_project_tabs(app->host->active->ui);
+    /* Every path that repoints an existing project's explorer root funnels
+       through here (Open Folder, CLI directory argument, drag-drop, etc.),
+       just as every *new* project runtime funnels through
+       sol_project_create's own recent-session record. Without this,
+       "Open Folder" on an already-running project silently never reached
+       recents at all — only opening a brand new project did. */
+    if (ok && app->host)
+        sol_recent_record(app->host, path);
     return ok;
 }
 

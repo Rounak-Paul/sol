@@ -2082,6 +2082,10 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "}"
     ".scm-icon-action:hover, .scm-header-icon-action:hover,"
     ".scm-action-icon:hover { background: #393946; color: #e4e4ec; }"
+    ".scm-icon-action:disabled, .scm-header-icon-action:disabled,"
+    ".scm-action-icon:disabled { color: #4a4a56; }"
+    ".scm-icon-action:disabled:hover, .scm-header-icon-action:disabled:hover,"
+    ".scm-action-icon:disabled:hover { background: transparent; color: #4a4a56; }"
     ".scm-header-close-action {"
     "  width: 20px; height: 20px; padding: 0px; background: transparent;"
     "  color: #9494a4; justify-content: center; align-items: center; flex-shrink: 0;"
@@ -2101,6 +2105,20 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".scm-primary-action:hover { background: #326493; }"
     ".scm-danger-action { color: #e68b8b; }"
     ".scm-danger-action:hover { background: #542a32; color: #ffd0d0; }"
+    /* Disabled state was previously unstyled — a deliberately disabled
+       Commit/Stage/etc. button (no staged changes, empty message, task
+       already running) rendered pixel-identical to a clickable one, so a
+       correctly-refused click looked like the button was just randomly
+       unresponsive. Dim it and drop the hover highlight so disabled is
+       visually obvious, matching every other disabled control's intent
+       even though this is the first .scm-* rule to actually need it. */
+    ".scm-header-action:disabled, .scm-action:disabled, .scm-section-action:disabled,"
+    ".scm-primary-action:disabled, .scm-danger-action:disabled {"
+    "  background: #232329; color: #5a5a68;"
+    "}"
+    ".scm-header-action:disabled:hover, .scm-action:disabled:hover,"
+    ".scm-section-action:disabled:hover, .scm-primary-action:disabled:hover,"
+    ".scm-danger-action:disabled:hover { background: #232329; color: #5a5a68; }"
     ".scm-error {"
     "  width: 100%; padding: 8px 10px; gap: 7px; align-items: center;"
     "  background: #3a2026; flex-shrink: 0;"
@@ -2153,6 +2171,8 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  justify-content: center; align-items: center; flex-shrink: 0;"
     "}"
     ".scm-remote-action:hover { background: #393946; color: #f0f0f6; }"
+    ".scm-remote-action:disabled { color: #4a4a56; }"
+    ".scm-remote-action:disabled:hover { background: transparent; color: #4a4a56; }"
     ".scm-remote-action-icon { color: #86bde8; font-size: 13px; }"
     ".scm-remote-action-pull-ready { background: #3a3120; }"
     ".scm-remote-action-push-ready { background: #183126; }"
