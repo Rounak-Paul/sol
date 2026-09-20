@@ -59,6 +59,7 @@
 static void sol_ui_menu_new_buffer_action(void *user_data);
 static void sol_ui_menu_open_file_action(void *user_data);
 static void sol_ui_menu_open_folder_action(void *user_data);
+static void sol_ui_menu_recent_session_action(void *user_data);
 static void sol_ui_menu_open_plugin_manager_action(void *user_data);
 static void sol_ui_menu_open_settings_action(void *user_data);
 static void sol_ui_menu_save_action(void *user_data);
@@ -72,6 +73,7 @@ static bool sol_ui_dispatch_command(SolUISystem *ui,
 static void sol_ui_welcome_click_new_buffer(Ca_Button *btn, void *user_data);
 static void sol_ui_welcome_click_open_file(Ca_Button *btn, void *user_data);
 static void sol_ui_welcome_click_open_folder(Ca_Button *btn, void *user_data);
+static void sol_ui_welcome_click_recent_session(Ca_Button *btn, void *user_data);
 
 /* ------------------------------------------------------------------ */
 /* Internal context types                                              */
@@ -798,6 +800,20 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
         });
         ca_btn_end();
         ca_div_end(); /* welcome-actions */
+
+        if (ui->recent_session_count) {
+            ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "welcome-section welcome-recents" });
+            ca_text(&(Ca_TextDesc){ .text = "RECENT SESSIONS", .style = "welcome-section-label" });
+            for (size_t i = 0; i < ui->recent_session_count; ++i) {
+                SolUIRecentSession *recent = &ui->recent_sessions[i];
+                ca_btn_begin(&(Ca_BtnDesc){
+                    .text = recent->path, .style = "welcome-recent-session",
+                    .on_click = sol_ui_welcome_click_recent_session, .click_data = recent,
+                });
+                ca_btn_end();
+            }
+            ca_div_end();
+        }
 
         ca_hr(&(Ca_HrDesc){ .style = "welcome-hr" });
 
@@ -2294,6 +2310,14 @@ static void sol_ui_menu_open_folder_action(void *user_data)
     }
 }
 
+/** Open the recent project session held by a persistent UI-owned entry. */
+static void sol_ui_menu_recent_session_action(void *user_data)
+{
+    SolUIRecentSession *recent = user_data;
+    if (recent && recent->ui && recent->path[0] && recent->ui->recent_session_on_open)
+        recent->ui->recent_session_on_open(recent->path, recent->ui->recent_session_user_data);
+}
+
 /*
  * Menu action handler for "Plugin Manager" (Sol > Plugin Manager).
  *
@@ -2453,6 +2477,13 @@ static void sol_ui_welcome_click_open_folder(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     sol_ui_menu_open_folder_action(user_data);
+}
+
+/** Adapt a welcome recent-session button click to the shared open action. */
+static void sol_ui_welcome_click_recent_session(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    sol_ui_menu_recent_session_action(user_data);
 }
 
 #define SOL_UI_TITLE_MENU_LIMIT 16u
@@ -2647,6 +2678,16 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
             ? "Autosave: On" : "Autosave: Off",
         sol_ui_menu_toggle_autosave_action, ui,
         false, 38);
+    for (size_t i = 0; i < ui->recent_session_count; ++i) {
+        SolUIRecentSession *recent = &ui->recent_sessions[i];
+        Ca_MenuItemDesc item = {
+            .label = recent->path,
+            .action = sol_ui_menu_recent_session_action,
+            .action_data = recent,
+        };
+        (void)sol_ui_append_submenu_build_item(&groups[0], "recents", "Recents",
+                                               &item, (int)(40u + i));
+    }
     (void)sol_ui_append_menu_build_item(&groups[0], "settings-separator", "",
                                         NULL, NULL, true, 40);
     (void)sol_ui_append_menu_build_item(&groups[0], "settings", "Settings...",
@@ -2901,6 +2942,30 @@ void sol_ui_system_install_menu(SolUISystem      *ui,
     ui->menu_on_open_folder = on_open_folder;
     ui->menu_user_data      = user_data;
 
+    sol_ui_rebuild_title_bar_menus(ui);
+}
+
+/** Replace the UI snapshot of recently opened project sessions. */
+void sol_ui_system_set_recent_sessions(SolUISystem                  *ui,
+                                       const SolUIRecentSessionDesc *sessions,
+                                       size_t                        count,
+                                       SolUIRecentSessionOpenFn      on_open,
+                                       void                         *user_data)
+{
+    if (!ui) return;
+    ui->recent_session_count = 0;
+    ui->recent_session_on_open = on_open;
+    ui->recent_session_user_data = user_data;
+    if (sessions) {
+        for (size_t i = 0; i < count && i < SOL_UI_RECENT_SESSION_LIMIT; ++i) {
+            if (!sessions[i].path || !sessions[i].path[0] ||
+                strlen(sessions[i].path) >= sizeof(ui->recent_sessions[0].path))
+                continue;
+            SolUIRecentSession *recent = &ui->recent_sessions[ui->recent_session_count++];
+            recent->ui = ui;
+            snprintf(recent->path, sizeof(recent->path), "%s", sessions[i].path);
+        }
+    }
     sol_ui_rebuild_title_bar_menus(ui);
 }
 

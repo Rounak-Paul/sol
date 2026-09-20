@@ -214,9 +214,91 @@ struct SolProjectHost {
     bool create_pending;
     bool picker_open;
     SolProjectSwitcher *switcher;
+    char recent_sessions[SOL_UI_RECENT_SESSION_LIMIT][4096];
+    size_t recent_session_count;
     int argc;
     char **argv;
 };
+
+static void sol_recent_open_callback(const char *path, void *user_data);
+
+/** Publish the host's recent-session snapshot to every live project UI. */
+static void sol_recent_refresh_uis(SolProjectHost *host)
+{
+    if (!host) return;
+    SolUIRecentSessionDesc sessions[SOL_UI_RECENT_SESSION_LIMIT];
+    for (size_t i = 0; i < host->recent_session_count; ++i)
+        sessions[i].path = host->recent_sessions[i];
+    for (SolAppContext *app = host->projects; app; app = app->next)
+        sol_ui_system_set_recent_sessions(app->ui, sessions, host->recent_session_count,
+                                          sol_recent_open_callback, host);
+}
+
+/** Save bounded recent project paths through an atomic replacement. */
+static void sol_recent_save(const SolProjectHost *host)
+{
+    if (!host) return;
+    char *path = sol_config_path("recent_sessions");
+    if (!path) return;
+    char tmp[4160];
+    int tmp_len = snprintf(tmp, sizeof(tmp), "%s.tmp%ld", path, sol_platform_process_id());
+    if (tmp_len < 0 || (size_t)tmp_len >= sizeof(tmp)) {
+        free(path);
+        return;
+    }
+    FILE *fp = fopen(tmp, "wb");
+    if (fp) {
+        bool ok = true;
+        for (size_t i = 0; i < host->recent_session_count; ++i)
+            ok = ok && strchr(host->recent_sessions[i], '\n') == NULL &&
+                 fprintf(fp, "%s\n", host->recent_sessions[i]) >= 0;
+        ok = ok && fflush(fp) == 0 && sol_platform_sync_file(fp);
+        fclose(fp);
+        if (!ok || !sol_platform_replace_file(tmp, path)) remove(tmp);
+    }
+    free(path);
+}
+
+/** Record one existing project directory as the most recently opened session. */
+static void sol_recent_record(SolProjectHost *host, const char *path)
+{
+    SolPathInfo info;
+    if (!host || !path || !path[0] || strlen(path) >= sizeof(host->recent_sessions[0]) ||
+        strchr(path, '\n') || !sol_platform_get_path_info(path, &info) || !info.is_directory)
+        return;
+    size_t found = host->recent_session_count;
+    for (size_t i = 0; i < host->recent_session_count; ++i) {
+        if (strcmp(host->recent_sessions[i], path) == 0) { found = i; break; }
+    }
+    if (found == host->recent_session_count && host->recent_session_count < SOL_UI_RECENT_SESSION_LIMIT)
+        host->recent_session_count++;
+    if (found == host->recent_session_count) found = host->recent_session_count - 1u;
+    for (size_t i = found; i > 0; --i)
+        memcpy(host->recent_sessions[i], host->recent_sessions[i - 1u], sizeof(host->recent_sessions[i]));
+    snprintf(host->recent_sessions[0], sizeof(host->recent_sessions[0]), "%s", path);
+    sol_recent_save(host);
+    sol_recent_refresh_uis(host);
+}
+
+/** Load valid recent project directories from the durable host store. */
+static void sol_recent_load(SolProjectHost *host)
+{
+    if (!host) return;
+    char *path = sol_config_path("recent_sessions");
+    if (!path) return;
+    FILE *fp = fopen(path, "rb");
+    free(path);
+    if (!fp) return;
+    char line[4098];
+    while (host->recent_session_count < SOL_UI_RECENT_SESSION_LIMIT && fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        SolPathInfo info;
+        if (line[0] && sol_platform_get_path_info(line, &info) && info.is_directory)
+            snprintf(host->recent_sessions[host->recent_session_count++],
+                     sizeof(host->recent_sessions[0]), "%s", line);
+    }
+    fclose(fp);
+}
 
 /** Queue project lifecycle commands for processing outside event dispatch. */
 static bool sol_project_command(SolAppContext *app, const char *action);
@@ -2195,6 +2277,8 @@ static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
     SolAppContext **tail = &host->projects;
     while (*tail) tail = &(*tail)->next;
     *tail = app;
+    sol_recent_refresh_uis(host);
+    sol_recent_record(host, sol_ui_system_file_tree_root(app->ui));
     return app;
 fail:
     sol_project_destroy(app);
@@ -2226,6 +2310,20 @@ static void sol_project_folder_chosen(const char *path, void *data)
     SolProjectHost *host = data;
     host->picker_open = false;
     if (!path || strlen(path) >= sizeof(host->create_path)) return;
+    snprintf(host->create_path, sizeof(host->create_path), "%s", path);
+    host->create_pending = true;
+    ca_instance_wake();
+}
+
+/** Queue a recently used project path for lifecycle-safe opening. */
+static void sol_recent_open_callback(const char *path, void *user_data)
+{
+    SolProjectHost *host = user_data;
+    SolPathInfo info;
+    if (!host || host->picker_open || host->create_pending || !path ||
+        strlen(path) >= sizeof(host->create_path) ||
+        !sol_platform_get_path_info(path, &info) || !info.is_directory)
+        return;
     snprintf(host->create_path, sizeof(host->create_path), "%s", path);
     host->create_pending = true;
     ca_instance_wake();
@@ -2737,6 +2835,7 @@ int main(int argc, char **argv)
     sol_settings_load(&settings);
     char *cache = sol_config_path("shader_cache");
     SolProjectHost host = { .argc = argc, .argv = argv };
+    sol_recent_load(&host);
     host.instance = ca_instance_create(&(Ca_InstanceDesc){
         .app_name = "Sol", .prefer_dedicated_gpu = true,
         .default_ui_scale = settings.ui_scale, .shader_cache_dir = cache,

@@ -101,6 +101,7 @@ int main(void)
 {
     /* The theme layer must parse standalone. */
     CHECK(style_parses(SOL_UI_DEFAULT_THEME_CSS));
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".welcome-recent-session") != NULL);
 
     /* The workspace reserves its lower gutter through the status bar's
        margin, so only its top and sides contribute panel padding. */
@@ -196,6 +197,10 @@ int main(void)
         CHECK(strstr(retro, "scrollbar-thumb-color") != NULL);
         CHECK(strstr(retro, "scrollbar-thumb-active-color") != NULL);
         CHECK(strstr(retro, "scrollbar-radius") != NULL);
+        CHECK(strstr(retro, "scrollbar-track-border-width") != NULL);
+        CHECK(strstr(retro, "scrollbar-track-border-top-color") != NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-border-width") != NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-border-bottom-color") != NULL);
         CHECK(strstr(retro, "scrollbar-width") == NULL);
         CHECK(strstr(retro, ".native-scrollbar") != NULL);
         CHECK(strstr(retro, ".scm-root") != NULL);

@@ -325,11 +325,23 @@ void sol_ui_system_attach_buffer_text_context_menu(SolUISystem *ui,
 /* Title-bar menu integration. The callbacks back host-owned File menu and
  * welcome-screen actions. Dynamic command items are registered separately. */
 typedef void (*SolUIMenuActionFn)(void *user_data);
+typedef void (*SolUIRecentSessionOpenFn)(const char *path, void *user_data);
+#define SOL_UI_RECENT_SESSION_LIMIT 12u
+typedef struct SolUIRecentSessionDesc {
+    const char *path;
+} SolUIRecentSessionDesc;
 void sol_ui_system_install_menu(SolUISystem      *ui,
                                 SolUIMenuActionFn on_new_buffer,
                                 SolUIMenuActionFn on_open_file,
                                 SolUIMenuActionFn on_open_folder,
                                 void             *user_data);
+/* Replace the recently opened project sessions displayed by the welcome view
+ * and the Sol > Recents submenu. The UI copies every supplied path. */
+void sol_ui_system_set_recent_sessions(SolUISystem                  *ui,
+                                       const SolUIRecentSessionDesc *sessions,
+                                       size_t                        count,
+                                       SolUIRecentSessionOpenFn      on_open,
+                                       void                         *user_data);
 /* Register a command-backed item in an existing or new top-level menu. */
 SolUIMenuItemToken sol_ui_system_register_menu_item(
     SolUISystem *ui,

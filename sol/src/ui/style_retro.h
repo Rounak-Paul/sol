@@ -218,6 +218,16 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         "  scrollbar-thumb-color: #%06x;"
         "  scrollbar-thumb-active-color: #%06x;"
         "  scrollbar-radius: 0px;"
+        "  scrollbar-track-border-width: 1px;"
+        "  scrollbar-track-border-top-color: #%06x;"
+        "  scrollbar-track-border-left-color: #%06x;"
+        "  scrollbar-track-border-bottom-color: #%06x;"
+        "  scrollbar-track-border-right-color: #%06x;"
+        "  scrollbar-thumb-border-width: 1px;"
+        "  scrollbar-thumb-border-top-color: #%06x;"
+        "  scrollbar-thumb-border-left-color: #%06x;"
+        "  scrollbar-thumb-border-bottom-color: #%06x;"
+        "  scrollbar-thumb-border-right-color: #%06x;"
         "}"
 
         /* ---- Workspace panels: framed surfaces holding content ---- */
@@ -284,6 +294,7 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         ".fp-action-cancel, .fp-action-primary, .fp-action-new-folder,"
         ".fp-nf-create, .fp-nf-cancel,"
         ".welcome-btn, .welcome-btn-primary,"
+        ".welcome-recent-session,"
         ".scm-header-action, .scm-action, .scm-icon-action,"
         ".scm-header-icon-action, .scm-header-close-action, .scm-action-icon,"
         ".scm-branch-create-from, .scm-section-action, .scm-primary-action,"
@@ -415,6 +426,8 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
 
         /* native overlay scrollbars */
         well, surface, pressed,
+        well_dark, well_dark, well_light, well_light,
+        light, light, dark, dark,
         /* panels: raised frame on the widget surface */
         surface, light, light, dark, dark,
         /* wells */

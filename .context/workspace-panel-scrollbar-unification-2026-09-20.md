@@ -59,6 +59,35 @@ appearance overlay, and Retro overlay all style these semantic roles.
   Causality's renderer or style descriptors for scrollbar beveling without a
   rendered regression test.
 
+## Active follow-up: Causality scrollbar chrome
+
+The color and geometry contract is insufficient for Retro: its custom buffer
+scrollbar has a sunken track and raised thumb with directional bevel edges,
+while Causality can currently only paint flat track/thumb fills. Extend
+Causality's CSS-resolved scrollbar descriptor with optional track/thumb border
+width and directional edge colors, then have the overlay renderer paint those
+edges without changing scrollbar layout or hit-testing. Sol's Glass style
+continues to use the flat buffer-equivalent treatment; Retro supplies the same
+well/surface bevel tones as its buffer scrollbar.
+
+Implemented on 2026-09-20. The new app-facing CSS properties are
+`scrollbar-track-border-width`, `scrollbar-track-border-{top,right,bottom,left}-color`,
+and their `scrollbar-thumb-*` counterparts. Causality paints them inside the
+existing overlay rectangles, so the viewport reservation and drag hitboxes stay
+unchanged. Glass's base track/thumb/active colors now exactly match the custom
+buffer defaults; palette and appearance overlays retain their existing shared
+color/geometry rules. Retro maps the native track to the buffer well's sunken
+bevel and the thumb to its raised bevel. The Causality regression resolves and
+paints all four directional track edges, and the Sol style test asserts the
+Retro CSS contract.
+
+Follow-up validation: `cmake --build build --target sol causality_splitter_tests
+sol_style_tests --parallel 6`, the complete `ctest --test-dir build
+--output-on-failure` suite (20/20), and both root/submodule `git diff --check`
+passed. A local `bin/Sol.app` launch succeeded, but the desktop
+accessibility/screenshot bridge timed out before a live window capture, so
+rendered visual acceptance remains pending.
+
 ## Validation
 
 `cmake --build build --target sol sol_plugin_themes sol_style_tests --parallel 6`,

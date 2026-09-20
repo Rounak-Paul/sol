@@ -48,9 +48,9 @@
 static const char *SOL_UI_DEFAULT_THEME_CSS =
     "* {"
     "  scrollbar-width: 8px; scrollbar-radius: 0px;"
-    "  scrollbar-track-color: transparent;"
-    "  scrollbar-thumb-color: rgba(126, 145, 168, 0.38);"
-    "  scrollbar-thumb-active-color: rgba(154, 180, 210, 0.62);"
+    "  scrollbar-track-color: rgba(7, 10, 15, 0.28);"
+    "  scrollbar-thumb-color: rgba(129, 148, 172, 0.40);"
+    "  scrollbar-thumb-active-color: rgba(150, 174, 202, 0.58);"
     "}"
     "splitter { background: transparent; }"
     /* ===== Causality system chrome ===== */
@@ -1293,6 +1293,13 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  flex-shrink: 0;"
     "}"
     ".welcome-btn-primary:hover { background: #24407a; }"
+    ".welcome-recents { width: 100%; padding-bottom: 20px; }"
+    ".welcome-recent-session {"
+    "  width: 100%; height: 24px; padding: 0px 8px;"
+    "  background: rgba(30, 42, 60, 0.42); color: #a8bfd8;"
+    "  text-align: left; overflow: hidden;"
+    "}"
+    ".welcome-recent-session:hover { background: rgba(68, 112, 164, 0.42); color: #e1edf9; }"
     /* Welcome divider */
     ".welcome-hr {"
     "  width: 100%;"

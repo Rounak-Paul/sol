@@ -139,6 +139,11 @@ typedef struct SolUIMenuItem {
     bool               in_use;
 } SolUIMenuItem;
 
+typedef struct SolUIRecentSession {
+    struct SolUISystem *ui;
+    char                path[4096];
+} SolUIRecentSession;
+
 typedef struct SolFlowSuggestion {
     SolKeyCode      key;
     SolModifierMask modifiers;   /* Shift/Alt/Super only */
@@ -398,6 +403,10 @@ struct SolUISystem {
     SolUIMenuActionFn menu_on_open_file;
     SolUIMenuActionFn menu_on_open_folder;
     void             *menu_user_data;
+    SolUIRecentSession recent_sessions[SOL_UI_RECENT_SESSION_LIMIT];
+    size_t            recent_session_count;
+    SolUIRecentSessionOpenFn recent_session_on_open;
+    void             *recent_session_user_data;
     SolUIMenuItem     menu_items[SOL_UI_MAX_MENU_ITEMS];
     uint32_t          menu_item_next_token;
 
