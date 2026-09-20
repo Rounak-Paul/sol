@@ -25,7 +25,12 @@ if(WIN32)
     list(APPEND SOL_PLATFORM_SOURCES src/core/sol_regex.cpp)
 endif()
 
-add_executable(sol ${SOL_SOURCES} ${SOL_PLATFORM_SOURCES})
+if(APPLE)
+    add_executable(sol MACOSX_BUNDLE ${SOL_SOURCES} ${SOL_PLATFORM_SOURCES})
+    set_target_properties(sol PROPERTIES OUTPUT_NAME "Sol")
+else()
+    add_executable(sol ${SOL_SOURCES} ${SOL_PLATFORM_SOURCES})
+endif()
 
 # Export symbols so plugin modules can resolve sol symbols at load time.
 # On ELF/Mach-O every process-wide symbol is naturally visible, so
@@ -92,6 +97,14 @@ endif()
 # directory as an explicit install rpath so the installed binary can find
 # it without relying on the caller's environment.
 if(APPLE)
+    set(SOL_APPLICATION_VERSION "0.1.0")
+    configure_file(
+        ${CMAKE_SOURCE_DIR}/cmake/SolInfo.plist.in
+        ${CMAKE_CURRENT_BINARY_DIR}/SolInfo.plist
+        @ONLY)
+    set_target_properties(sol PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_BINARY_DIR}/SolInfo.plist)
+
     get_target_property(SOL_VULKAN_LOCATION Vulkan::Vulkan IMPORTED_LOCATION)
     if(SOL_VULKAN_LOCATION)
         get_filename_component(SOL_VULKAN_LIBDIR "${SOL_VULKAN_LOCATION}" DIRECTORY)
@@ -101,8 +114,6 @@ if(APPLE)
         )
     endif()
 endif()
-
-install(TARGETS sol RUNTIME DESTINATION bin)
 
 # ---- Tests --------------------------------------------------------------
 # The rope is self-contained (libc + POSIX mmap) and is the highest-risk

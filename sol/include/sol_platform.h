@@ -93,6 +93,15 @@ const char *sol_platform_basename(const char *path);
 bool sol_platform_get_cwd(char *buffer, size_t buffer_size);
 
 /*
+ * Write the current user's home directory into buffer.
+ *
+ * buffer       Destination buffer for a null-terminated path.
+ * buffer_size  Total bytes available in buffer.
+ * Returns      true on success.
+ */
+bool sol_platform_get_user_home(char *buffer, size_t buffer_size);
+
+/*
  * Write the absolute path of the running executable into buffer.
  *
  * buffer       Destination buffer for a null-terminated path.

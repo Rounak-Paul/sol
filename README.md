@@ -52,6 +52,39 @@ cmake --build build --target sol
 
 Tests are automatically excluded from Release builds.
 
+## Installing and packaging
+
+The Release build has an install layout that keeps Sol's executable and every
+bundled plugin together. Do not copy `bin/sol` by itself.
+
+### macOS
+
+```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel
+cmake --install build-release --prefix /Applications --component Sol
+```
+
+This installs `Sol.app`, including its icon and plugins. To build a distributable
+disk image, run `cpack --config build-release/CPackConfig.cmake`.
+
+### Linux
+
+```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --parallel
+sudo cmake --install build-release --prefix /usr/local --component Sol
+```
+
+This installs the application under `lib/sol`, a `sol` terminal launcher under
+`bin`, and a desktop-menu entry with a scalable icon. Create a portable archive
+with `cpack --config build-release/CPackConfig.cmake`; Debian packages can be
+created when CPack's DEB generator is available:
+
+```sh
+cpack --config build-release/CPackConfig.cmake -G DEB
+```
+
 ---
 
 ## Running

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Sol
+Comment=Modal-flow code editor
+Exec=sol %F
+Icon=com.sol.Sol
+Terminal=false
+Categories=Development;IDE;TextEditor;
+Keywords=editor;code;development;
+StartupNotify=true
+StartupWMClass=Sol
+MimeType=text/plain;

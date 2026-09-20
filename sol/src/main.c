@@ -2747,9 +2747,9 @@ int main(int argc, char **argv)
         .title = "Sol", .width = 1080, .height = 720,
     });
     if (!host.window) { ca_instance_destroy(host.instance); return 1; }
-    char cwd[4096];
+    char home[4096];
     const char *path = argc > 1 ? argv[1] :
-        (sol_platform_get_cwd(cwd, sizeof(cwd)) ? cwd : NULL);
+        (sol_platform_get_user_home(home, sizeof(home)) ? home : NULL);
     SolAppContext *first = sol_project_create(&host, path);
     if (!first) { ca_instance_destroy(host.instance); return 1; }
     sol_project_activate(&host, first);

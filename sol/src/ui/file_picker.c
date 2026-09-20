@@ -1234,13 +1234,13 @@ static void fp_destroy(SolFilePicker *p)
 
 /*
  * Create and open a new file/folder picker window.
- * Resolves the initial directory (falls back to cwd), allocates the picker
+ * Resolves the initial directory (falls back to the user's home directory), allocates the picker
  * struct, creates the Causality window, and registers the picker in the
  * global linked list so sol_file_picker_tick can manage its lifetime.
  *
  * instance     The Causality instance to create the window on.
  * mode         SOL_FILE_PICKER_FILE or SOL_FILE_PICKER_FOLDER.
- * initial_dir  Starting directory path (NULL or empty → current working dir).
+ * initial_dir  Starting directory path (NULL or empty → user home directory).
  * on_select    Callback invoked with the chosen path, or NULL on cancel.
  * user_data    Passed through to on_select unchanged.
  * Returns      The new picker, or NULL on failure.
@@ -1262,10 +1262,10 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
     p->sort_asc  = true;   /* default: ascending by name */
 
     /* Resolve initial directory. */
-    char        cwd_buf[4096];
+    char        home_buf[4096];
     const char *start = initial_dir;
     if (!start || !*start) {
-        start = sol_platform_get_cwd(cwd_buf, sizeof(cwd_buf)) ? cwd_buf : ".";
+        start = sol_platform_get_user_home(home_buf, sizeof(home_buf)) ? home_buf : ".";
     }
     {
         SolPathInfo info;

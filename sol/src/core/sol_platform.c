@@ -137,6 +137,38 @@ bool sol_platform_get_cwd(char *buffer, size_t buffer_size)
 }
 
 /*
+ * Write the current user's home directory into buffer.
+ *
+ * buffer       Destination buffer.
+ * buffer_size  Size of buffer in bytes.
+ * Returns      true on success.
+ */
+bool sol_platform_get_user_home(char *buffer, size_t buffer_size)
+{
+    if (!buffer || buffer_size == 0u) {
+        return false;
+    }
+
+#if defined(_WIN32)
+    const char *home = getenv("USERPROFILE");
+#else
+    const char *home = getenv("HOME");
+#endif
+    if (!home || home[0] == '\0') {
+        buffer[0] = '\0';
+        return false;
+    }
+
+    const size_t home_len = strlen(home);
+    if (home_len >= buffer_size) {
+        buffer[0] = '\0';
+        return false;
+    }
+    memcpy(buffer, home, home_len + 1u);
+    return true;
+}
+
+/*
  * Write the absolute path of the running executable into buffer.
  *
  * Uses platform-specific APIs (GetModuleFileName, _NSGetExecutablePath,

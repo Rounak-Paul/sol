@@ -47,6 +47,7 @@ function(sol_configure_plugin_output TARGET)
         LIBRARY_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:sol>/plugins"
         RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:sol>/plugins"
     )
+    set_property(GLOBAL APPEND PROPERTY SOL_PLUGIN_TARGETS ${TARGET})
 endfunction()
 
 add_subdirectory(sol-plugin-c)

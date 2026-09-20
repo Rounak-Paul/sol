@@ -50,7 +50,7 @@ typedef void (*SolFilePickerCallback)(const char *path, void *user_data);
  *
  * instance    The causality instance used to create the window.
  * mode        Whether to pick a file or a directory.
- * initial_dir Starting directory shown in the picker, or NULL for cwd.
+ * initial_dir Starting directory shown in the picker, or NULL for the user's home directory.
  * on_select   Callback invoked once with the selected path (or NULL on cancel).
  * user_data   Passed unchanged to on_select.
  * Returns     An opaque handle owned by the module (do not free), or NULL on failure.

@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
 if(APPLE)
-    project(QuasarEngine LANGUAGES C CXX OBJC)
+    project(Sol LANGUAGES C CXX OBJC)
 else()
-    project(QuasarEngine LANGUAGES C CXX)
+    project(Sol LANGUAGES C CXX)
 endif()
 
 set(CMAKE_C_STANDARD 11)
@@ -258,3 +258,51 @@ add_subdirectory(sol)
 
 # Plugins (tree-sitter language plugins, built as .dylib/.so MODULEs)
 add_subdirectory(plugins)
+
+include(GNUInstallDirs)
+
+get_property(SOL_PLUGIN_TARGETS GLOBAL PROPERTY SOL_PLUGIN_TARGETS)
+if(NOT SOL_PLUGIN_TARGETS)
+    message(FATAL_ERROR "Sol installation requires the bundled plugin targets.")
+endif()
+
+if(APPLE)
+    set(SOL_INSTALL_PLUGIN_DIR "Sol.app/Contents/MacOS/plugins")
+    install(TARGETS sol BUNDLE DESTINATION "." COMPONENT Sol)
+    install(TARGETS ${SOL_PLUGIN_TARGETS}
+        LIBRARY DESTINATION "${SOL_INSTALL_PLUGIN_DIR}" COMPONENT Sol)
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/Sol.icns
+        DESTINATION "Sol.app/Contents/Resources" COMPONENT Sol)
+else()
+    set(SOL_INSTALL_RUNTIME_DIR "${CMAKE_INSTALL_LIBDIR}/sol")
+    install(TARGETS sol RUNTIME DESTINATION "${SOL_INSTALL_RUNTIME_DIR}" COMPONENT Sol)
+    install(TARGETS ${SOL_PLUGIN_TARGETS}
+        LIBRARY DESTINATION "${SOL_INSTALL_RUNTIME_DIR}/plugins" COMPONENT Sol)
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/sol.svg
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+        RENAME "com.sol.Sol.svg" COMPONENT Sol)
+    install(FILES ${CMAKE_SOURCE_DIR}/cmake/sol.desktop
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications" COMPONENT Sol)
+    install(CODE [[
+        file(MAKE_DIRECTORY "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/bin")
+        execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink
+            "../lib/sol/sol" "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/bin/sol")
+    ]] COMPONENT Sol)
+endif()
+
+set(CPACK_PACKAGE_NAME "Sol")
+set(CPACK_PACKAGE_VENDOR "Sol contributors")
+set(CPACK_PACKAGE_VERSION "0.1.0")
+set(CPACK_PACKAGE_FILE_NAME "sol-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_CONTACT "Sol contributors")
+set(CPACK_COMPONENTS_ALL Sol)
+if(APPLE)
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "Sol")
+else()
+    set(CPACK_GENERATOR "TGZ")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "devel")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libvulkan1")
+endif()
+include(CPack)
