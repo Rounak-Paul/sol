@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1789,6 +1790,24 @@ static bool sol_terminal_start_pty(SolTerminal *term, const char *cwd)
     return true;
 }
 
+/*
+ * Reap a single already-SIGKILL'd pid on a detached thread, blocking for as
+ * long as the kernel takes. Used only when sol_terminal_stop_pty gives up
+ * waiting on the UI thread so the zombie doesn't linger for the rest of the
+ * process's lifetime; this thread owns no terminal state and touches
+ * nothing but this one pid, so it is safe to leave fully detached.
+ *
+ * arg  The pid to wait on, boxed as a pointer-sized value.
+ * Returns NULL always.
+ */
+static void *sol_terminal_background_reap(void *arg)
+{
+    pid_t pid = (pid_t)(intptr_t)arg;
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    return NULL;
+}
+
 static void sol_terminal_stop_pty(SolTerminal *term)
 {
     atomic_store_explicit(&term->stop_reader, true, memory_order_relaxed);
@@ -1815,8 +1834,40 @@ static void sol_terminal_stop_pty(SolTerminal *term)
             usleep(10000);
         }
         if (!reaped) {
+            /* SIGKILL cannot be blocked, but the process can still be stuck
+               non-reapable for a while longer if it (or a same-pgid child
+               still holding the PTY slave open, e.g. an orphaned foreground
+               job that re-parented into its own process group) is deep in
+               an uninterruptible kernel wait — observed in practice with
+               interactive CLI tools launched as the terminal's foreground
+               job. A plain blocking waitpid() here has no ceiling and would
+               freeze the whole UI thread for as long as that takes, which
+               can be indefinite. Poll with the same bound as above instead;
+               if it still hasn't cleared, stop waiting on it synchronously.
+               SIGKILL was already delivered, so the kernel will finish the
+               reap on its own once the process actually dies — closing the
+               master fd below is what unblocks the reader thread, which
+               does not depend on this reap completing. */
             killpg(term->child_pid, SIGKILL);
-            while (waitpid(term->child_pid, &status, 0) < 0 && errno == EINTR) {}
+            for (int i = 0; i < 20; ++i) {
+                pid_t r = waitpid(term->child_pid, &status, WNOHANG);
+                if (r == term->child_pid || (r < 0 && errno == ECHILD)) {
+                    reaped = true;
+                    break;
+                }
+                usleep(10000);
+            }
+            if (!reaped) {
+                pthread_t reaper;
+                if (pthread_create(&reaper, NULL, sol_terminal_background_reap,
+                                   (void *)(intptr_t)term->child_pid) == 0) {
+                    pthread_detach(reaper);
+                }
+                /* If the thread couldn't even be created, the zombie is
+                   leaked for the process's lifetime rather than freezing
+                   the UI — an acceptable degraded fallback for an already
+                   very abnormal situation (thread creation failing). */
+            }
         }
         term->child_pid = 0;
     }
