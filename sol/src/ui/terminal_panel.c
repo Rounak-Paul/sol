@@ -64,13 +64,17 @@ static int encode_utf8(uint32_t cp, char *buf)
 
 /* Per-tab click context — stable within a frame since it's on the stack.
    Causality's reactive runtime keeps button nodes alive between frames;
-   the click fires synchronously on the main thread so stack lifetime is fine. */
+   the click fires synchronously on the main thread so stack lifetime is fine.
+   Shared by both the tab-select and tab-close buttons: the two actions
+   need identical addressing (which tab), so one context/array pair covers
+   both — g_term_tab_close_ctxs used to duplicate this verbatim. */
 typedef struct TermTabClickCtx {
     SolUISystem *ui;
     size_t       tab_index;
 } TermTabClickCtx;
 
 static TermTabClickCtx g_term_tab_ctxs[SOL_TERM_MAX_TABS];
+static TermTabClickCtx g_term_tab_close_ctxs[SOL_TERM_MAX_TABS];
 
 typedef struct TermViewportClickCtx {
     SolUISystem *ui;
@@ -78,27 +82,35 @@ typedef struct TermViewportClickCtx {
 
 static TermViewportClickCtx g_term_viewport_ctx;
 
-/* Per-tab close-button click context — parallel array to g_term_tab_ctxs. */
-typedef struct TermTabCloseCtx {
-    SolUISystem *ui;
-    size_t       tab_index;
-} TermTabCloseCtx;
-
-static TermTabCloseCtx g_term_tab_close_ctxs[SOL_TERM_MAX_TABS];
+/*
+ * Make the tab at tab_index the active one.
+ * No-ops safely if the manager is empty or tab_index is stale (e.g. a
+ * click resolving against a context slot from before the tab strip last
+ * shrank) — without this guard, active_index can never reach an
+ * out-of-range tab_index and the loop below would spin the UI thread
+ * forever.
+ *
+ * mgr        Terminal manager owning the tabs.
+ * tab_index  Target tab index to make active.
+ */
+static void term_tab_navigate_to(SolTerminalManager *mgr, size_t tab_index)
+{
+    size_t count = sol_terminal_manager_count(mgr);
+    if (count == 0 || tab_index >= count) return;
+    while (sol_terminal_manager_active_index(mgr) != tab_index) {
+        if (sol_terminal_manager_active_index(mgr) < tab_index)
+            sol_terminal_manager_next_tab(mgr);
+        else
+            sol_terminal_manager_prev_tab(mgr);
+    }
+}
 
 static void on_term_tab_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
     TermTabClickCtx *ctx = (TermTabClickCtx *)user_data;
     if (!ctx || !ctx->ui || !ctx->ui->terminal_mgr) return;
-    SolTerminalManager *mgr = ctx->ui->terminal_mgr;
-    /* Switch active tab. */
-    while (sol_terminal_manager_active_index(mgr) != ctx->tab_index) {
-        if (sol_terminal_manager_active_index(mgr) < ctx->tab_index)
-            sol_terminal_manager_next_tab(mgr);
-        else
-            sol_terminal_manager_prev_tab(mgr);
-    }
+    term_tab_navigate_to(ctx->ui->terminal_mgr, ctx->tab_index);
     sol_ui_system_terminal_set_focused(ctx->ui, true);
     sol_ui_system_terminal_notify(ctx->ui);
 }
@@ -109,21 +121,16 @@ static void on_term_tab_click(Ca_Button *btn, void *user_data)
  * which handles PTY kill and memory cleanup internally.
  *
  * btn        Unused Ca_Button pointer.
- * user_data  TermTabCloseCtx* identifying which tab to close.
+ * user_data  TermTabClickCtx* identifying which tab to close.
  */
 static void on_term_tab_close(Ca_Button *btn, void *user_data)
 {
     (void)btn;
-    TermTabCloseCtx *ctx = (TermTabCloseCtx *)user_data;
+    TermTabClickCtx *ctx = (TermTabClickCtx *)user_data;
     if (!ctx || !ctx->ui || !ctx->ui->terminal_mgr) return;
     SolTerminalManager *mgr = ctx->ui->terminal_mgr;
-    /* Navigate to the target tab before closing — close_active always closes the active one. */
-    while (sol_terminal_manager_active_index(mgr) != ctx->tab_index) {
-        if (sol_terminal_manager_active_index(mgr) < ctx->tab_index)
-            sol_terminal_manager_next_tab(mgr);
-        else
-            sol_terminal_manager_prev_tab(mgr);
-    }
+    if (ctx->tab_index >= sol_terminal_manager_count(mgr)) return;
+    term_tab_navigate_to(mgr, ctx->tab_index);
     sol_terminal_manager_close_active(mgr);
     sol_ui_system_terminal_notify(ctx->ui);
 }

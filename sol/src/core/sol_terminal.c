@@ -42,6 +42,7 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
 #include <netdb.h>
 #include <signal.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -80,6 +81,15 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
    legitimate single-frame paint and keeps a stuck app from freezing the
    display indefinitely. */
 #define SOL_TERM_SYNC_OUTPUT_TIMEOUT_NS 200000000ull
+
+/* Hard bounds on SSH connection setup, which currently runs synchronously
+   on the single UI thread (see sol_terminal_start_ssh). Without these, an
+   unreachable host, a dropped SYN, or a server that accepts the TCP
+   connection but stalls mid-handshake/auth would freeze the entire
+   editor — not just the terminal — for however long the OS's own TCP
+   timeout is (commonly 60-130s) or indefinitely. */
+#define SOL_SSH_CONNECT_TIMEOUT_MS   10000
+#define SOL_SSH_BLOCKING_TIMEOUT_MS  15000
 
 /* ================================================================== */
 /* VT parser states                                                    */
@@ -796,20 +806,36 @@ static void vt_set_dec_mode(SolTerminal *term, int param, bool set)
                 term->alt_screen = (SolTermLine *)calloc(
                     (size_t)term->rows, sizeof(SolTermLine));
                 if (term->alt_screen) {
-                    term->alt_screen_rows = term->rows;
-                    for (int r = 0; r < term->rows; ++r)
-                        term_line_alloc(&term->alt_screen[r], term->cols);
+                    /* On partial OOM, clip alt_screen_rows to the last row
+                       that actually got a cells buffer — every later access
+                       (the pointer swap below, term_put_char) assumes
+                       cells is non-NULL for any row < alt_screen_rows. */
+                    int allocated = 0;
+                    for (; allocated < term->rows; ++allocated) {
+                        if (!term_line_alloc(&term->alt_screen[allocated], term->cols))
+                            break;
+                    }
+                    term->alt_screen_rows = allocated;
+                    if (allocated == 0) {
+                        free(term->alt_screen);
+                        term->alt_screen = NULL;
+                    }
                 }
             }
             if (term->alt_screen) {
                 term->in_alt_screen = true;
+                /* Bound to alt_screen_rows: a partial-OOM allocation above
+                   can leave it smaller than term->rows, and every row at
+                   or past it has a NULL cells buffer. */
+                int swap_rows = term->alt_screen_rows < term->rows
+                    ? term->alt_screen_rows : term->rows;
                 /* Clear alt screen */
-                for (int r = 0; r < term->rows; ++r) {
+                for (int r = 0; r < swap_rows; ++r) {
                     term_line_erase(&term->alt_screen[r], 0, term->cols,
                                     &term->cur_attrs);
                 }
                 /* Swap pointers */
-                for (int r = 0; r < term->rows; ++r) {
+                for (int r = 0; r < swap_rows; ++r) {
                     SolTermLine tmp = term->screen[r];
                     term->screen[r] = term->alt_screen[r];
                     term->alt_screen[r] = tmp;
@@ -817,8 +843,10 @@ static void vt_set_dec_mode(SolTerminal *term, int param, bool set)
             }
         } else if (!set && term->in_alt_screen) {
             if (term->alt_screen) {
-                /* Swap back */
-                for (int r = 0; r < term->rows; ++r) {
+                /* Swap back — bounded the same way as the swap-in above. */
+                int swap_rows = term->alt_screen_rows < term->rows
+                    ? term->alt_screen_rows : term->rows;
+                for (int r = 0; r < swap_rows; ++r) {
                     SolTermLine tmp = term->screen[r];
                     term->screen[r] = term->alt_screen[r];
                     term->alt_screen[r] = tmp;
@@ -1577,27 +1605,22 @@ static void vt_utf8_feed(SolTerminal *term, VtUtf8 *u, uint8_t byte)
     }
 }
 
-/* ================================================================== */
-/* PTY backend — Unix                                                   */
-/* ================================================================== */
-
-#if !defined(_WIN32)
-
 /*
  * Deposit n freshly-read bytes into the output ring buffer and, if the
  * main thread has consumed the previous wake, ping the Causality
- * instance so it drains and repaints. Shared by both the local-PTY and
- * SSH reader threads — every byte-source difference between them ends
- * here.
+ * instance so it drains and repaints. Shared by every reader thread
+ * (local-PTY, SSH, and Windows ConPTY) — every byte-source difference
+ * between them ends here. Takes size_t rather than ssize_t so it builds
+ * unchanged under MSVC, which has no ssize_t.
  *
  * term  Terminal whose ring buffer receives the bytes.
  * buf   Freshly-read bytes.
  * n     Number of bytes in buf (> 0).
  */
-static void sol_terminal_reader_deposit(SolTerminal *term, const char *buf, ssize_t n)
+static void sol_terminal_reader_deposit(SolTerminal *term, const char *buf, size_t n)
 {
     pthread_mutex_lock(&term->output_mutex);
-    for (ssize_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < n; ++i) {
         size_t next = (term->output_head + 1) % SOL_TERM_OUTPUT_RING_SIZE;
         if (next != term->output_tail) {
             term->output_ring[term->output_head] = buf[i];
@@ -1618,6 +1641,12 @@ static void sol_terminal_reader_deposit(SolTerminal *term, const char *buf, ssiz
         ca_instance_wake();
     }
 }
+
+/* ================================================================== */
+/* PTY backend — Unix                                                   */
+/* ================================================================== */
+
+#if !defined(_WIN32)
 
 /*
  * Reader thread: blocks on read() from the PTY master fd, deposits bytes
@@ -1645,7 +1674,7 @@ static void *sol_terminal_reader_thread(void *arg)
             break; /* EIO (slave closed), EBADF (fd closed), or EOF */
         }
 
-        sol_terminal_reader_deposit(term, buf, n);
+        sol_terminal_reader_deposit(term, buf, (size_t)n);
     }
 
     term->is_alive = false;
@@ -1671,7 +1700,7 @@ static void *sol_terminal_ssh_reader_thread(void *arg)
     while (!atomic_load_explicit(&term->stop_reader, memory_order_relaxed)) {
         ssize_t n = (ssize_t)libssh2_channel_read_ex(channel, 0, buf, sizeof(buf));
         if (n > 0) {
-            sol_terminal_reader_deposit(term, buf, n);
+            sol_terminal_reader_deposit(term, buf, (size_t)n);
             continue;
         }
         if (n == LIBSSH2_ERROR_EAGAIN) {
@@ -1717,10 +1746,25 @@ static bool sol_terminal_start_pty(SolTerminal *term, const char *cwd)
         /* Child: optionally change to project root before exec. */
         if (cwd && cwd[0] != '\0')
             chdir(cwd);
-        const char *argv[] = { shell, NULL };
+
+        /* Launch as a login shell (argv[0] = "-" + basename) so the user's
+           login startup files run — /etc/zprofile, ~/.zprofile, ~/.profile,
+           etc. On macOS these are where Homebrew's `brew shellenv` (and
+           thus /opt/homebrew/bin) gets added to PATH; without this, every
+           terminal tab starts with the bare system PATH and can't find
+           anything installed via Homebrew, nvm, rbenv, and similar tools.
+           This is the same convention every terminal emulator uses
+           (Terminal.app, iTerm2, xterm). */
+        const char *base = strrchr(shell, '/');
+        base = base ? base + 1 : shell;
+        char login_argv0[256];
+        int written = snprintf(login_argv0, sizeof(login_argv0), "-%s", base);
+        const char *argv0 = (written > 0 && (size_t)written < sizeof(login_argv0))
+            ? login_argv0 : shell;
+        const char *argv[] = { argv0, NULL };
         setenv("TERM", "xterm-256color", 1);
         setenv("COLORTERM", "truecolor", 1);
-        execvp(shell, (char *const *)argv);
+        execv(shell, (char *const *)argv);
         _exit(127);
     }
 
@@ -1750,8 +1794,15 @@ static void sol_terminal_stop_pty(SolTerminal *term)
     atomic_store_explicit(&term->stop_reader, true, memory_order_relaxed);
 
     if (term->child_pid > 0) {
-        kill(term->child_pid, SIGHUP);
-        kill(term->child_pid, SIGTERM);
+        /* forkpty()'s child calls login_tty(), which starts a new session
+           (setsid), making child_pid also the process group id. Signal the
+           whole group, not just the shell: a foreground job the shell
+           spawned (e.g. a long-running CLI tool) is otherwise left alive,
+           holding the PTY slave open, so the shell's own exit never
+           produces the EOF/EIO the reader thread's read() is waiting on —
+           the pthread_join below would then hang forever. */
+        killpg(term->child_pid, SIGHUP);
+        killpg(term->child_pid, SIGTERM);
 
         int status = 0;
         bool reaped = false;
@@ -1764,16 +1815,19 @@ static void sol_terminal_stop_pty(SolTerminal *term)
             usleep(10000);
         }
         if (!reaped) {
-            kill(term->child_pid, SIGKILL);
+            killpg(term->child_pid, SIGKILL);
             while (waitpid(term->child_pid, &status, 0) < 0 && errno == EINTR) {}
         }
         term->child_pid = 0;
     }
 
-    /* Reaping the child should close the slave side and wake read(). Closing
-       the master before join is only a fallback for already-dead children
-       where no process is left to close the slave. */
-    if (term->reader_started && term->child_pid == 0 && term->master_fd >= 0) {
+    /* Close the master fd unconditionally before joining, regardless of
+       whether the child was reaped. This is what actually unblocks the
+       reader thread's blocking read() on this same fd from another
+       thread — waiting on process reaping alone is not sufficient, since
+       a killpg()'d grandchild can take an arbitrary amount of time to
+       release the slave side even after being sent SIGKILL. */
+    if (term->reader_started && term->master_fd >= 0) {
         int fd = term->master_fd;
         term->master_fd = -1;
         close(fd);
@@ -1794,15 +1848,73 @@ static void sol_terminal_stop_pty(SolTerminal *term)
 /* ================================================================== */
 
 /*
- * Resolve host to an IPv4/IPv6 address and open a connected, blocking
- * TCP socket to it on the given port.
+ * Attempt a single non-blocking connect() to one resolved address, bounded
+ * by SOL_SSH_CONNECT_TIMEOUT_MS via select(). A plain blocking connect()
+ * has no such bound and can hang for the OS's own TCP connect timeout
+ * (commonly 60-130s) against a host that silently drops the SYN — long
+ * enough to look like a full editor freeze, since this runs on the UI
+ * thread.
+ *
+ * ai   Resolved address to try.
+ * Returns  A connected socket fd, or -1 (socket already closed) on any
+ *          failure or timeout.
+ */
+static int sol_ssh_connect_one(const struct addrinfo *ai)
+{
+    int sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    if (sock < 0) return -1;
+
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags >= 0) fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+
+    int rc = connect(sock, ai->ai_addr, ai->ai_addrlen);
+    if (rc == 0) {
+        if (flags >= 0) fcntl(sock, F_SETFL, flags); /* restore blocking */
+        return sock;
+    }
+    if (errno != EINPROGRESS) {
+        close(sock);
+        return -1;
+    }
+
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(sock, &wfds);
+    struct timeval tv;
+    tv.tv_sec  = SOL_SSH_CONNECT_TIMEOUT_MS / 1000;
+    tv.tv_usec = (SOL_SSH_CONNECT_TIMEOUT_MS % 1000) * 1000;
+
+    rc = select(sock + 1, NULL, &wfds, NULL, &tv);
+    if (rc <= 0) {
+        /* Timed out, or select() itself failed (EINTR treated the same —
+           one connect attempt is not worth an EINTR retry loop when
+           other resolved addresses may still be tried). */
+        close(sock);
+        return -1;
+    }
+
+    int err = 0;
+    socklen_t elen = sizeof(err);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &elen) < 0 || err != 0) {
+        close(sock);
+        return -1;
+    }
+
+    if (flags >= 0) fcntl(sock, F_SETFL, flags); /* restore blocking */
+    return sock;
+}
+
+/*
+ * Resolve host to every candidate IPv4/IPv6 address and return a
+ * connected TCP socket to the first one that answers within
+ * SOL_SSH_CONNECT_TIMEOUT_MS.
  *
  * host       Hostname or numeric address.
  * port       TCP port (SSH is almost always 22, but the connection
  *            profile carries whatever the user configured).
  * out_error  Set to a short static string describing the failure on
  *            return -1; untouched on success.
- * Returns    A connected socket fd, or -1 on failure.
+ * Returns    A connected, blocking socket fd, or -1 on failure or timeout.
  */
 static int sol_ssh_connect_tcp(const char *host, uint16_t port, const char **out_error)
 {
@@ -1822,15 +1934,12 @@ static int sol_ssh_connect_tcp(const char *host, uint16_t port, const char **out
 
     int sock = -1;
     for (struct addrinfo *ai = results; ai; ai = ai->ai_next) {
-        sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock < 0) continue;
-        if (connect(sock, ai->ai_addr, ai->ai_addrlen) == 0) break;
-        close(sock);
-        sock = -1;
+        sock = sol_ssh_connect_one(ai);
+        if (sock >= 0) break;
     }
     freeaddrinfo(results);
 
-    if (sock < 0 && out_error) *out_error = "could not connect to host";
+    if (sock < 0 && out_error) *out_error = "could not connect to host (unreachable or timed out)";
     return sock;
 }
 
@@ -2028,11 +2137,16 @@ static bool sol_terminal_start_ssh(SolTerminal *term, const SolSshConnection *co
        as the local-PTY reader thread — see its comment. Handshake and
        auth below run blocking too, which is intended: they happen
        synchronously on the main thread before the terminal is usable
-       either way, so there is nothing to overlap them with. */
+       either way, so there is nothing to overlap them with. A timeout is
+       still required — without one, a server that accepts the TCP
+       connection but never completes the SSH handshake (or an auth step
+       that hangs waiting on a remote agent/prompt) would block this
+       call, and therefore the entire single-threaded UI, indefinitely. */
     libssh2_session_set_blocking(term->ssh_session, 1);
+    libssh2_session_set_timeout(term->ssh_session, SOL_SSH_BLOCKING_TIMEOUT_MS);
 
     if (libssh2_session_handshake(term->ssh_session, term->ssh_sock) != 0) {
-        if (out_error) *out_error = "SSH handshake failed";
+        if (out_error) *out_error = "SSH handshake failed or timed out";
         libssh2_session_free(term->ssh_session);
         term->ssh_session = NULL;
         close(term->ssh_sock);
@@ -2167,22 +2281,7 @@ static void *sol_terminal_reader_thread(void *arg)
         BOOL ok = ReadFile(term->hPipeOut, buf, (DWORD)sizeof(buf), &n, NULL);
         if (!ok || n == 0) break;
 
-        pthread_mutex_lock(&term->output_mutex);
-        for (DWORD i = 0; i < n; ++i) {
-            size_t next = (term->output_head + 1) % SOL_TERM_OUTPUT_RING_SIZE;
-            if (next != term->output_tail) {
-                term->output_ring[term->output_head] = buf[i];
-                term->output_head = next;
-            }
-        }
-        pthread_mutex_unlock(&term->output_mutex);
-
-        bool expected = false;
-        if (atomic_compare_exchange_strong_explicit(
-                &term->wake_pending, &expected, true,
-                memory_order_acq_rel, memory_order_relaxed)) {
-            ca_instance_wake();
-        }
+        sol_terminal_reader_deposit(term, buf, (size_t)n);
     }
 
     term->is_alive = false;
@@ -2764,11 +2863,17 @@ void sol_terminal_resize(SolTerminal *term, int cols, int rows)
                 term->alt_screen, (size_t)rows * sizeof(SolTermLine));
             if (grown) {
                 term->alt_screen = grown;
-                for (int r = term->alt_screen_rows; r < rows; ++r) {
+                int r = term->alt_screen_rows;
+                for (; r < rows; ++r) {
                     memset(&term->alt_screen[r], 0, sizeof(SolTermLine));
-                    term_line_alloc(&term->alt_screen[r], cols);
+                    if (!term_line_alloc(&term->alt_screen[r], cols))
+                        break;
                 }
-                term->alt_screen_rows = rows;
+                /* Clip to the last row that actually got a cells buffer —
+                   same reasoning as the main screen's growth loop above:
+                   every access downstream assumes cells is non-NULL for
+                   any row < alt_screen_rows. */
+                term->alt_screen_rows = r;
             }
             /* On alloc failure, keep old size — safer to clip than to corrupt. */
         }
@@ -2826,40 +2931,52 @@ void sol_terminal_resize(SolTerminal *term, int cols, int rows)
 #endif
 }
 
+#if !defined(_WIN32)
+/*
+ * Write one chunk to the local PTY master or the SSH channel, whichever
+ * this terminal uses, translating each transport's own error signaling
+ * into the one shape sol_terminal_send_text's retry loop understands.
+ *
+ * term  Terminal whose transport receives the bytes.
+ * data  Bytes to write (offset already applied by the caller).
+ * len   Number of bytes remaining to write.
+ * Returns  Bytes written (> 0), 0 to retry (transient/EAGAIN), or -1 if
+ *          the session is now dead (term->is_alive already cleared).
+ */
+static ssize_t term_transport_write_once(SolTerminal *term, const char *data, size_t len)
+{
+    if (term->is_ssh) {
+        if (!term->ssh_channel) { term->is_alive = false; return -1; }
+        ssize_t n = libssh2_channel_write_ex(term->ssh_channel, 0, data, len);
+        if (n == LIBSSH2_ERROR_EAGAIN) return 0;   /* blocking session; rare */
+        if (n < 0) {
+            /* Any other libssh2 error (channel closed remotely, session
+               torn down, etc.) means this session is done. */
+            term->is_alive = false;
+            return -1;
+        }
+        return n;
+    }
+    if (term->master_fd < 0) { term->is_alive = false; return -1; }
+    ssize_t n = write(term->master_fd, data, len);
+    if (n <= 0) {
+        if (errno == EINTR) return 0;
+        if (errno == EIO || errno == EBADF || errno == EPIPE)
+            term->is_alive = false;
+        return -1;
+    }
+    return n;
+}
+#endif
+
 void sol_terminal_send_text(SolTerminal *term, const char *data, size_t len)
 {
     if (!term || !data || len == 0 || !term->is_alive) return;
 #if !defined(_WIN32)
-    if (term->is_ssh) {
-        if (!term->ssh_channel) return;
-        size_t off = 0;
-        while (off < len) {
-            ssize_t n = libssh2_channel_write_ex(term->ssh_channel, 0,
-                                                 data + off, len - off);
-            if (n == LIBSSH2_ERROR_EAGAIN) continue;   /* blocking session; rare */
-            if (n < 0) {
-                /* Any other libssh2 error (channel closed remotely,
-                   session torn down, etc.) means this session is done —
-                   matches the local-PTY path's EIO/EBADF/EPIPE handling
-                   above: mark dead rather than looping or crashing. */
-                term->is_alive = false;
-                break;
-            }
-            off += (size_t)n;
-        }
-        return;
-    }
-    if (term->master_fd < 0) return;
     size_t off = 0;
     while (off < len) {
-        ssize_t n = write(term->master_fd, data + off, len - off);
-        if (n <= 0) {
-            if (errno == EINTR) continue;
-            if (errno == EIO || errno == EBADF || errno == EPIPE) {
-                term->is_alive = false;
-            }
-            break;
-        }
+        ssize_t n = term_transport_write_once(term, data + off, len - off);
+        if (n < 0) break;   /* is_alive already updated by the transport */
         off += (size_t)n;
     }
 #else

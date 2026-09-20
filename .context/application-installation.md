@@ -16,3 +16,18 @@
 - The installed bundle has the same 13 plugin module names and byte-identical
   contents as `bin/Sol.app`; it includes the scrollbar-chrome changes in
   Causality and the normal/Retro Sol styles.
+
+## 2026-09-20 terminal-fixes release install (later same day)
+
+- Installed over the running app: this session's shell is itself hosted
+  inside Sol's own integrated terminal, so the running process could not
+  be quit first without killing the session. User explicitly chose to
+  install anyway and accept the session ending once Sol restarts — see
+  [[terminal_close_freeze_and_path_fix]] for what changed.
+- `cmake --build build-release -j` then `cmake --install build-release
+  --prefix /Applications --component Sol`; installed executable
+  (`2e55b902b4a8af0973c2494a84bc812296ccf16f1fcf091c2bedcf132703ae89`)
+  byte-matches the freshly built `bin/Sol.app` — confirmed via `shasum`.
+- Old running process (PID still resident) keeps its old in-memory image
+  until it exits; the fixes only take effect after the user quits and
+  relaunches Sol.
