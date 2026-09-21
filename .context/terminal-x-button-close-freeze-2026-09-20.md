@@ -68,10 +68,28 @@ pid for the thread's `void *arg`).
   screen-recording permission in this shell — see memory
   `screencapture_unavailable`). Ask the user to click the X button on a
   terminal tab running `claude` (or another interactive CLI) to confirm.
-- `sol_terminal_kill()` (the `Ltx` path) itself still uses raw `kill()`
-  instead of `killpg()` — inconsistent with the intentional killpg fix
-  documented in `terminal-close-freeze-and-path-fix-2026-09-20.md`. It
-  happens to work today only because it's always followed immediately by
-  `close_active`'s own killpg-based teardown. Flagging as a latent
-  inconsistency, not touched in this pass since it wasn't the reported bug
-  and changing it isn't needed for the fix to be correct.
+
+## Follow-up hardening — 2026-09-21
+
+The initial process-group fix only targeted the login shell's group. A shell
+places an interactive foreground command in its own process group, so closing
+the tab could still leave that command alive. `sol_terminal_stop_pty()` now
+signals both the session leader group and the PTY's current foreground group
+(`tcgetpgrp(master_fd)`) for HUP, TERM, and KILL; `terminal.kill` uses the
+same path. The PTY reader now uses a 50ms bounded `select()` before `read()`,
+so teardown joins it after observing `stop_reader` rather than relying on a
+cross-thread `close()` interrupting an already-blocked `read()`.
+
+This also resolves the previously noted `terminal.kill` inconsistency: it no
+longer signals only the login shell.
+
+## Installed-runtime verification — 2026-09-21
+
+The reported second reproduction was captured from the live
+`/Applications/Sol.app` process, not the build-tree executable. `sample`
+showed its main thread blocked in `__wait4` under `sol_terminal_destroy`,
+proving that it still had the previous unbounded-wait binary mapped. The
+Release bundle was rebuilt and installed over `/Applications/Sol.app`; its
+executable now byte-matches `bin/Sol.app/Contents/MacOS/Sol` at SHA-256
+`7d0a3edebb54b4d0c09583a8ba9de89ba05e9accef1688bafc1c1cc6cd5fbd4e`.
+The resident process must be quit and relaunched to load that replacement.

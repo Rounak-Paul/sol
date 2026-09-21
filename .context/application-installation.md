@@ -31,3 +31,31 @@
 - Old running process (PID still resident) keeps its old in-memory image
   until it exits; the fixes only take effect after the user quits and
   relaunches Sol.
+
+## Linux icon registration — 2026-09-21
+
+- `assets/sol.png` is 1254px square, so it must not be advertised as a
+  `1024x1024` hicolor raster. The Linux installer now places it in
+  `share/icons/hicolor/scalable/apps/com.sol.Sol.png`, allowing the desktop
+  icon loader to downscale it for every requested size.
+- Direct Linux installs refresh the hicolor icon cache and desktop database
+  when `gtk-update-icon-cache` and `update-desktop-database` are available.
+  Staged package installs (`DESTDIR`) deliberately skip host cache mutation.
+
+## Rounded application icon — 2026-09-21
+
+- `assets/sol-rounded.png` is the alpha-backed, rounded-corner counterpart to
+  the original solar artwork. `assets/Sol-rounded.icns` is generated from its
+  standard macOS iconset sizes. Both platform installers consume these files;
+  macOS installs the ICNS under the existing `Sol.icns` runtime name.
+- The local Release install at `/Applications/Sol.app` has the rounded ICNS
+  byte-for-byte (`33ebd694f3ab7d00b7dec39c2abc3326c174ece607b854288a3443f2a3ff9e92`),
+  the current executable, and all 13 bundled plugins. LaunchServices, Dock,
+  and Finder were refreshed after verifying the hash.
+
+## macOS rounded-icon correction — 2026-09-21
+
+- macOS applies an application-icon mask itself. Installing a pre-rounded
+  transparent ICNS makes that mask visible as a halo or border. Linux keeps
+  the rounded PNG; macOS uses the original square `Sol.icns` so the system
+  applies exactly one mask.

@@ -76,6 +76,11 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
    before any frames are dropped — far above any realistic interactive use. */
 #define SOL_TERM_DRAIN_BYTES_PER_FRAME 65536u
 
+/* Reader wake interval during an otherwise idle PTY. Keeping the wait bounded
+   lets terminal destruction join the reader without relying on close() to
+   interrupt another thread's blocking read. */
+#define SOL_TERM_READER_POLL_TIMEOUT_MS 50
+
 /* Safety cap for synchronized-output mode (DECSET 2026): if an application
    enables it and never sends the closing ?2026l (crash, bug, or hang), the
    terminal must not withhold rendering forever. 200ms is far beyond any
@@ -1650,8 +1655,9 @@ static void sol_terminal_reader_deposit(SolTerminal *term, const char *buf, size
 #if !defined(_WIN32)
 
 /*
- * Reader thread: blocks on read() from the PTY master fd, deposits bytes
- * into the ring buffer, then wakes the Causality instance.
+ * Reader thread: waits for PTY output with a bounded select(), deposits bytes
+ * into the ring buffer, then wakes the Causality instance. The timeout makes
+ * stop_reader observable even when no process exits or closes the PTY.
  *
  * arg  SolTerminal pointer.
  * Returns NULL always.
@@ -1665,13 +1671,23 @@ static void *sol_terminal_reader_thread(void *arg)
     const int fd = term->master_fd;
 
     while (!atomic_load_explicit(&term->stop_reader, memory_order_relaxed)) {
+        fd_set readable;
+        FD_ZERO(&readable);
+        FD_SET(fd, &readable);
+        struct timeval timeout = {
+            .tv_sec = 0,
+            .tv_usec = SOL_TERM_READER_POLL_TIMEOUT_MS * 1000,
+        };
+        int ready = select(fd + 1, &readable, NULL, NULL, &timeout);
+        if (ready == 0) continue;
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+
         ssize_t n = read(fd, buf, sizeof(buf));
         if (n <= 0) {
             if (n < 0 && errno == EINTR) continue;
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                usleep(1000);
-                continue;
-            }
             break; /* EIO (slave closed), EBADF (fd closed), or EOF */
         }
 
@@ -1771,9 +1787,8 @@ static bool sol_terminal_start_pty(SolTerminal *term, const char *cwd)
 
     term->child_pid = pid;
 
-    /* Keep the PTY master in blocking mode.  The reader thread owns blocking
-       reads; transient non-blocking EAGAIN would otherwise look like EOF and
-       leave the terminal with only a cursor and no shell output. */
+    /* Keep the PTY master in blocking mode. The reader waits for readability
+       before each read, so it neither spins on EAGAIN nor blocks teardown. */
     int flags = fcntl(term->master_fd, F_GETFL, 0);
     if (flags >= 0 && (flags & O_NONBLOCK))
         fcntl(term->master_fd, F_SETFL, flags & ~O_NONBLOCK);
@@ -1808,20 +1823,27 @@ static void *sol_terminal_background_reap(void *arg)
     return NULL;
 }
 
+/* Signal both the session leader and its current foreground job group.
+ * Interactive shells place a foreground command in a separate process group,
+ * so the leader's group alone does not cover tools such as Claude Code. */
+static void sol_terminal_signal_pty(SolTerminal *term, int signal)
+{
+    if (term->child_pid <= 0) return;
+    pid_t foreground_pgid = -1;
+    if (term->master_fd >= 0)
+        foreground_pgid = tcgetpgrp(term->master_fd);
+    if (foreground_pgid > 0 && foreground_pgid != term->child_pid)
+        killpg(foreground_pgid, signal);
+    killpg(term->child_pid, signal);
+}
+
 static void sol_terminal_stop_pty(SolTerminal *term)
 {
     atomic_store_explicit(&term->stop_reader, true, memory_order_relaxed);
 
     if (term->child_pid > 0) {
-        /* forkpty()'s child calls login_tty(), which starts a new session
-           (setsid), making child_pid also the process group id. Signal the
-           whole group, not just the shell: a foreground job the shell
-           spawned (e.g. a long-running CLI tool) is otherwise left alive,
-           holding the PTY slave open, so the shell's own exit never
-           produces the EOF/EIO the reader thread's read() is waiting on —
-           the pthread_join below would then hang forever. */
-        killpg(term->child_pid, SIGHUP);
-        killpg(term->child_pid, SIGTERM);
+        sol_terminal_signal_pty(term, SIGHUP);
+        sol_terminal_signal_pty(term, SIGTERM);
 
         int status = 0;
         bool reaped = false;
@@ -1845,10 +1867,10 @@ static void sol_terminal_stop_pty(SolTerminal *term)
                can be indefinite. Poll with the same bound as above instead;
                if it still hasn't cleared, stop waiting on it synchronously.
                SIGKILL was already delivered, so the kernel will finish the
-               reap on its own once the process actually dies — closing the
-               master fd below is what unblocks the reader thread, which
-               does not depend on this reap completing. */
-            killpg(term->child_pid, SIGKILL);
+               reap on its own once the process actually dies. The reader
+               thread below observes its stop flag independently of process
+               reaping. */
+            sol_terminal_signal_pty(term, SIGKILL);
             for (int i = 0; i < 20; ++i) {
                 pid_t r = waitpid(term->child_pid, &status, WNOHANG);
                 if (r == term->child_pid || (r < 0 && errno == ECHILD)) {
@@ -1872,17 +1894,9 @@ static void sol_terminal_stop_pty(SolTerminal *term)
         term->child_pid = 0;
     }
 
-    /* Close the master fd unconditionally before joining, regardless of
-       whether the child was reaped. This is what actually unblocks the
-       reader thread's blocking read() on this same fd from another
-       thread — waiting on process reaping alone is not sufficient, since
-       a killpg()'d grandchild can take an arbitrary amount of time to
-       release the slave side even after being sent SIGKILL. */
-    if (term->reader_started && term->master_fd >= 0) {
-        int fd = term->master_fd;
-        term->master_fd = -1;
-        close(fd);
-    }
+    /* The reader observes stop_reader through its bounded select() wait, so
+       join it before closing the descriptor. This avoids closing an fd while
+       another thread is selecting or reading from it. */
     if (term->reader_started) {
         pthread_join(term->reader_thread, NULL);
         term->reader_started = false;
@@ -3365,7 +3379,7 @@ void sol_terminal_kill(SolTerminal *term)
     if (!term) return;
 #if !defined(_WIN32)
     if (term->child_pid > 0) {
-        kill(term->child_pid, SIGKILL);
+        sol_terminal_signal_pty(term, SIGKILL);
     }
 #else
     if (term->hProcess) TerminateProcess(term->hProcess, 0);

@@ -271,6 +271,8 @@ if(APPLE)
     install(TARGETS sol BUNDLE DESTINATION "." COMPONENT Sol)
     install(TARGETS ${SOL_PLUGIN_TARGETS}
         LIBRARY DESTINATION "${SOL_INSTALL_PLUGIN_DIR}" COMPONENT Sol)
+    # macOS applies its own icon mask. Supplying pre-rounded transparent
+    # artwork creates a visible double-mask halo, so retain the square ICNS.
     install(FILES ${CMAKE_SOURCE_DIR}/assets/Sol.icns
         DESTINATION "Sol.app/Contents/Resources" COMPONENT Sol)
 else()
@@ -278,8 +280,10 @@ else()
     install(TARGETS sol RUNTIME DESTINATION "${SOL_INSTALL_RUNTIME_DIR}" COMPONENT Sol)
     install(TARGETS ${SOL_PLUGIN_TARGETS}
         LIBRARY DESTINATION "${SOL_INSTALL_RUNTIME_DIR}/plugins" COMPONENT Sol)
-    install(FILES ${CMAKE_SOURCE_DIR}/assets/sol.png
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/1024x1024/apps"
+    # The source image is 1254px, not a nominal hicolor raster size. Install
+    # it as scalable so icon themes may downscale it at every requested size.
+    install(FILES ${CMAKE_SOURCE_DIR}/assets/sol-rounded.png
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
         RENAME "com.sol.Sol.png" COMPONENT Sol)
     install(FILES ${CMAKE_SOURCE_DIR}/cmake/sol.desktop
         DESTINATION "${CMAKE_INSTALL_DATADIR}/applications" COMPONENT Sol)
@@ -287,6 +291,20 @@ else()
         file(MAKE_DIRECTORY "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/bin")
         execute_process(COMMAND "${CMAKE_COMMAND}" -E create_symlink
             "../lib/sol/sol" "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/bin/sol")
+    ]] COMPONENT Sol)
+    install(CODE [[
+        if("$ENV{DESTDIR}" STREQUAL "")
+            find_program(GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
+            if(GTK_UPDATE_ICON_CACHE)
+                execute_process(COMMAND "${GTK_UPDATE_ICON_CACHE}" -f -t
+                    "${CMAKE_INSTALL_PREFIX}/share/icons/hicolor")
+            endif()
+            find_program(UPDATE_DESKTOP_DATABASE update-desktop-database)
+            if(UPDATE_DESKTOP_DATABASE)
+                execute_process(COMMAND "${UPDATE_DESKTOP_DATABASE}"
+                    "${CMAKE_INSTALL_PREFIX}/share/applications")
+            endif()
+        endif()
     ]] COMPONENT Sol)
 endif()
 

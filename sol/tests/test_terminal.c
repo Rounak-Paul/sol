@@ -9,10 +9,15 @@
  * spawning a real PTY/SSH channel or Causality instance.
  */
 
+#define ca_instance_wake sol_terminal_test_wake
 #include "sol_terminal.c"
+#undef ca_instance_wake
 
 #include <stdio.h>
 #include <string.h>
+
+/* Isolate PTY tests from Causality's process-global GLFW event loop. */
+void sol_terminal_test_wake(void) {}
 
 static int g_failures = 0;
 
@@ -89,11 +94,42 @@ static void test_decstbm_zero_rows_is_inert(void)
     CHECK(term.margin_top >= 0);
 }
 
+#if !defined(_WIN32)
+/* An idle PTY reader must not make terminal destruction wait for a blocked
+ * read. The command remains in the terminal foreground group when close is
+ * requested, exercising the same teardown boundary as an interactive CLI. */
+static void test_pty_close_is_bounded_with_foreground_command(void)
+{
+    setenv("SHELL", "/bin/sh", 1);
+    SolTerminalManager *mgr = sol_terminal_manager_create((Ca_Instance *)(uintptr_t)1);
+    CHECK(mgr != NULL);
+    if (!mgr) return;
+
+    SolTerminal *term = sol_terminal_manager_new_tab(mgr, NULL);
+    CHECK(term != NULL);
+    if (!term) {
+        sol_terminal_manager_destroy(mgr);
+        return;
+    }
+
+    sol_terminal_send_text(term, "sleep 30\n", 9u);
+    usleep(20000);
+    uint64_t start = sol_platform_now_monotonic_ns();
+    sol_terminal_manager_close_active(mgr);
+    uint64_t elapsed = sol_platform_now_monotonic_ns() - start;
+    CHECK(elapsed < 750000000ull);
+    sol_terminal_manager_destroy(mgr);
+}
+#endif
+
 int main(void)
 {
     test_decstbm_single_row_no_negative_margin();
     test_decstbm_normal_size_still_works();
     test_decstbm_zero_rows_is_inert();
+#if !defined(_WIN32)
+    test_pty_close_is_bounded_with_foreground_command();
+#endif
 
     if (g_failures == 0) {
         printf("all terminal tests passed\n");

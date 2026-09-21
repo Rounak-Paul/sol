@@ -32,9 +32,11 @@
 /* Tunables                                                          */
 /* ---------------------------------------------------------------- */
 
-#define SOL_FP_INITIAL_CTX_CAP   64u
 #define SOL_FP_DEFAULT_WIDTH     760
 #define SOL_FP_DEFAULT_HEIGHT    520
+#define SOL_FP_ROW_HEIGHT        24.0f
+#define SOL_FP_ROW_OVERSCAN      12u
+#define SOL_FP_RENDER_ROWS       96u
 
 /* ---------------------------------------------------------------- */
 /* Nerd Font glyphs (same as file_tree_panel.c)                     */
@@ -114,8 +116,11 @@ struct SolFilePicker {
     /* Reactive content host (rebuild on navigation). */
     Ca_Div *content_host;
 
-    /* Click-context pool — grows but never shrinks so pointers given
-       to causality remain valid until the picker is destroyed.       */
+    /* Scroll signal for the virtualized file-list rows. */
+    Ca_Signal *list_scroll_signal;
+
+    /* Click-context pool. Capacity is reserved before every rebuild so
+       Causality never receives a pointer that can move mid-render. */
     SolFpClickCtx *click_ctxs;
     size_t         click_ctx_count;
     size_t         click_ctx_capacity;
@@ -538,25 +543,43 @@ static bool fp_set_current_dir(SolFilePicker *p, const char *path)
 /* ---------------------------------------------------------------- */
 
 /*
- * Obtain the next available click context from the pool, growing it with
- * realloc when necessary.  Pointers into the pool remain valid for the
- * lifetime of the picker.
+ * Reserve storage for click contexts before they are handed to Causality.
  *
  * p       The file picker owning the pool.
- * Returns Pointer to the next free context, or NULL on allocation failure.
+ * needed  Minimum number of contexts required for one complete rebuild.
+ * Returns true when the requested capacity is available.
+ */
+static bool fp_reserve_click_contexts(SolFilePicker *p, size_t needed)
+{
+    if (needed <= p->click_ctx_capacity) return true;
+
+    size_t capacity = p->click_ctx_capacity ? p->click_ctx_capacity : 64u;
+    while (capacity < needed) {
+        if (capacity > SIZE_MAX / 2u) {
+            capacity = needed;
+            break;
+        }
+        capacity *= 2u;
+    }
+
+    if (capacity > SIZE_MAX / sizeof(*p->click_ctxs)) return false;
+    SolFpClickCtx *grown = (SolFpClickCtx *)realloc(
+        p->click_ctxs, capacity * sizeof(*p->click_ctxs));
+    if (!grown) return false;
+    p->click_ctxs = grown;
+    p->click_ctx_capacity = capacity;
+    return true;
+}
+
+/*
+ * Return the next pre-reserved file-picker click context.
+ *
+ * p  Picker owning the callback storage.
+ * Returns A stable callback context, or NULL when the render reservation failed.
  */
 static SolFpClickCtx *fp_acquire_ctx(SolFilePicker *p)
 {
-    if (p->click_ctx_count == p->click_ctx_capacity) {
-        size_t nc = p->click_ctx_capacity
-                        ? p->click_ctx_capacity * 2u
-                        : SOL_FP_INITIAL_CTX_CAP;
-        SolFpClickCtx *grown = (SolFpClickCtx *)realloc(
-            p->click_ctxs, nc * sizeof(SolFpClickCtx));
-        if (!grown) return NULL;
-        p->click_ctxs         = grown;
-        p->click_ctx_capacity = nc;
-    }
+    if (!p || p->click_ctx_count >= p->click_ctx_capacity) return NULL;
     return &p->click_ctxs[p->click_ctx_count++];
 }
 
@@ -1010,8 +1033,16 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
     SolFilePicker *p = (SolFilePicker *)user_data;
     if (!p) return;
 
-    /* Reset click pool for this rebuild.  The pool only grows so all
-       pointers handed to causality in prior builds stay valid.      */
+    size_t row_count = p->entry_count < SOL_FP_RENDER_ROWS
+                           ? p->entry_count : SOL_FP_RENDER_ROWS;
+    if (p->crumb_count > SIZE_MAX - row_count - 3u ||
+        !fp_reserve_click_contexts(p, p->crumb_count + row_count + 3u)) {
+        return;
+    }
+
+    /* The content host discards the prior rows before calling this builder.
+       Reserve all callback storage before handing any address to Causality,
+       so no click_data pointer can be invalidated mid-render. */
     p->click_ctx_count = 0u;
 
     /* ── Toolbar: up + breadcrumb + right actions ── */
@@ -1108,11 +1139,34 @@ static void fp_content_builder(Ca_Div *div, void *user_data)
     fp_render_column_header(p);
 
     /* ── Scrollable file list ── */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "fp-list native-scrollbar" });
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style = "fp-list native-scrollbar",
+        .id = "fp-list",
+    });
     if (p->entry_count == 0u) {
         ca_text(&(Ca_TextDesc){ .text = "(empty directory)", .style = "fp-empty" });
     } else {
-        for (size_t i = 0; i < p->entry_count; ++i) fp_render_row(p, i);
+        float scroll_y = p->list_scroll_signal
+                             ? ca_signal_get_float(p->list_scroll_signal) : 0.0f;
+        size_t first = scroll_y > 0.0f
+                           ? (size_t)(scroll_y / SOL_FP_ROW_HEIGHT) : 0u;
+        if (first > SOL_FP_ROW_OVERSCAN) first -= SOL_FP_ROW_OVERSCAN;
+        else first = 0u;
+        if (first > p->entry_count) first = p->entry_count;
+
+        size_t last = first + SOL_FP_RENDER_ROWS;
+        if (last < first || last > p->entry_count) last = p->entry_count;
+
+        if (first > 0u) {
+            ca_spacer(&(Ca_SpacerDesc){ .height = (float)first * SOL_FP_ROW_HEIGHT });
+        }
+        for (size_t i = first; i < last; ++i) fp_render_row(p, i);
+        if (last < p->entry_count) {
+            ca_spacer(&(Ca_SpacerDesc){
+                .height = (float)(p->entry_count - last) * SOL_FP_ROW_HEIGHT,
+            });
+        }
     }
     ca_div_end();
 
@@ -1294,6 +1348,8 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
     if (!p->window) { fp_destroy(p); return NULL; }
 
     fp_build_layout(p);
+    p->list_scroll_signal = ca_get_scroll_y_signal(p->window, "fp-list");
+    if (p->list_scroll_signal) ca_div_invalidate(p->content_host);
 
     p->next   = g_pickers;
     g_pickers = p;
