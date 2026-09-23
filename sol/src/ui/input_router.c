@@ -87,14 +87,17 @@ static float router_glyph_advance_px(Ca_Window *win)
  * minimum ±1 row jump on every event — that forced-minimum previously made
  * slow/decelerating scrolls stair-step and feel like they kept stalling.
  *
- * A single sensitivity factor cannot serve both ends of one real trackpad
- * gesture: the same swipe was measured delivering dy as small as 0.1 during
- * its slow tail and as large as 12 at its peak. A factor tuned to make the
- * small end responsive (x9) turns the peak into a 15-20 row jump per single
- * event — rows vanish between callbacks, which reads as "not rendering"
- * rather than fast scrolling. Capping the per-event delta keeps the small
- * end responsive while forcing a fast flick to arrive as several visible
- * steps instead of one blind leap over most of the scrollback.
+ * Uses the same x3 factor as buffer vertical scroll (see the inline
+ * `dy * 3.0` in on_mouse_scroll's buffer path below) so the terminal and
+ * buffer panes scroll at matching speed for the same physical gesture. An
+ * earlier x9 was tuned while a separate hit-test bug was dropping ~97% of
+ * scroll events, which masked how fast x9 actually was once events landed
+ * reliably — that bug is fixed elsewhere; this only needed to match x3.
+ *
+ * The per-event cap still matters at x3: a fast trackpad flick's peak dy
+ * (measured up to ~12) would otherwise jump 30+ rows in one callback, rows
+ * vanishing between events instead of scrolling through them. Capping keeps
+ * a fast flick arriving as several visible steps instead of one blind leap.
  *
  * r    The input router holding the fractional remainder.
  * dy   Raw vertical wheel axis value, already sign-adjusted by the caller.
@@ -103,7 +106,7 @@ static float router_glyph_advance_px(Ca_Window *win)
 static int vertical_scroll_delta(SolInputRouter *r, double dy)
 {
     if (!r || dy == 0.0) return 0;
-    r->vertical_scroll_remainder += dy * 9.0;
+    r->vertical_scroll_remainder += dy * 3.0;
     int delta = (int)r->vertical_scroll_remainder;
     if (delta != 0) {
         r->vertical_scroll_remainder -= (double)delta;
