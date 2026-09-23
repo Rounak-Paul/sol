@@ -53,6 +53,39 @@
   the current executable, and all 13 bundled plugins. LaunchServices, Dock,
   and Finder were refreshed after verifying the hash.
 
+## Terminal click/scroll offset fix install — 2026-09-23
+
+- Same running-inside-Sol's-own-terminal situation as 2026-09-20: this
+  session's shell is hosted in Sol's integrated terminal, so the running
+  process kept going during install (files on disk changed, in-memory
+  image unaffected until quit/relaunch). User confirmed proceeding
+  explicitly before install.
+- `cmake --build build-release -j 8` then `cmake --install build-release
+  --prefix /Applications --component Sol`. Installed executable
+  (`eecc89ba96a2ed189a97d54eab6e98ee8254fbadc6e5b4b3ac57882c8b25966b`)
+  byte-matches the freshly built `bin/Sol.app` — confirmed via `shasum`.
+- Includes [[terminal_click_scroll_left_offset]]'s fix. Takes effect after
+  the user quits and relaunches Sol (this terminal session ends then).
+
+## Terminal click/scroll offset — actual fix install — 2026-09-23 (later same day)
+
+- The 2026-09-23 entry above only shipped the ratio-clamp mismatch fix
+  ([[terminal_click_scroll_left_offset]]), which didn't fix the user's
+  actual symptom. Root cause found via live stderr instrumentation while
+  the user interactively clicked/scrolled a debug build: `terminal_cell_at_point`
+  hand-derived the terminal panel's screen rect instead of reading it from
+  Causality's real layout, and assumed a hardcoded 28px header height where
+  the real `.term-header` CSS height is 19px. Rewrote it to use
+  `ca_div_content_screen_rect`/`ca_div_screen_rect` on `term_panel_host` and
+  a newly-retained `term_header_host` handle — no more manual split-ratio
+  inversion or hardcoded header constant.
+- `cmake --build build-release -j 8` then `cmake --install build-release
+  --prefix /Applications --component Sol`. Installed executable
+  (`7f24205e4170e4e2178ba15ae88f628324d938b60d65d0dffe17f97e5c61a3f0`)
+  byte-matches the freshly built `bin/Sol.app` — confirmed via `shasum`.
+- PID 1371 (existing running instance, started before this fix) kept going
+  on disk-change as usual; takes effect once the user quits and relaunches.
+
 ## macOS rounded-icon correction — 2026-09-21
 
 - macOS applies an application-icon mask itself. Installing a pre-rounded

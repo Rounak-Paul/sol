@@ -350,7 +350,7 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
     const bool          focused    = sol_terminal_manager_focused(mgr);
 
     /* ---- Tab strip ---- */
-    ca_div_begin(&(Ca_DivDesc){
+    ui->term_header_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style     = "term-header workspace-panel-chrome",
     });

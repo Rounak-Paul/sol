@@ -2794,7 +2794,15 @@ float sol_terminal_manager_ratio(const SolTerminalManager *mgr)
 void sol_terminal_manager_set_ratio(SolTerminalManager *mgr, float ratio)
 {
     if (!mgr) return;
-    mgr->ratio = ratio < 0.10f ? 0.10f : (ratio > 0.80f ? 0.80f : ratio);
+    /* Must match the [0.20, 0.80] clamp every consumer of this ratio applies
+       to the rendered split (ca_split_begin's min_ratio/max_ratio in
+       sol_ui_render_buffer_and_terminal, and the buffer-rect derivation in
+       sol_ui_buffer_area_rect_internal) — storing anything outside that
+       range let the on-screen split and input_router.c's hit-test rect
+       recovery clamp to different bounds and desync, offsetting every
+       terminal click/scroll target once the pane was dragged thinner than
+       20%. */
+    mgr->ratio = ratio < 0.20f ? 0.20f : (ratio > 0.80f ? 0.80f : ratio);
 }
 
 /* ================================================================== */

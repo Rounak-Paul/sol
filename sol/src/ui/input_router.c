@@ -36,6 +36,7 @@ struct SolInputRouter {
     double           mouse_x;
     double           mouse_y;
     double           horizontal_scroll_remainder;
+    double           vertical_scroll_remainder;
     bool             buffer_input_active;
     bool             suppress_next_text_input;
     bool             terminal_mouse_down;  /* button held while reporting to a mouse-aware TUI */
@@ -78,19 +79,44 @@ static float router_glyph_advance_px(Ca_Window *win)
     return w;
 }
 
-/* Convert one wheel axis to editor scroll columns/rows. */
 /*
- * Convert a raw wheel-axis amount to an integer scroll delta in columns/rows.
- * Guarantees at least ±1 when amount is non-zero.
+ * Accumulate a fractional vertical scroll amount and return the integer row
+ * delta, carrying the sub-row remainder into the next call. Mirrors
+ * horizontal_scroll_delta() so trackpad inertial scrolling (many small
+ * fractional dy events per gesture) glides smoothly instead of forcing a
+ * minimum ±1 row jump on every event — that forced-minimum previously made
+ * slow/decelerating scrolls stair-step and feel like they kept stalling.
  *
- * amount  Raw wheel axis value.
- * Returns Integer scroll delta.
+ * A single sensitivity factor cannot serve both ends of one real trackpad
+ * gesture: the same swipe was measured delivering dy as small as 0.1 during
+ * its slow tail and as large as 12 at its peak. A factor tuned to make the
+ * small end responsive (x9) turns the peak into a 15-20 row jump per single
+ * event — rows vanish between callbacks, which reads as "not rendering"
+ * rather than fast scrolling. Capping the per-event delta keeps the small
+ * end responsive while forcing a fast flick to arrive as several visible
+ * steps instead of one blind leap over most of the scrollback.
+ *
+ * r    The input router holding the fractional remainder.
+ * dy   Raw vertical wheel axis value, already sign-adjusted by the caller.
+ * Returns Integer row delta, clamped to SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT.
  */
-static int scroll_delta_from_axis(double amount)
+static int vertical_scroll_delta(SolInputRouter *r, double dy)
 {
-    int delta = (int)(amount * 3.0);
-    if (delta == 0) {
-        delta = amount > 0.0 ? 1 : amount < 0.0 ? -1 : 0;
+    if (!r || dy == 0.0) return 0;
+    r->vertical_scroll_remainder += dy * 9.0;
+    int delta = (int)r->vertical_scroll_remainder;
+    if (delta != 0) {
+        r->vertical_scroll_remainder -= (double)delta;
+    }
+    /* Feed any clamped excess back into the remainder rather than dropping
+       it, so a fast flick keeps advancing over the following events instead
+       of losing distance once it is capped. */
+    if (delta > SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT) {
+        r->vertical_scroll_remainder += (double)(delta - SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT);
+        delta = SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT;
+    } else if (delta < -SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT) {
+        r->vertical_scroll_remainder -= (double)(-SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT - delta);
+        delta = -SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT;
     }
     return delta;
 }
@@ -172,12 +198,17 @@ static bool point_in_active_buffer_leaf(SolInputRouter *r,
  * panel is visible and the point falls inside its viewport (excluding the
  * tab header strip).
  *
- * For docked positions (BOTTOM/RIGHT), mirrors the split-ratio rect math
- * sol_ui_system_pre_tick uses to size the grid, so hit-testing always agrees
- * with what is actually drawn. For FLOAT, the panel is not part of any split
- * — its rect is queried directly from the mounted term_panel_host div via
- * ca_div_screen_rect(), which is exact regardless of how the panel is sized
- * or centered.
+ * Reads the panel's and header's real on-screen rects straight from
+ * Causality's own layout (ca_div_content_screen_rect / ca_div_screen_rect)
+ * instead of re-deriving them from the split ratio, panel gap and CSS
+ * constants by hand — those manual formulas drift out of sync with the
+ * renderer any time a layout constant changes on one side only (this is
+ * what caused the original left/top hit-test offset: input_router.c assumed
+ * a 28px header when .term-header is actually 19px, and re-inverted the
+ * split-ratio math with its own copy of the panel gap instead of asking
+ * Causality where the panel actually landed). This mirrors how buttons are
+ * already hit-tested against their real laid-out node rect, and how the
+ * FLOAT branch already queried term_panel_host directly.
  *
  * r          The input router.
  * x, y       Window-space point to test.
@@ -191,54 +222,24 @@ static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
     if (!r || !r->ui) return false;
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (!tmgr || !sol_terminal_manager_visible(tmgr)) return false;
+    if (!r->ui->term_panel_host) return false;
 
     const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
-    float vx, vy, vw, vh; /* terminal panel rect, header not yet excluded */
-
-    if (pos == SOL_TERMINAL_POSITION_FLOAT) {
-        if (!r->ui->term_panel_host) return false;
-        ca_div_screen_rect(r->ui->term_panel_host, &vx, &vy, &vw, &vh);
-    } else {
-        /* sol_ui_system_buffer_area_rect() already returns the buffer's
-           share AFTER subtracting the terminal's split — it is not the
-           pre-split workspace rect. Re-deriving the terminal rect by
-           applying (1-ratio)/ratio a second time on top of that
-           already-shrunk rect would carve a phantom terminal box out of the
-           buffer area itself instead of matching the terminal's real
-           on-screen position. Invert the same panel_gap/ratio split
-           sol_ui_buffer_area_rect_internal() applied to recover the true
-           pre-split extent, then place the terminal directly after the
-           buffer + gap. */
-        float bx, by, bw, bh;
-        if (!sol_ui_system_buffer_area_rect(r->ui, &bx, &by, &bw, &bh) ||
-            bw <= 0.0f || bh <= 0.0f) {
-            return false;
-        }
-
-        const float ratio = sol_terminal_manager_ratio(tmgr);
-        const float buffer_ratio = 1.0f - ratio;
-        if (buffer_ratio <= 0.0f) return false;
-        const float scale = sol_ui_system_scale(r->ui);
-        const float panel_gap = SOL_UI_PANEL_GAP_PX * scale;
-        if (pos == SOL_TERMINAL_POSITION_BOTTOM) {
-            const float available = bh / buffer_ratio;
-            vx = bx;
-            vy = by + bh + panel_gap;
-            vw = bw;
-            vh = available - bh;
-        } else {
-            const float available = bw / buffer_ratio;
-            vx = bx + bw + panel_gap;
-            vy = by;
-            vw = available - bw;
-            vh = bh;
-        }
-    }
+    float vx, vy, vw, vh; /* terminal panel's content box, header not yet excluded */
+    ca_div_content_screen_rect(r->ui->term_panel_host, &vx, &vy, &vw, &vh);
     if (vw <= 0.0f || vh <= 0.0f) return false;
     if (x < vx || x >= vx + vw || y < vy || y >= vy + vh) return false;
 
+    /* Docked positions stack the header above the viewport inside the same
+       panel content box; FLOAT has no header row sharing term_panel_host
+       (sol_ui_term_float_builder renders only the viewport into it), so the
+       content box IS the viewport's outer rect. */
+    float header_h = 0.0f;
+    if (pos != SOL_TERMINAL_POSITION_FLOAT && r->ui->term_header_host) {
+        ca_div_screen_rect(r->ui->term_header_host, NULL, NULL, NULL, &header_h);
+    }
+
     const float ui_scale = sol_ui_system_scale(r->ui);
-    const float header_h = SOL_UI_TERM_HEADER_PX * ui_scale;
     const float pad_v    = SOL_UI_TERM_PAD_V_PX  * ui_scale;
     const float pad_h    = SOL_UI_TERM_PAD_H_PX  * ui_scale;
     const float local_x  = (float)x - vx - pad_h;
@@ -681,6 +682,7 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
             r, r->mouse_x, r->mouse_y, NULL, NULL);
         if (!r->buffer_input_active) {
             r->horizontal_scroll_remainder = 0.0;
+            r->vertical_scroll_remainder = 0.0;
         } else {
             sol_ui_system_set_focused_panel(r->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
         }
@@ -731,6 +733,7 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
     if (!event_is_from_primary_window(r, ev)) {
         r->buffer_input_active = false;
         r->horizontal_scroll_remainder = 0.0;
+        r->vertical_scroll_remainder = 0.0;
         return;
     }
 
@@ -766,8 +769,8 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
             return;
         }
         if (over_terminal) {
-            int delta = (int)(ev->mouse_scroll.dy * 3.0);
-            if (delta == 0) delta = ev->mouse_scroll.dy > 0.0 ? 1 : -1;
+            const int delta = vertical_scroll_delta(r, ev->mouse_scroll.dy);
+            if (delta == 0) return;
             sol_terminal_set_view_scroll(term,
                 sol_terminal_view_scroll(term) + delta);
             sol_ui_system_terminal_notify(r->ui);
@@ -951,6 +954,7 @@ void sol_input_router_bind(SolInputRouter *router, SolUISystem *ui,
     router->suppress_next_text_input = false;
     router->terminal_mouse_down = false;
     router->horizontal_scroll_remainder = 0;
+    router->vertical_scroll_remainder = 0;
 }
 
 void sol_input_router_destroy(SolInputRouter *router)

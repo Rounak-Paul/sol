@@ -80,9 +80,16 @@
  * generic leaf fallback of 20 * ui_scale. */
 #define SOL_UI_TERM_CELL_H_PX         16.0f   /* .term-line row height        */
 #define SOL_UI_TERM_CELL_W_PX          8.0f   /* per-cell glyph width         */
-#define SOL_UI_TERM_HEADER_PX         28.0f   /* .term-header height          */
+#define SOL_UI_TERM_HEADER_PX         19.0f   /* .term-header height (style.h .term-header) */
 #define SOL_UI_TERM_PAD_V_PX           4.0f   /* .term-viewport padding-top/bottom */
 #define SOL_UI_TERM_PAD_H_PX           6.0f   /* .term-viewport padding-left/right */
+/* Caps a single wheel/trackpad callback's terminal scrollback jump. Without
+   this, a fast flick's large raw dy (measured up to ~12 on a real trackpad,
+   against small-tick values as low as ~0.1) scaled by the same sensitivity
+   factor that keeps slow scrolling responsive turns into a 15-20 row leap in
+   one event — rows vanish between callbacks instead of scrolling through
+   them, reading as a dropped/skipped render rather than a fast scroll. */
+#define SOL_UI_TERM_SCROLL_MAX_ROWS_PER_EVENT 6
 
 /* Status badge kinds — single byte to keep the struct compact. */
 #define SOL_UI_STATUS_KIND_KEY        'K'
@@ -240,6 +247,11 @@ struct SolUISystem {
        the one-frame mismatch that caused rows to overflow and be clipped.
        NULL when the terminal panel is not in the current layout tree. */
     Ca_Button        *term_viewport_host;
+    /* Retained handle to the term-header tab-strip div, so input_router.c's
+       terminal_cell_at_point can read its real on-screen height via
+       ca_div_screen_rect() instead of assuming the CSS constant matches.
+       NULL when the terminal panel is not in the current layout tree. */
+    Ca_Div           *term_header_host;
     /* Floating which-key popup host — absolute-positioned overlay
        sibling of workspace_content_host. Its builder subscribes to
        sig_popup_version and re-runs in isolation; the workspace

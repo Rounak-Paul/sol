@@ -981,6 +981,7 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
         sol_terminal_manager_position(ui->terminal_mgr) == SOL_TERMINAL_POSITION_FLOAT) {
         ui->term_panel_host    = NULL;
         ui->term_viewport_host = NULL;
+        ui->term_header_host   = NULL;
         sol_ui_render_workspace_tree(ui);
         return;
     }
@@ -1203,8 +1204,6 @@ static void sol_ui_term_float_builder(Ca_Div *div, void *user_data)
     if (!ui) {
         return;
     }
-    ui->term_panel_host    = NULL;
-    ui->term_viewport_host = NULL;
 
     /* Subscribe to terminal state (visibility, position, focus, output). */
     (void)ca_signal_get_u32(ui->sig_terminal_rev);
@@ -1215,8 +1214,26 @@ static void sol_ui_term_float_builder(Ca_Div *div, void *user_data)
         sol_terminal_manager_count(mgr) > 0u &&
         sol_terminal_manager_position(mgr) == SOL_TERMINAL_POSITION_FLOAT;
     if (!active) {
+        /* Not floating: term_panel_host/viewport/header belong to whichever
+           docked builder ran this tick (sol_ui_render_buffer_and_terminal,
+           or NULL if the terminal isn't visible at all). Both this builder
+           and the docked workspace-content builder are independent reactive
+           effects subscribed to the same sig_terminal_rev signal, so every
+           terminal-state bump (including a scroll notify) re-runs both in
+           some order. Unconditionally nulling these handles here — even
+           when this builder isn't the active renderer — raced with the
+           docked builder's assignment: whichever effect happened to run
+           last on a given flush decided whether input_router.c saw a valid
+           term_panel_host or NULL, so hit-testing (terminal_cell_at_point)
+           silently failed on most scroll events while docked, intermittent
+           enough that it looked like a sensitivity or timing bug instead of
+           what it was — a stale pointer clobbered by the wrong builder. */
         return;
     }
+
+    ui->term_panel_host    = NULL;
+    ui->term_viewport_host = NULL;
+    ui->term_header_host   = NULL;
 
     if (ui->window_w <= 0 || ui->window_h <= 0) {
         return;
@@ -2015,6 +2032,7 @@ bool sol_ui_system_set_active(SolUISystem *ui, bool active)
         ui->term_panel_host = ui->term_float_host = ui->popup_host = NULL;
         ui->tree_sticky_host = ui->status_bar_host = NULL;
         ui->term_viewport_host = NULL;
+        ui->term_header_host = NULL;
         ui->glass_panel_count = 0;
         ui->active = false;
         return true;
