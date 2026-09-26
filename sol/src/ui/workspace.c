@@ -3482,6 +3482,10 @@ void sol_ui_system_set_focused_panel(SolUISystem *ui, SolUIFocusedPanel panel)
         sol_terminal_manager_focused(ui->terminal_mgr)) {
         sol_terminal_manager_set_focused(ui->terminal_mgr, false);
     }
+    if (panel == SOL_UI_FOCUSED_PANEL_TERMINAL ||
+        panel == SOL_UI_FOCUSED_PANEL_BUFFER) {
+        ca_window_clear_focus(ui->primary_window);
+    }
     if (ui->focused_panel == panel) return;
     ui->focused_panel = panel;
     if (ui->sig_focused_panel) {

@@ -2854,6 +2854,7 @@ int main(int argc, char **argv)
         .title = "Sol", .width = 1080, .height = 720,
     });
     if (!host.window) { ca_instance_destroy(host.instance); return 1; }
+    ca_window_set_app_keyboard(host.window, true);
     char home[4096];
     const char *path = argc > 1 ? argv[1] :
         (sol_platform_get_user_home(home, sizeof(home)) ? home : NULL);

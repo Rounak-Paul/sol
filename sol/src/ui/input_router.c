@@ -47,6 +47,21 @@ struct SolInputRouter {
 /* ------------------------------------------------------------------ */
 
 /*
+ * Report whether a Causality text input (or modal) in the event's window
+ * holds the keyboard. Sol's terminal and buffer routing stand down while it
+ * does, so one keystroke never reaches two surfaces.
+ *
+ * ev  Keyboard event being routed.
+ * Returns true when native UI owns the keyboard exclusively.
+ */
+static bool native_ui_owns_keyboard(const Ca_Event *ev)
+{
+    bool keyboard = false;
+    ca_window_input_capture(ev->window, NULL, &keyboard);
+    return keyboard;
+}
+
+/*
  * Convert a Causality modifier bitmask to the Sol modifier mask type.
  *
  * mods    Causality modifier flags (bit 0=Shift, 1=Ctrl, 2=Alt, 3=Super).
@@ -420,8 +435,10 @@ static void on_key(const Ca_Event *ev, void *user_data)
     ie.data.key.modifiers = modifiers_from_ca(ev->key.mods);
     ie.data.key.repeated  = (ev->key.action == CA_REPEAT);
 
+    const bool native_owns = native_ui_owns_keyboard(ev);
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
-    const bool term_focused = tmgr && sol_terminal_manager_focused(tmgr);
+    const bool term_focused =
+        !native_owns && tmgr && sol_terminal_manager_focused(tmgr);
 
     if (term_focused) {
         /* KEY_UP: only needed for leader tap detection (Ctrl released alone). */
@@ -523,7 +540,7 @@ static void on_key(const Ca_Event *ev, void *user_data)
     if (ie.type != SOL_INPUT_EVENT_KEY_DOWN) return;
     if (ui_consumed) return;
     if (sol_ui_system_is_leader_active(r->ui)) return;
-    if (!r->buffer_input_active) return;
+    if (!r->buffer_input_active || native_owns) return;
     if (key_is_printable_alpha(ie.data.key.key)) return;
     handle_text_buffer_key(r, ie.data.key.key, ie.data.key.modifiers);
 }
@@ -559,6 +576,8 @@ static void on_char(const Ca_Event *ev, void *user_data)
     /* While a leader sequence is in progress the char belongs to the chord,
        not to the terminal or the buffer. */
     if (sol_ui_system_is_leader_active(r->ui)) return;
+
+    if (native_ui_owns_keyboard(ev)) return;
 
     /* Terminal-focused path: send codepoint to PTY as UTF-8. */
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);

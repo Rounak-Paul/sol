@@ -72,3 +72,34 @@ puts a `Ca_TextInput` in front of the user and doesn't do this same poll-and-fun
 terminal (or buffer) keystrokes the same way. Causality has no public "is any input focused"
 query — only per-instance `ca_input_is_focused(specific_input)` — so this must be done per input,
 not fixed once at the router level.
+
+## Dual focus-system arbitration — root fix (2026-09-26)
+
+Root cause of the whole "one key hits two targets" class (e.g. `L t t` then Enter both reaches
+the PTY and re-fires the welcome/central button clicked earlier): Causality keeps its own
+`win->focused_node` (set by click and Tab) and, in `ca_widget_input_pass`, runs Tab navigation
+and Enter/Space button activation from the raw per-frame `key_buf` — independent of what Sol's
+router already did with the same key during event dispatch. Previous fixes patched individual
+buttons with `skip_keyboard_focus`; any new button reintroduced the bug.
+
+Fix (Causality API, opt-in per window):
+- `ca_window_set_app_keyboard(win, true)` — buttons never take native focus (click or Tab), Tab
+  navigation and Enter/Space activation are disabled; text inputs still focus by click /
+  `ca_input_focus` and get keys. Enabling evicts a focused button. Flag: `Ca_Window.app_keyboard`.
+- `ca_window_clear_focus(win)` — drops native focus + reapplies :focus CSS on the old chain.
+- Regression test: `test_app_keyboard_blocks_button_activation` in
+  `vendors/causality/causality/tests/ca_input_capture_tests.c` (binary `bin/causality_input_capture_tests`).
+
+Sol wiring:
+- `main.c`: primary `host.window` enables app keyboard right after creation. Secondary windows
+  (search, settings, file picker, ssh, plugin manager) stay native so their Tab/Enter UX works.
+- `workspace.c: sol_ui_system_set_focused_panel` clears native focus when the target is TERMINAL
+  or BUFFER (before the same-panel early return), so a focused text input releases the keyboard.
+  TREE deliberately does not clear: the git plugin re-asserts TREE every tick while its input is focused.
+- `input_router.c: native_ui_owns_keyboard()` (wraps `ca_window_input_capture`) — while a Causality
+  text input/modal owns the keyboard, `on_key` skips the terminal path and buffer edits and `on_char`
+  drops the char. Keymap/leader processing still runs. This makes the git plugin's per-input poll
+  only a panel-highlight concern, no longer required to prevent keystroke leaks.
+
+Build note: after an Xcode/clang update, delete `build/**/cmake_pch*.pch` if the build fails with
+"PCH file built from a different branch".
