@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static int g_failures = 0;
 
@@ -470,6 +471,55 @@ static void test_check_ignored(void)
     CHECK(!mixed_ignored[1]);
 }
 
+/* Verify submodule HEAD resolution through gitdir files, branches, and detached HEADs. */
+static void test_read_submodule_head(void)
+{
+    char base[GIT_PATH_CAP];
+    const char *tmp = getenv("TMPDIR");
+    snprintf(base, sizeof(base), "%s/sol_git_head_%d", tmp && tmp[0] ? tmp : "/tmp", (int)getpid());
+    char path[GIT_PATH_CAP + 64u];
+    char command[3u * GIT_PATH_CAP];
+    snprintf(command, sizeof(command),
+             "rm -rf '%s' && mkdir -p '%s/mods/lib' '%s/gitdirs/lib' '%s/mods/tool/.git'",
+             base, base, base, base);
+    CHECK(system(command) == 0);
+
+    snprintf(path, sizeof(path), "%s/mods/lib/.git", base);
+    FILE *file = fopen(path, "wb");
+    CHECK(file);
+    if (file) { fputs("gitdir: ../../gitdirs/lib\n", file); fclose(file); }
+    snprintf(path, sizeof(path), "%s/gitdirs/lib/HEAD", base);
+    file = fopen(path, "wb");
+    CHECK(file);
+    if (file) { fputs("ref: refs/heads/feature/x\n", file); fclose(file); }
+    snprintf(path, sizeof(path), "%s/mods/tool/.git/HEAD", base);
+    file = fopen(path, "wb");
+    CHECK(file);
+    if (file) { fputs("0123456789abcdef0123456789abcdef01234567\n", file); fclose(file); }
+
+    GitSubmodule lib = {0};
+    snprintf(lib.path, sizeof(lib.path), "mods/lib");
+    git_model_read_submodule_head(base, &lib);
+    CHECK(strcmp(lib.branch, "feature/x") == 0);
+    CHECK(!lib.detached);
+
+    GitSubmodule tool = {0};
+    snprintf(tool.path, sizeof(tool.path), "mods/tool");
+    git_model_read_submodule_head(base, &tool);
+    CHECK(tool.branch[0] == '\0');
+    CHECK(tool.detached);
+
+    GitSubmodule missing = {0};
+    snprintf(missing.path, sizeof(missing.path), "mods/none");
+    snprintf(missing.branch, sizeof(missing.branch), "stale");
+    git_model_read_submodule_head(base, &missing);
+    CHECK(missing.branch[0] == '\0');
+    CHECK(!missing.detached);
+
+    snprintf(command, sizeof(command), "rm -rf '%s'", base);
+    CHECK(system(command) == 0);
+}
+
 int main(void)
 {
     test_status_core_records();
@@ -488,6 +538,7 @@ int main(void)
     test_graph_layout_unrelated_branches();
     test_watch_classify();
     test_check_ignored();
+    test_read_submodule_head();
     if (g_failures == 0) {
         printf("sol_git_plugin_tests: all checks passed\n");
         return 0;

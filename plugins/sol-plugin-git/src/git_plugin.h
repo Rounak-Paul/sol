@@ -91,9 +91,11 @@ typedef enum GitSubmoduleState {
 typedef struct GitSubmodule {
     char path[GIT_PATH_CAP];
     char commit[GIT_HASH_CAP];
+    char branch[256];          /* checked-out branch; empty when detached or unknown */
     GitSubmoduleState state;
     bool content_modified;
     bool content_untracked;
+    bool detached;             /* HEAD points at a commit, not a branch */
 } GitSubmodule;
 
 typedef struct GitBranchEntry {
@@ -222,6 +224,16 @@ bool git_model_discover(const char *path,
                         GitRepoPaths *paths,
                         char *error,
                         size_t error_capacity);
+
+/*
+ * Read which branch an initialized submodule has checked out by following its
+ * .git file or directory to HEAD. Leaves branch empty and detached false when
+ * HEAD cannot be read. Exposed for tests.
+ *
+ * root       Superproject working-tree root.
+ * submodule  Submodule whose path is set; branch and detached are filled.
+ */
+void git_model_read_submodule_head(const char *root, GitSubmodule *submodule);
 
 /*
  * Resolve path to an absolute, symlink-free form with '/' separators.

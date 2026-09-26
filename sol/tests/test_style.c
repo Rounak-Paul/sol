@@ -137,10 +137,9 @@ int main(void)
     };
 
     for (size_t i = 0; i < sizeof(backgrounds) / sizeof(backgrounds[0]); ++i) {
-        char retro[SOL_RETRO_CSS_MAX];
-        const int len = sol_retro_build_css(backgrounds[i], retro,
-                                            (int)sizeof(retro));
-        CHECK(len > 0);
+        char *retro = sol_retro_build_css(backgrounds[i]);
+        CHECK(retro != NULL);
+        CHECK((int)strlen(retro) == sol_retro_format_css(backgrounds[i], NULL, 0u));
         CHECK(style_parses(retro));
         CHECK(style_composition_parses(SOL_UI_DEFAULT_THEME_CSS, retro));
 
@@ -156,6 +155,13 @@ int main(void)
         /* Both edges visible on every background, including the extremes
            where one direction has no room and the other must compensate. */
         CHECK(bevel_is_visible(backgrounds[i]));
+
+        /* Submodule cards and their tags join the bevel language, overriding
+           the theme's rounded, tinted cards including their :hover tints. */
+        CHECK(strstr(retro, ".scm-submodule-card-conflict:hover") != NULL);
+        CHECK(strstr(retro, ".scm-submodule-row:active") != NULL);
+        CHECK(strstr(retro, ".scm-tag-branch") != NULL);
+        free(retro);
     }
 
     /* The surface lift is what makes the extremes work: a near-black
@@ -190,9 +196,8 @@ int main(void)
        explorer and diff view keep the glass look while buffers go
        bevelled. Width stays owned by the appearance overlay. */
     {
-        char retro[SOL_RETRO_CSS_MAX];
-        CHECK(sol_retro_build_css(0x1e1e26u, retro,
-                                  (int)sizeof(retro)) > 0);
+        char *retro = sol_retro_build_css(0x1e1e26u);
+        CHECK(retro != NULL);
         CHECK(strstr(retro, "scrollbar-track-color") != NULL);
         CHECK(strstr(retro, "scrollbar-thumb-color") != NULL);
         CHECK(strstr(retro, "scrollbar-thumb-active-color") != NULL);
@@ -208,6 +213,7 @@ int main(void)
         CHECK(strstr(retro, ".term-viewport") != NULL);
         CHECK(strstr(retro, ".workspace-panel") != NULL);
         CHECK(style_composition_parses(SOL_UI_DEFAULT_THEME_CSS, retro));
+        free(retro);
     }
 
     puts("style overlay parsing and theme-aware bevel visibility passed");

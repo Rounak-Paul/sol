@@ -58,7 +58,9 @@
 #define SOL_UI_STYLE_RETRO_H
 
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* Bevel geometry. 2px is the authentic double-line width of the era's
    "window edge"; 1px is used for controls that are small enough that a
@@ -79,9 +81,6 @@
 /* Sunken wells are cut *into* the widget surface, so they sit a step below
    it — a text area flush with its frame reads as flat. */
 #define SOL_RETRO_WELL_DROP 26
-
-/* Longest CSS this overlay can emit, including the generated colours. */
-#define SOL_RETRO_CSS_MAX 12288u
 
 /*
  * Move a surface colour into the band where a two-sided bevel is
@@ -169,19 +168,19 @@ static inline void sol_retro_bevel_tones(uint32_t surface,
 }
 
 /*
- * Emit the Retro style CSS for a given theme background.
+ * Format the Retro style CSS for a given theme background, snprintf-style.
  *
  * background_rgb  Packed 0xRRGGBB theme background, used to derive the
  *                 widget surface and both bevel tones.
- * buf             Destination buffer.
- * bufsz           Bytes available in buf (SOL_RETRO_CSS_MAX is enough).
- * Returns the number of bytes written excluding the terminator, or 0 when
- * the arguments are invalid or the CSS did not fit.
+ * buf             Destination buffer, or NULL to measure only.
+ * bufsz           Bytes available in buf (0 when measuring).
+ * Returns the full CSS length excluding the terminator (output is complete
+ * only when that is below bufsz), or -1 on a formatting error.
  */
-static inline int sol_retro_build_css(uint32_t background_rgb,
-                                      char *buf, int bufsz)
+static inline int sol_retro_format_css(uint32_t background_rgb,
+                                       char *buf, size_t bufsz)
 {
-    if (!buf || bufsz <= 0) return 0;
+    if (!buf) bufsz = 0u;
 
     const uint32_t surface = sol_retro_widget_surface(background_rgb);
     uint32_t light = 0u, dark = 0u;
@@ -199,7 +198,7 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
        dropped the face colour too. */
     const uint32_t pressed = sol_retro_shift(surface, -12);
 
-    const int n = snprintf(buf, (size_t)bufsz,
+    const int n = snprintf(buf, bufsz,
         "/* ===== Retro style overlay (generated) ===== */"
 
         /* Kill every radius and blur first, so anything not explicitly
@@ -454,9 +453,67 @@ static inline int sol_retro_build_css(uint32_t background_rgb,
         dark, dark, light, light,
         /* separator groove */
         dark, light);
+    if (n < 0) return -1;
 
-    if (n < 0 || n >= bufsz) return 0;
-    return n;
+    const size_t used = (size_t)n;
+    const int cards = snprintf(used < bufsz ? buf + used : NULL,
+                               used < bufsz ? bufsz - used : 0u,
+        /* ---- Submodule cards: raised clickable cards that invert on press.
+           A state-coloured edge cannot coexist with a bevel, so state rides
+           on the tags instead, which are sunken wells like any label cut into
+           a control. Hover selectors are listed because the theme's
+           :hover tints outrank a plain class rule. */
+        ".scm-submodule-row,"
+        ".scm-submodule-card-clean, .scm-submodule-card-modified,"
+        ".scm-submodule-card-warning, .scm-submodule-card-conflict,"
+        ".scm-submodule-card-clean:hover, .scm-submodule-card-modified:hover,"
+        ".scm-submodule-card-warning:hover, .scm-submodule-card-conflict:hover {"
+        "  background: #%06x;"
+        "  border-top-width: 1px; border-left-width: 1px;"
+        "  border-bottom-width: 1px; border-right-width: 1px;"
+        "  border-top-color: #%06x; border-left-color: #%06x;"
+        "  border-bottom-color: #%06x; border-right-color: #%06x;"
+        "  border-radius: 0px;"
+        "}"
+        ".scm-submodule-row:active {"
+        "  background: #%06x;"
+        "  border-top-color: #%06x; border-left-color: #%06x;"
+        "  border-bottom-color: #%06x; border-right-color: #%06x;"
+        "}"
+        ".scm-tag, .scm-tag-branch, .scm-tag-clean, .scm-tag-modified,"
+        ".scm-tag-warning, .scm-tag-conflict {"
+        "  background: #%06x;"
+        "  border-top-width: 1px; border-left-width: 1px;"
+        "  border-bottom-width: 1px; border-right-width: 1px;"
+        "  border-top-color: #%06x; border-left-color: #%06x;"
+        "  border-bottom-color: #%06x; border-right-color: #%06x;"
+        "  border-radius: 0px;"
+        "}",
+        surface, light, light, dark, dark,
+        pressed, dark, dark, light, light,
+        well, well_dark, well_dark, well_light, well_light);
+    if (cards < 0 || (size_t)cards > (size_t)INT_MAX - used) return -1;
+    return (int)(used + (size_t)cards);
+}
+
+/*
+ * Build the Retro style CSS for a theme background in an exactly sized
+ * heap buffer.
+ *
+ * background_rgb  Packed 0xRRGGBB theme background.
+ * Returns a NUL-terminated string the caller frees, or NULL on failure.
+ */
+static inline char *sol_retro_build_css(uint32_t background_rgb)
+{
+    const int length = sol_retro_format_css(background_rgb, NULL, 0u);
+    if (length <= 0) return NULL;
+    char *css = (char *)malloc((size_t)length + 1u);
+    if (!css) return NULL;
+    if (sol_retro_format_css(background_rgb, css, (size_t)length + 1u) != length) {
+        free(css);
+        return NULL;
+    }
+    return css;
 }
 
 #endif /* SOL_UI_STYLE_RETRO_H */

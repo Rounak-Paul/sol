@@ -1576,12 +1576,8 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
         SolThemeColors colors;
         const uint32_t background = sol_theme_active_colors(ui->themes, &colors)
             ? colors.background_rgb : 0x1e1e26u;
-        retro = (char *)malloc(SOL_RETRO_CSS_MAX);
-        if (retro) {
-            const int rlen = sol_retro_build_css(background, retro,
-                                                 (int)SOL_RETRO_CSS_MAX);
-            if (rlen > 0) { style_css = retro; slen = (size_t)rlen; }
-        }
+        retro = sol_retro_build_css(background);
+        if (retro) { style_css = retro; slen = strlen(retro); }
     } else if (ui->styles) {
         style_css = sol_theme_active_css(ui->styles);
         slen = style_css ? strlen(style_css) : 0u;

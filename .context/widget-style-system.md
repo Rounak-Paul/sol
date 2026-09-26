@@ -157,3 +157,15 @@ no-op for a surface already inside the band.
 Links `stubs/sol_config_path_stub.c` so `sol_settings.c` can be linked for its
 pure helpers without dragging in `sol_config.c` (which pulls the whole UI
 layer) or touching the developer's real `~/.sol/settings.json`.
+
+## 2026-09-26 submodule cards in Retro + no fixed CSS cap
+
+- The Changes-tab submodule cards/tags (see git-source-control-plugin.md) kept Classic's rounded, tinted look under
+  Retro because Retro only restyles classes it lists (`*` merely zeroes radius at specificity 0, which the card's own
+  class rule outranks). Retro now renders cards as raised bevel buttons (`:active` inverts) and tags as sunken wells;
+  state is carried by the tag text colour, since a coloured left edge cannot coexist with a per-side bevel. The
+  theme's `.scm-submodule-card-*:hover` tints are listed explicitly because class+pseudo outranks a plain class.
+- `SOL_RETRO_CSS_MAX` (12 KB fixed buffer, silent fallback to no style on overflow) is gone:
+  `sol_retro_format_css(bg, buf, size)` is snprintf-style (NULL to measure) and `sol_retro_build_css(bg)` returns an
+  exactly-sized heap string the caller frees. Live Retro CSS is ~8 KB. `sol_style_tests` asserts measure == built
+  length and that the card rules are present for all seven test backgrounds.

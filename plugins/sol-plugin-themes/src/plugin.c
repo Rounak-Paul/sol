@@ -183,13 +183,23 @@ static bool append_submodule_card_css(ThemeCssBuilder *css, const ThemePalette *
     for (size_t i = 0u; i < sizeof(k_states) / sizeof(k_states[0]); ++i) {
         char rest[32];
         char hover[32];
+        char tag[32];
         if (!color_with_alpha(colors[i], fill[i], rest) ||
-            !color_with_alpha(colors[i], fill[i] * 2.0f, hover)) return false;
+            !color_with_alpha(colors[i], fill[i] * 2.0f, hover) ||
+            !color_with_alpha(colors[i], fill[i] * 2.0f + 0.04f, tag)) return false;
         css_append(css,
             ".scm-submodule-card-%s{background:%s;border-left-color:%s;}"
-            ".scm-submodule-card-%s:hover{background:%s;}",
-            k_states[i], rest, colors[i], k_states[i], hover);
+            ".scm-submodule-card-%s:hover{background:%s;}"
+            ".scm-tag-%s{background:%s;}",
+            k_states[i], rest, colors[i], k_states[i], hover, k_states[i], tag);
     }
+    char branch_tag[32];
+    if (!color_with_alpha(theme->text, theme->light ? 0.08f : 0.09f, branch_tag)) return false;
+    css_append(css,
+        ".scm-submodule-name{color:%s;}"
+        ".scm-tag-branch{background:%s;}"
+        ".scm-tag-branch-text,.scm-tag-icon{color:%s;}",
+        theme->text, branch_tag, theme->secondary);
     return css->valid;
 }
 

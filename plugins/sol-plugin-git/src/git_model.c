@@ -16,6 +16,17 @@ static void git_copy_span(char *destination,
     destination[copy] = '\0';
 }
 
+/* Return true when path is absolute on the host platform. */
+static bool git_path_is_absolute(const char *path)
+{
+#if defined(_WIN32)
+    return path[0] == '/' || path[0] == '\\' ||
+           (path[0] != '\0' && path[1] == ':');
+#else
+    return path[0] == '/';
+#endif
+}
+
 /* Store a concise command failure message. */
 static void git_command_error(char *error,
                               size_t capacity,
@@ -275,7 +286,69 @@ static bool git_model_refresh_submodules(const char *root,
     const bool parsed = git_model_parse_submodules(output, result.output_len,
                                                    snapshot, error, error_capacity);
     free(output);
-    return parsed;
+    if (!parsed) return false;
+    for (size_t i = 0u; i < snapshot->submodule_count; ++i) {
+        if (snapshot->submodules[i].state != GIT_SUBMODULE_UNINITIALIZED) {
+            git_model_read_submodule_head(root, &snapshot->submodules[i]);
+        }
+    }
+    return true;
+}
+
+/* Read the first line of a small text file without its line terminator. */
+static bool git_read_first_line(const char *path, char *out, size_t capacity)
+{
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    const bool read = fgets(out, (int)capacity, file) != NULL;
+    fclose(file);
+    if (!read) return false;
+    out[strcspn(out, "\r\n")] = '\0';
+    return true;
+}
+
+/* Follow a submodule's .git file or directory to its HEAD; see git_plugin.h. */
+void git_model_read_submodule_head(const char *root, GitSubmodule *submodule)
+{
+    if (!root || !submodule) return;
+    submodule->branch[0] = '\0';
+    submodule->detached = false;
+
+    char worktree[GIT_PATH_CAP];
+    char dot_git[GIT_PATH_CAP];
+    char git_dir[GIT_PATH_CAP];
+    char line[GIT_PATH_CAP];
+    int written = snprintf(worktree, sizeof(worktree), "%s/%s", root, submodule->path);
+    if (written <= 0 || (size_t)written >= sizeof(worktree)) return;
+    written = snprintf(dot_git, sizeof(dot_git), "%s/.git", worktree);
+    if (written <= 0 || (size_t)written >= sizeof(dot_git)) return;
+
+    static const char k_gitdir_prefix[] = "gitdir: ";
+    if (git_read_first_line(dot_git, line, sizeof(line)) &&
+        strncmp(line, k_gitdir_prefix, sizeof(k_gitdir_prefix) - 1u) == 0) {
+        const char *target = line + sizeof(k_gitdir_prefix) - 1u;
+        written = git_path_is_absolute(target)
+            ? snprintf(git_dir, sizeof(git_dir), "%s", target)
+            : snprintf(git_dir, sizeof(git_dir), "%s/%s", worktree, target);
+    } else {
+        written = snprintf(git_dir, sizeof(git_dir), "%s", dot_git);
+    }
+    if (written <= 0 || (size_t)written >= sizeof(git_dir)) return;
+
+    char head_path[GIT_PATH_CAP];
+    written = snprintf(head_path, sizeof(head_path), "%s/HEAD", git_dir);
+    if (written <= 0 || (size_t)written >= sizeof(head_path)) return;
+    if (!git_read_first_line(head_path, line, sizeof(line))) return;
+
+    static const char k_branch_prefix[] = "ref: refs/heads/";
+    static const char k_ref_prefix[] = "ref: ";
+    if (strncmp(line, k_branch_prefix, sizeof(k_branch_prefix) - 1u) == 0) {
+        git_copy_span(submodule->branch, sizeof(submodule->branch),
+                      line + sizeof(k_branch_prefix) - 1u,
+                      strlen(line + sizeof(k_branch_prefix) - 1u));
+    } else if (strncmp(line, k_ref_prefix, sizeof(k_ref_prefix) - 1u) != 0 && line[0]) {
+        submodule->detached = true;
+    }
 }
 
 /* Parse porcelain-v2 status bytes into a repository snapshot. */
@@ -341,17 +414,6 @@ static bool git_output_line(const char *text,
         while (*cursor == '\r' || *cursor == '\n') ++cursor;
     }
     return false;
-}
-
-/* Return true when path is absolute on the host platform. */
-static bool git_path_is_absolute(const char *path)
-{
-#if defined(_WIN32)
-    return path[0] == '/' || path[0] == '\\' ||
-           (path[0] != '\0' && path[1] == ':');
-#else
-    return path[0] == '/';
-#endif
 }
 
 /* Resolve an existing path to canonical absolute form; see git_plugin.h. */

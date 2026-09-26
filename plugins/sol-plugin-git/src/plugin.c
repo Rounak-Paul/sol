@@ -1563,55 +1563,91 @@ typedef enum GitSubmoduleUrgency {
     GIT_SUBMODULE_URGENCY_CONFLICT,
 } GitSubmoduleUrgency;
 
-/* Label, style classes, and rank describing one submodule row. */
+/* Label, style classes, and rank describing one submodule card. */
 typedef struct GitSubmodulePresentation {
     GitSubmoduleUrgency urgency;
     const char *label;
-    const char *text_style;
     const char *card_style;
+    const char *tag_style;
+    const char *text_style;
 } GitSubmodulePresentation;
 
 /*
  * Classify a submodule for display.
  *
  * submodule  Submodule status from the current snapshot.
- * Returns the row label, text/card style classes, and attention rank.
+ * Returns the state label, card/tag/text style classes, and attention rank.
  */
 static GitSubmodulePresentation git_submodule_presentation(
     const GitSubmodule *submodule)
 {
+#define GIT_SUBMODULE_LOOK(urgency, label, state)                          \
+    (GitSubmodulePresentation){ urgency, label,                            \
+        "scm-submodule-row scm-submodule-card-" state,                     \
+        "scm-tag scm-tag-" state,                                          \
+        "scm-tag-text scm-submodule-" state }
     if (submodule->state == GIT_SUBMODULE_CONFLICT) {
-        return (GitSubmodulePresentation){
-            GIT_SUBMODULE_URGENCY_CONFLICT, "Conflict", "scm-submodule-conflict",
-            "scm-submodule-row scm-submodule-card-conflict" };
+        return GIT_SUBMODULE_LOOK(GIT_SUBMODULE_URGENCY_CONFLICT, "Conflict", "conflict");
     }
     if (submodule->state == GIT_SUBMODULE_UNINITIALIZED) {
-        return (GitSubmodulePresentation){
-            GIT_SUBMODULE_URGENCY_WARNING, "Uninitialized", "scm-submodule-warning",
-            "scm-submodule-row scm-submodule-card-warning" };
-    }
-    if (submodule->state == GIT_SUBMODULE_REVISION_CHANGED) {
-        return (GitSubmodulePresentation){
-            GIT_SUBMODULE_URGENCY_MODIFIED, "Revision changed", "scm-submodule-modified",
-            "scm-submodule-row scm-submodule-card-modified" };
+        return GIT_SUBMODULE_LOOK(GIT_SUBMODULE_URGENCY_WARNING, "Uninitialized", "warning");
     }
     if (submodule->content_untracked) {
-        return (GitSubmodulePresentation){
-            GIT_SUBMODULE_URGENCY_WARNING, "Untracked content", "scm-submodule-warning",
-            "scm-submodule-row scm-submodule-card-warning" };
+        return GIT_SUBMODULE_LOOK(GIT_SUBMODULE_URGENCY_WARNING, "Untracked", "warning");
+    }
+    if (submodule->state == GIT_SUBMODULE_REVISION_CHANGED) {
+        return GIT_SUBMODULE_LOOK(GIT_SUBMODULE_URGENCY_MODIFIED, "New commits", "modified");
     }
     if (submodule->content_modified) {
-        return (GitSubmodulePresentation){
-            GIT_SUBMODULE_URGENCY_MODIFIED, "Modified content", "scm-submodule-modified",
-            "scm-submodule-row scm-submodule-card-modified" };
+        return GIT_SUBMODULE_LOOK(GIT_SUBMODULE_URGENCY_MODIFIED, "Modified", "modified");
     }
-    return (GitSubmodulePresentation){
-        GIT_SUBMODULE_URGENCY_CLEAN, "Clean", "scm-submodule-clean",
-        "scm-submodule-row scm-submodule-card-clean" };
+    return GIT_SUBMODULE_LOOK(GIT_SUBMODULE_URGENCY_CLEAN, "Clean", "clean");
+#undef GIT_SUBMODULE_LOOK
+}
+
+/*
+ * Return a submodule's display name: its last path component, or the full
+ * path when another submodule shares that name.
+ *
+ * snapshot   Snapshot holding every submodule.
+ * submodule  Submodule to name.
+ */
+static const char *git_submodule_label(const GitSnapshot *snapshot,
+                                       const GitSubmodule *submodule)
+{
+    const char *name = git_basename(submodule->path);
+    for (size_t i = 0u; i < snapshot->submodule_count; ++i) {
+        const GitSubmodule *other = &snapshot->submodules[i];
+        if (other != submodule && strcmp(git_basename(other->path), name) == 0) {
+            return submodule->path;
+        }
+    }
+    return name;
+}
+
+/*
+ * Render one small pill tag.
+ *
+ * tag_style   Classes for the pill container.
+ * icon        Optional leading icon glyph; NULL for none.
+ * text        Tag label.
+ * text_style  Classes for the label.
+ */
+static void git_render_tag(const char *tag_style,
+                           const char *icon,
+                           const char *text,
+                           const char *text_style)
+{
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = tag_style });
+    if (icon) ca_text(&(Ca_TextDesc){ .text = icon, .style = "scm-tag-icon" });
+    ca_text(&(Ca_TextDesc){ .text = text, .style = text_style });
+    ca_div_end();
 }
 
 /*
  * Render one clickable submodule card that switches the active repository.
+ * Shows the submodule's name with branch and state tags; the full path is in
+ * the tooltip and in the repository header once selected.
  *
  * plugin     Plugin state owning action contexts.
  * submodule  Submodule to render.
@@ -1630,21 +1666,29 @@ static void git_render_submodule_card(GitPlugin *plugin,
         .click_data = context,
         .disabled = plugin->busy || !context,
     });
-    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_REPO, .style = look->text_style });
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style = "scm-submodule-info",
     });
-    ca_text(&(Ca_TextDesc){ .text = submodule->path,
-                             .style = "scm-submodule-path" });
-    char details[96];
-    snprintf(details, sizeof(details), "%.12s  ·  %s", submodule->commit,
-             look->label);
-    ca_text(&(Ca_TextDesc){ .text = details, .style = look->text_style });
+    ca_text(&(Ca_TextDesc){ .text = git_submodule_label(&plugin->snapshot, submodule),
+                             .style = "scm-submodule-name" });
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_HORIZONTAL,
+        .style = "scm-submodule-tags",
+    });
+    if (submodule->branch[0]) {
+        git_render_tag("scm-tag scm-tag-branch", CA_ICON_NF_OCT_GIT_BRANCH,
+                       submodule->branch, "scm-tag-text scm-tag-branch-text");
+    } else if (submodule->detached) {
+        git_render_tag("scm-tag scm-tag-branch", CA_ICON_NF_COD_GIT_COMMIT,
+                       "detached", "scm-tag-text scm-tag-branch-text");
+    }
+    git_render_tag(look->tag_style, NULL, look->label, look->text_style);
+    ca_div_end();
     ca_div_end();
     ca_btn_end();
     char tooltip[GIT_PATH_CAP + 64u];
-    snprintf(tooltip, sizeof(tooltip), "Use %s as the active repository",
+    snprintf(tooltip, sizeof(tooltip), "%s — click to use as the active repository",
              submodule->path);
     ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
 }

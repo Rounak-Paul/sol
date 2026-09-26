@@ -524,3 +524,15 @@ Submodules (Changes tab): sorted conflict → warning (uninitialized/untracked) 
 `git_submodule_presentation`; rendered by `git_render_submodule_card` as cards (`.scm-submodule-list`,
 `.scm-submodule-card-<state>`: translucent state tint, deeper on hover, 3px state-colored left edge). Fallback in
 style.h; themed via `append_submodule_card_css` in sol-plugin-themes. Not visually verified (no screen capture).
+
+## 2026-09-26 submodule cards v2 (narrow panels, name + tags)
+
+- Card shows only the submodule name (`git_submodule_label`: basename, full path only if another submodule shares
+  the name) plus pill tags: branch (`GitSubmodule.branch`, or "detached") and state (Clean / Modified / New commits /
+  Untracked / Uninitialized / Conflict). Commit pointer and repo glyph removed; full path lives in the tooltip.
+- Branch comes from `git_model_read_submodule_head` (follows `.git` file `gitdir:` or `.git/` dir to HEAD; pure file IO
+  on the worker, no extra git processes). Unit test `test_read_submodule_head`.
+- Narrow-panel fix: every flex level (list, card, info, tags, branch tag) has `min-width: 0px` + `overflow: hidden`,
+  so text clips inside the card. Measured live at split ratio 0.10 (list 98px): card right edge 97.2 < content edge 98.6.
+- Classes: `.scm-submodule-name`, `.scm-submodule-tags`, `.scm-tag`, `.scm-tag-branch`, `.scm-tag-<state>`,
+  `.scm-tag-text`, `.scm-tag-branch-text`, `.scm-tag-icon`; themed in `append_submodule_card_css`.
