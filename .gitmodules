@@ -1,39 +1,51 @@
 [submodule "vendors/causality"]
 	path = vendors/causality
 	url = https://github.com/Rounak-Paul/causality.git
+	branch = main
 [submodule "vendors/tree-sitter"]
 	path = vendors/tree-sitter
 	url = https://github.com/Rounak-Paul/tree-sitter.git
+	branch = master
 [submodule "plugins/sol-plugin-c/vendors/tree-sitter-c"]
 	path = plugins/sol-plugin-c/vendors/tree-sitter-c
 	url = https://github.com/Rounak-Paul/tree-sitter-c.git
+	branch = master
 [submodule "plugins/sol-plugin-cpp/vendors/tree-sitter-cpp"]
 	path = plugins/sol-plugin-cpp/vendors/tree-sitter-cpp
 	url = https://github.com/Rounak-Paul/tree-sitter-cpp.git
+	branch = master
 [submodule "plugins/sol-plugin-python/vendors/tree-sitter-python"]
 	path = plugins/sol-plugin-python/vendors/tree-sitter-python
 	url = https://github.com/Rounak-Paul/tree-sitter-python.git
+	branch = master
 [submodule "plugins/sol-plugin-javascript/vendors/tree-sitter-javascript"]
 	path = plugins/sol-plugin-javascript/vendors/tree-sitter-javascript
 	url = https://github.com/Rounak-Paul/tree-sitter-javascript.git
+	branch = master
 [submodule "plugins/sol-plugin-typescript/vendors/tree-sitter-typescript"]
 	path = plugins/sol-plugin-typescript/vendors/tree-sitter-typescript
 	url = https://github.com/Rounak-Paul/tree-sitter-typescript.git
+	branch = master
 [submodule "plugins/sol-plugin-json/vendors/tree-sitter-json"]
 	path = plugins/sol-plugin-json/vendors/tree-sitter-json
 	url = https://github.com/Rounak-Paul/tree-sitter-json.git
+	branch = master
 [submodule "plugins/sol-plugin-html/vendors/tree-sitter-html"]
 	path = plugins/sol-plugin-html/vendors/tree-sitter-html
 	url = https://github.com/Rounak-Paul/tree-sitter-html.git
+	branch = master
 [submodule "plugins/sol-plugin-markdown/vendors/tree-sitter-markdown"]
 	path = plugins/sol-plugin-markdown/vendors/tree-sitter-markdown
 	url = https://github.com/Rounak-Paul/tree-sitter-markdown.git
+	branch = split_parser
 [submodule "plugins/sol-plugin-css/vendors/tree-sitter-css"]
 	path = plugins/sol-plugin-css/vendors/tree-sitter-css
 	url = https://github.com/Rounak-Paul/tree-sitter-css.git
+	branch = master
 [submodule "plugins/sol-plugin-cmake/vendors/tree-sitter-cmake"]
 	path = plugins/sol-plugin-cmake/vendors/tree-sitter-cmake
 	url = https://github.com/Rounak-Paul/tree-sitter-cmake.git
+	branch = master
 [submodule "vendors/mbedtls"]
 	path = vendors/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
