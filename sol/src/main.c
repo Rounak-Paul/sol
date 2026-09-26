@@ -1438,10 +1438,11 @@ static bool sol_handle_external_change_for_buffer(SolAppContext *app, SolBufferI
 }
 
 /*
- * Drain the file watcher's queued events once per frame and react.
+ * Drain every queued file-watcher event once per frame and react.
  *
- * Always refreshes the explorer tree (once per drained batch, not per
- * event) when any event falls under the watched root. For events under
+ * Publishes each batch as SOL_EVENT_FS_CHANGED for observers (e.g. the Git
+ * plugin), then refreshes the explorer once when any event falls under the
+ * watched root. For events under
  * an open buffer's path: reloads clean buffers, and tracks dirty ones
  * that were left stale so a single aggregated status-bar warning can be
  * shown/hidden — never a blocking popup, since an external change is
@@ -1453,37 +1454,42 @@ static void sol_drain_file_watcher(SolAppContext *app)
 {
     if (!app || !app->watcher || !app->buffers) return;
 
-    SolFileWatchEvent events[32];
-    const size_t n = sol_file_watcher_poll(app->watcher, events, 32u);
-    if (n == 0u) return;
-
+    enum { SOL_WATCH_BATCH = 32 };
+    SolFileWatchEvent events[SOL_WATCH_BATCH];
     const char *root = sol_ui_system_file_tree_root(app->ui);
     bool any_under_root = false;
-    for (size_t i = 0u; i < n; ++i) {
-        if (sol_path_starts_with_dir(events[i].path, root ? root : "")) {
-            any_under_root = true;
-            break;
+    bool any_new_conflict = false;
+    size_t n = 0u;
+    do {
+        n = sol_file_watcher_poll(app->watcher, events, SOL_WATCH_BATCH);
+        if (n == 0u) break;
+
+        for (size_t i = 0u; i < n && !any_under_root; ++i) {
+            any_under_root = sol_path_starts_with_dir(events[i].path, root ? root : "");
         }
-    }
+
+        for (size_t i = 0u; i < n; ++i) {
+            const SolBufferId id = sol_text_buffer_find_by_path(app->buffers, events[i].path);
+            if (id == 0u) continue;   /* no open buffer for this path */
+
+            if (!sol_handle_external_change_for_buffer(app, id)) {
+                SolBuffer *buf = sol_buffer_get(app->buffers, id);
+                SolTextBuffer *tb = sol_text_buffer_state(buf);
+                if (tb && sol_text_buffer_is_dirty(tb)) {
+                    sol_text_buffer_set_external_change_pending(tb);
+                    any_new_conflict = true;
+                }
+            }
+        }
+
+        const SolFsChangedPayload payload = { .events = events, .count = n };
+        sol_event_publish(app->events, SOL_EVENT_FS_CHANGED,
+                          &payload, sizeof(payload), app->systems);
+    } while (n == SOL_WATCH_BATCH);
+
     if (any_under_root) {
         sol_refresh_explorer(app);
     }
-
-    bool any_new_conflict = false;
-    for (size_t i = 0u; i < n; ++i) {
-        const SolBufferId id = sol_text_buffer_find_by_path(app->buffers, events[i].path);
-        if (id == 0u) continue;   /* no open buffer for this path */
-
-        if (!sol_handle_external_change_for_buffer(app, id)) {
-            SolBuffer *buf = sol_buffer_get(app->buffers, id);
-            SolTextBuffer *tb = sol_text_buffer_state(buf);
-            if (tb && sol_text_buffer_is_dirty(tb)) {
-                sol_text_buffer_set_external_change_pending(tb);
-                any_new_conflict = true;
-            }
-        }
-    }
-
     if (any_new_conflict) {
         sol_refresh_external_change_status(app);
     }

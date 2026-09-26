@@ -3353,6 +3353,17 @@ void sol_ui_system_wake(SolUISystem *ui)
 }
 
 /*
+ * Schedule a frame after a delay without waking earlier deadlines later.
+ *
+ * ui             The UI system owning the Causality instance.
+ * delay_seconds  Seconds from now; negative values fire on the next tick.
+ */
+void sol_ui_system_request_frame_after(SolUISystem *ui, double delay_seconds)
+{
+    if (ui && ui->instance) ca_instance_request_frame_after(ui->instance, delay_seconds);
+}
+
+/*
  * Get the current window dimensions.
  *
  * ui     The UI system to query.

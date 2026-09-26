@@ -362,6 +362,25 @@ SOL_API void sol_plugin_notify_side_panel(SolPluginCtx *ctx,
 /* Wake the editor event loop after a worker publishes completion state. */
 SOL_API void sol_plugin_wake_ui(SolPluginCtx *ctx);
 
+/* Ensure side-panel ticks run again within delay_seconds, even while idle. */
+SOL_API void sol_plugin_request_tick_after(SolPluginCtx *ctx, double delay_seconds);
+
+/*
+ * Recursively watch a directory outside the workspace root. Changes wake the
+ * UI loop; drain them from a tick with sol_plugin_directory_watch_poll.
+ * Returns NULL when the path cannot be watched. Destroy before unload.
+ */
+SOL_API SolFileWatcher *sol_plugin_directory_watch_create(SolPluginCtx *ctx,
+                                                          const char *path);
+
+/* Move up to max_events pending changes into out_events; returns the count. */
+SOL_API size_t sol_plugin_directory_watch_poll(SolFileWatcher *watcher,
+                                               SolFileWatchEvent *out_events,
+                                               size_t max_events);
+
+/* Stop and free a directory watch. NULL is ignored. */
+SOL_API void sol_plugin_directory_watch_destroy(SolFileWatcher *watcher);
+
 /* ================================================================== */
 /* Buffer operations                                                   */
 /* ================================================================== */

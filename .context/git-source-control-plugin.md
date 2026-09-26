@@ -482,3 +482,45 @@ keyboard commands, asynchronous operations, and safe repository mutation flows.
 - Native launch and panel-open runtime paths completed without errors. macOS
   denied Accessibility keystroke injection and display capture, so pixel-level
   screenshot inspection was unavailable in this environment.
+
+## 2026-09-26 filesystem watcher integration + submodule cards
+
+**Why it never auto-refreshed:** the plugin had no filesystem input at all — only
+`SOL_EVENT_FILE_TREE_ROOT`, manual Refresh, and its own task completions. Not a redraw bug.
+
+Core (event/observer, reusable by any plugin):
+- `SOL_EVENT_FS_CHANGED` + `SolFsChangedPayload{events,count}` (`sol_event.h`), published per batch by
+  `sol_drain_file_watcher` (main.c), which now drains until empty (previously 32/frame, leftovers waited
+  for the next wake).
+- `sol_plugin_request_tick_after(ctx, s)` → `sol_ui_system_request_frame_after` → `ca_instance_request_frame_after`
+  (min-deadline semantics; needed because the loop blocks in glfwWaitEvents).
+- `sol_plugin_directory_watch_create/poll/destroy` — plugin-owned recursive watch that wakes the UI.
+  `sol_plugin_tests` now links `sol_file_watcher.c` (+ CoreServices on Apple); stub for request_frame_after.
+
+Plugin:
+- `git_model_discover` also returns canonical `GitRepoPaths{git_dir, common_dir}`
+  (`rev-parse --show-toplevel --absolute-git-dir --git-common-dir`; relative common dir resolved vs cwd).
+- `git_watch_classify` (git_model.c, unit-tested): worktree / ignore-rules / metadata / refs / none.
+  Noise dropped: `*.lock`, objects/, logs/, hooks/, lfs/, FETCH_HEAD, ORIG_HEAD, COMMIT_EDITMSG. `refs/`, HEAD,
+  packed-refs, MERGE/CHERRY_PICK/REVERT/REBASE_HEAD → refs (history+branches invalidated and reloaded if that tab
+  is open; also fixes History going empty after an in-app commit).
+- Debounce: 300 ms quiet, 2 s max wait; `GIT_TASK_WATCH_REFRESH` is silent (no busy icon, no error clobbering,
+  no redraw unless the snapshot memcmp differs or refs changed).
+- Ignored-dir filter: each worktree change contributes (top-level dir, parent dir); worker runs one
+  `git check-ignore -- dirs...` and skips `git status` when every change has an ignored dir (Git can't re-include
+  below an ignored dir). Results cached (64, round-robin), cleared on .gitignore / info/exclude / repo change.
+  Paths inside submodules are never filtered (check-ignore exits 128 there); any error fails closed → refresh.
+- Status runs `git --no-optional-locks status` / `submodule status` so a refresh never rewrites the index
+  and re-triggers itself.
+- `busy` (user-visible op) is separate from `task_running`; a user action arriving during a background refresh is
+  queued in `deferred` and started on completion, never dropped. UI `disabled`/spinner use `busy`.
+- Common dir outside the workspace (workspace is a subdir, a submodule, or a linked worktree) gets a dedicated
+  metadata watch (`git_watch_sync_metadata`). Watcher paths are mapped from the raw workspace spelling to the
+  realpath'd one before matching Git's canonical paths.
+- Verified live with stderr tracing on `bin/Sol.app` (untracked create/delete refresh; ignored build/ churn skipped
+  with no redraw; CLI commit/checkout in a repo whose .git is outside the workspace updates branch).
+
+Submodules (Changes tab): sorted conflict → warning (uninitialized/untracked) → modified → clean via
+`git_submodule_presentation`; rendered by `git_render_submodule_card` as cards (`.scm-submodule-list`,
+`.scm-submodule-card-<state>`: translucent state tint, deeper on hover, 3px state-colored left edge). Fallback in
+style.h; themed via `append_submodule_card_css` in sol-plugin-themes. Not visually verified (no screen capture).

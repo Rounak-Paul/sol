@@ -9,9 +9,8 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
-#define THEME_CSS_CAPACITY 8192u
 
 typedef struct ThemePalette {
     const char *id;
@@ -32,6 +31,7 @@ typedef struct ThemePalette {
     bool light;
 } ThemePalette;
 
+/* Heap-backed CSS text that grows on demand; valid is false only after OOM. */
 typedef struct ThemeCssBuilder {
     char *data;
     size_t capacity;
@@ -108,21 +108,43 @@ static const ThemePalette k_themes[] = {
     { "com.sol.theme.coral", "Coral", "#fff5f5", "#ffe4e4", "#fff5f5", "#4a0808", "#7a1818", "#c05050", "#ff6b6b", "#ffd166", "#dc2626", "#16a34a", "#d97706", 0xff6b6b, 0xffd166, true },
 };
 
-/* Append formatted CSS while preserving a single truncation state. */
+/*
+ * Append formatted CSS, growing the buffer as needed.
+ *
+ * builder  Destination builder; left invalid after an allocation failure.
+ * format   printf-style format followed by its arguments.
+ */
 static void css_append(ThemeCssBuilder *builder, const char *format, ...)
 {
-    if (!builder || !builder->valid || builder->length >= builder->capacity) return;
+    if (!builder || !builder->valid) return;
     va_list args;
     va_start(args, format);
-    const int written = vsnprintf(builder->data + builder->length,
-                                  builder->capacity - builder->length,
-                                  format, args);
-    va_end(args);
-    if (written < 0 || (size_t)written >= builder->capacity - builder->length) {
+    va_list measure;
+    va_copy(measure, args);
+    const int needed = vsnprintf(NULL, 0, format, measure);
+    va_end(measure);
+    if (needed < 0) {
         builder->valid = false;
+        va_end(args);
         return;
     }
-    builder->length += (size_t)written;
+    const size_t required = builder->length + (size_t)needed + 1u;
+    if (required > builder->capacity) {
+        size_t capacity = builder->capacity ? builder->capacity : 4096u;
+        while (capacity < required) capacity *= 2u;
+        char *grown = (char *)realloc(builder->data, capacity);
+        if (!grown) {
+            builder->valid = false;
+            va_end(args);
+            return;
+        }
+        builder->data = grown;
+        builder->capacity = capacity;
+    }
+    vsnprintf(builder->data + builder->length, builder->capacity - builder->length,
+              format, args);
+    va_end(args);
+    builder->length += (size_t)needed;
 }
 
 /* Convert a compile-time #rrggbb palette color to CSS rgba notation. */
@@ -145,10 +167,44 @@ static uint32_t packed_color(const char *hex)
     return (uint32_t)((r << 16u) | (g << 8u) | b);
 }
 
-/* Build a complete semantic override for one palette. */
-static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacity)
+/*
+ * Append state-tinted submodule card rules: a translucent fill of the state
+ * color that deepens on hover, with a solid state-colored leading edge.
+ *
+ * css    Builder receiving the rules.
+ * theme  Palette supplying state colors.
+ * Returns false when a palette color cannot be converted.
+ */
+static bool append_submodule_card_css(ThemeCssBuilder *css, const ThemePalette *theme)
 {
-    if (!theme || !out || capacity == 0u) return false;
+    static const char *const k_states[] = { "clean", "modified", "warning", "conflict" };
+    const char *const colors[] = { theme->muted, theme->warning, theme->warning, theme->danger };
+    const float fill[] = { theme->light ? 0.08f : 0.07f, 0.12f, 0.14f, 0.16f };
+    for (size_t i = 0u; i < sizeof(k_states) / sizeof(k_states[0]); ++i) {
+        char rest[32];
+        char hover[32];
+        if (!color_with_alpha(colors[i], fill[i], rest) ||
+            !color_with_alpha(colors[i], fill[i] * 2.0f, hover)) return false;
+        css_append(css,
+            ".scm-submodule-card-%s{background:%s;border-left-color:%s;}"
+            ".scm-submodule-card-%s:hover{background:%s;}",
+            k_states[i], rest, colors[i], k_states[i], hover);
+    }
+    return css->valid;
+}
+
+/*
+ * Build a complete semantic override for one palette, reusing css's buffer.
+ *
+ * theme  Palette to render.
+ * css    Builder that is reset and filled; the caller owns and frees css->data.
+ * Returns false when a palette color is malformed or memory runs out.
+ */
+static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
+{
+    if (!theme || !css) return false;
+    css->length = 0u;
+    css->valid = true;
     char chrome[32], panel[32], editor[32], raised[32], popup_bg[32], hover[32], selected[32];
     char table_header[32], table_row[32], table_row_alt[32], table_divider[32];
     const float surface_alpha = theme->light ? 0.62f : 0.48f;
@@ -166,42 +222,41 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         !color_with_alpha(theme->primary, theme->light ? 0.50f : 0.58f, table_divider))
         return false;
 
-    ThemeCssBuilder css = { .data = out, .capacity = capacity, .valid = true };
-    css_append(&css,
+    css_append(css,
         "*{scrollbar-track-color:transparent;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}",
         selected, theme->primary);
-    css_append(&css,
+    css_append(css,
         ".native-scrollbar{scrollbar-track-color:transparent;scrollbar-thumb-color:%s;scrollbar-thumb-active-color:%s;}",
         selected, theme->primary);
-    css_append(&css, ".ca-titlebar{background:%s;}", chrome);
-    css_append(&css,
+    css_append(css, ".ca-titlebar{background:%s;}", chrome);
+    css_append(css,
         ".ca-titlebar-title,.ca-titlebar-menu-item,.ca-titlebar-control{color:%s;}",
         theme->secondary);
-    css_append(&css,
+    css_append(css,
         ".ca-titlebar-menu-item:hover,.ca-titlebar-control:hover{background:%s;color:%s;}",
         hover, theme->text);
-    css_append(&css, ".ca-titlebar-close{color:%s;}.ca-titlebar-close:hover{background:%s;}",
+    css_append(css, ".ca-titlebar-close{color:%s;}.ca-titlebar-close:hover{background:%s;}",
         theme->danger, hover);
-    css_append(&css, "splitter{background:transparent;color:%s;}", theme->primary);
-    css_append(&css, ".status-bar{background:%s;}.term-panel{background:%s;}", chrome, panel);
-    css_append(&css, ".term-filler,.term-viewport{background:transparent;}");
-    css_append(&css, ".status-bar-text{color:%s;}", theme->muted);
-    css_append(&css,
+    css_append(css, "splitter{background:transparent;color:%s;}", theme->primary);
+    css_append(css, ".status-bar{background:%s;}.term-panel{background:%s;}", chrome, panel);
+    css_append(css, ".term-filler,.term-viewport{background:transparent;}");
+    css_append(css, ".status-bar-text{color:%s;}", theme->muted);
+    css_append(css,
         ".status-bar-badge-key{background:%s;}.status-bar-badge-command{background:%s;}",
         selected, hover);
-    css_append(&css, ".status-bar-badge-leader{background:%s;}", raised);
+    css_append(css, ".status-bar-badge-leader{background:%s;}", raised);
     /* Project-session tab strip: same chrome tier as .status-bar/.ca-titlebar
        (it's the top chrome bar, not a workspace-interior surface like
        .buffer-tabs-row), same interactive-state tokens as .buffer-tab so
        switching projects reads consistently with switching buffers. */
-    css_append(&css,
+    css_append(css,
         ".project-tabs{background:%s;}"
         ".project-tab{background:%s;}.project-tab:hover{background:%s;}"
         ".project-tab-active{background:%s;}"
         ".project-tab-label{color:%s;}.project-tab-active .project-tab-label{color:%s;}",
         chrome, panel, hover, selected, theme->muted, theme->text);
 
-    css_append(&css,
+    css_append(css,
         ".tree-panel,.plugin-side-panel{background:%s;}"
         ".tree-section-header{background:transparent;}"
         ".tree-section-title,.tree-arrow{color:%s;}"
@@ -224,7 +279,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->muted, theme->text, selected, theme->primary, selected,
         theme->primary);
 
-    css_append(&css,
+    css_append(css,
         ".hl-keyword,.hl-macro{color:%s;}.hl-comment{color:%s;}"
         ".hl-string,.hl-regex{color:%s;}"
         ".hl-number,.hl-constant,.hl-escape{color:%s;}"
@@ -239,7 +294,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->danger, theme->warning, theme->danger, theme->accent,
         theme->success, theme->primary, theme->warning);
 
-    css_append(&css,
+    css_append(css,
         ".markdown-heading-1,.markdown-heading-2,.markdown-heading-3{color:%s;}"
         ".markdown-paragraph,.markdown-list{color:%s;}"
         ".markdown-strong{color:%s;}.markdown-emphasis,.markdown-quote{color:%s;}"
@@ -252,7 +307,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->muted, theme->accent, editor, theme->primary, theme->primary,
         theme->secondary, editor, editor, theme->primary, theme->success);
 
-    css_append(&css,
+    css_append(css,
         ".markdown-table{color:%s;}"
         ".markdown-table-cell{background:%s;border-left-color:%s;}"
         ".markdown-table-cell-alt{background:%s;}"
@@ -261,7 +316,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         theme->secondary, table_row, hover, table_row_alt, theme->text,
         table_header, selected, table_divider);
 
-    css_append(&css,
+    css_append(css,
         ".welcome-pane,.fp-list,.search-results,.pm-right,.sw-right{background:%s;}"
         ".welcome-title{color:%s;}"
         ".welcome-subtitle,.welcome-section-label,.term-tab{color:%s;}"
@@ -283,15 +338,15 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         selected, editor, theme->text, theme->accent, chrome, popup_bg,
         theme->text, hover, selected, theme->text);
 
-    css_append(&css,
+    css_append(css,
         ".workspace-panel{background:%s;}"
         ".workspace-panel-chrome{background:%s;}"
         ".workspace-panel-well{background:transparent;}",
         panel, raised);
 
-    css_append(&css,
+    css_append(css,
         ".scm-header,.scm-toolbar,.scm-repository,.scm-commit-box,.scm-section-header,.term-header{background:%s;}"
-        ".scm-file-row:hover,.scm-commit-row:hover,.scm-branch-row:hover,.scm-submodule-row:hover{background:%s;}"
+        ".scm-file-row:hover,.scm-commit-row:hover,.scm-branch-row:hover{background:%s;}"
         ".scm-commit-input,.scm-branch-input{background:%s;color:%s;}"
         ".scm-branch-row-current,.term-tab-active{background:%s;color:%s;}"
         ".term-cursor-focused{background:%s;}"
@@ -311,7 +366,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
        panel's interactive chrome (title icon, branch icon, active tab,
        CTA buttons); success/danger/warning/accent drive git status
        semantics (added/modified/deleted/conflict, ahead/behind, busy). */
-    css_append(&css,
+    css_append(css,
         ".scm-title-icon,.scm-branch-icon,.scm-clean-icon{color:%s;}"
         ".scm-icon-action:hover,.scm-header-icon-action:hover,"
         ".scm-action-icon:hover{background:%s;color:%s;}"
@@ -358,7 +413,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
        identically to a clickable one — a correctly-refused click looked
        like the button was just randomly unresponsive. theme->muted at low
        alpha keeps it visibly dimmed without hardcoding an off-palette gray. */
-    css_append(&css,
+    css_append(css,
         ".scm-header-action:disabled,.scm-action:disabled,.scm-section-action:disabled,"
         ".scm-primary-action:disabled,.scm-danger-action:disabled{background:%s;color:%s;}"
         ".scm-header-action:disabled:hover,.scm-action:disabled:hover,"
@@ -370,7 +425,7 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".scm-action-icon:disabled:hover,.scm-remote-action:disabled:hover"
         "{background:transparent;color:%s;}",
         panel, theme->muted, panel, theme->muted, theme->muted, theme->muted);
-    css_append(&css,
+    css_append(css,
         ".scm-graph-connector{background:%s;}"
         ".scm-submodule-clean{color:%s;}"
         ".scm-submodule-modified{color:%s;}"
@@ -378,7 +433,8 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".scm-submodule-conflict{color:%s;}",
         theme->primary, theme->muted, theme->warning, theme->warning,
         theme->danger);
-    css_append(&css,
+    if (!append_submodule_card_css(css, theme)) return false;
+    css_append(css,
         ".scm-remote-action{color:%s;}"
         ".scm-remote-action:hover{background:%s;color:%s;}"
         ".scm-remote-action-icon{color:%s;}"
@@ -388,21 +444,21 @@ static bool build_theme_css(const ThemePalette *theme, char *out, size_t capacit
         ".scm-remote-action-icon-push-ready{color:%s;}",
         theme->muted, hover, theme->text, theme->primary, hover, hover,
         theme->warning, theme->success);
-    return css.valid && css.length > 0u;
+    return css->valid && css->length > 0u;
 }
 
 /* Register every curated palette as a complete Glass-derived theme. */
 static bool themes_on_load(SolPluginCtx *ctx)
 {
-    char css[THEME_CSS_CAPACITY];
+    ThemeCssBuilder css = {0};
     for (size_t i = 0u; i < sizeof(k_themes) / sizeof(k_themes[0]); ++i) {
         const ThemePalette *theme = &k_themes[i];
-        if (!build_theme_css(theme, css, sizeof(css)) ||
+        if (!build_theme_css(theme, &css) ||
             !sol_plugin_register_theme(ctx, &(SolThemeDesc){
                 .id = theme->id,
                 .name = theme->name,
                 .base_id = "com.sol.theme.glass",
-                .css = css,
+                .css = css.data,
                 .colors = {
                     .background_rgb = packed_color(theme->background),
                     .primary_rgb = theme->primary_rgb,
@@ -413,6 +469,7 @@ static bool themes_on_load(SolPluginCtx *ctx)
             sol_plugin_log(ctx, "failed to register theme '%s'", theme->id);
         }
     }
+    free(css.data);
     return true;
 }
 

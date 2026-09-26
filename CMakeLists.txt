@@ -61,8 +61,10 @@ if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /STACK:8388608")
 endif()
 
-# Output directories
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+# Output directories. Static archives stay inside each build tree: they are
+# link inputs, and a shared location lets a Debug and a Release tree overwrite
+# each other's archive and link mismatched struct layouts.
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 
@@ -251,7 +253,7 @@ target_include_directories(tree_sitter_runtime
     PRIVATE ${CMAKE_SOURCE_DIR}/vendors/tree-sitter/lib/src
 )
 set_target_properties(tree_sitter_runtime PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # Application
 add_subdirectory(sol)

@@ -152,6 +152,12 @@ void sol_ui_system_wake(SolUISystem *ui)
     (void)ui;
 }
 
+void sol_ui_system_request_frame_after(SolUISystem *ui, double delay_seconds)
+{
+    (void)ui;
+    (void)delay_seconds;
+}
+
 bool sol_ui_system_register_theme(SolUISystem *ui, const SolThemeDesc *desc)
 {
     return ui && sol_theme_register(ui->themes, desc);

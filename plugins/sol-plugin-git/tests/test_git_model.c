@@ -180,8 +180,13 @@ static void test_refresh_submodules(void)
     GitSnapshot *snapshot = (GitSnapshot *)calloc(1u, sizeof(*snapshot));
     CHECK(snapshot);
     if (!snapshot) return;
-    CHECK(git_model_discover(".", root, sizeof(root), error, sizeof(error)));
+    GitRepoPaths paths;
+    CHECK(git_model_discover(".", root, sizeof(root), &paths, error, sizeof(error)));
     if (root[0]) {
+        char expected_git_dir[GIT_PATH_CAP];
+        snprintf(expected_git_dir, sizeof(expected_git_dir), "%s/.git", root);
+        CHECK(strcmp(paths.git_dir, expected_git_dir) == 0);
+        CHECK(strcmp(paths.common_dir, expected_git_dir) == 0);
         CHECK(git_model_refresh(root, snapshot, error, sizeof(error)));
         CHECK(snapshot->submodule_count > 0u);
         bool found_causality = false;
@@ -198,9 +203,14 @@ static void test_refresh_submodules(void)
                                "%s/vendors/causality", root);
         CHECK(written > 0 && (size_t)written < sizeof(submodule_path));
         if (written > 0 && (size_t)written < sizeof(submodule_path)) {
+            GitRepoPaths submodule_paths;
             CHECK(git_model_discover(submodule_path, submodule_root,
-                                     sizeof(submodule_root), error, sizeof(error)));
+                                     sizeof(submodule_root), &submodule_paths,
+                                     error, sizeof(error)));
             CHECK(strcmp(submodule_root, submodule_path) == 0);
+            CHECK(git_path_below(expected_git_dir, submodule_paths.git_dir) != NULL);
+            CHECK(git_path_below(submodule_root, submodule_paths.git_dir) == NULL);
+            CHECK(strcmp(submodule_paths.common_dir, submodule_paths.git_dir) == 0);
         }
     }
     free(snapshot);
@@ -402,6 +412,64 @@ static void test_graph_layout_unrelated_branches(void)
     CHECK(history.commits[3].lane == 0);
 }
 
+/* Verify watcher paths are classified into worktree, metadata, and noise. */
+static void test_watch_classify(void)
+{
+    GitRepoPaths paths = {0};
+    snprintf(paths.git_dir, sizeof(paths.git_dir), "/r/.git");
+    snprintf(paths.common_dir, sizeof(paths.common_dir), "/r/.git");
+    const char *relative = NULL;
+    CHECK(git_watch_classify("/r", &paths, "/r/src/a.c", &relative) == GIT_WATCH_WORKTREE);
+    CHECK(relative && strcmp(relative, "src/a.c") == 0);
+    CHECK(git_watch_classify("/r", &paths, "/r", &relative) == GIT_WATCH_WORKTREE);
+    CHECK(relative && relative[0] == '\0');
+    CHECK(git_watch_classify("/r", &paths, "/rx/a", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/other/a", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/r/.gitignore", NULL) == GIT_WATCH_IGNORE_RULES);
+    CHECK(git_watch_classify("/r", &paths, "/r/sub/.gitignore", NULL) == GIT_WATCH_IGNORE_RULES);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/index", NULL) == GIT_WATCH_METADATA);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/index.lock", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/objects/ab/cdef", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/logs/HEAD", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/FETCH_HEAD", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/HEAD", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/packed-refs", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/refs/heads/main", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/refs/heads/objects", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/info/exclude", NULL) == GIT_WATCH_IGNORE_RULES);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/modules/x/index", NULL) == GIT_WATCH_METADATA);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/modules/x/HEAD", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/r", &paths, "/r/.git/modules/x/objects/p", NULL) == GIT_WATCH_NONE);
+    CHECK(git_watch_classify("/r", &paths, "/r/sub/.git", NULL) == GIT_WATCH_METADATA);
+
+    GitRepoPaths linked = {0};
+    snprintf(linked.git_dir, sizeof(linked.git_dir), "/c/.git/worktrees/w");
+    snprintf(linked.common_dir, sizeof(linked.common_dir), "/c/.git");
+    CHECK(git_watch_classify("/w", &linked, "/c/.git/worktrees/w/HEAD", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/w", &linked, "/c/.git/worktrees/w/index", NULL) == GIT_WATCH_METADATA);
+    CHECK(git_watch_classify("/w", &linked, "/c/.git/refs/heads/x", NULL) == GIT_WATCH_REFS);
+    CHECK(git_watch_classify("/w", &linked, "/w/a.c", NULL) == GIT_WATCH_WORKTREE);
+}
+
+/* Verify ignore checks report ignored directories and fail closed on errors. */
+static void test_check_ignored(void)
+{
+    char root[GIT_PATH_CAP] = {0};
+    char error[GIT_ERROR_CAP] = {0};
+    CHECK(git_model_discover(".", root, sizeof(root), NULL, error, sizeof(error)));
+    if (!root[0]) return;
+    const char dirs[2][GIT_WATCH_REL_CAP] = { "build/", "sol/" };
+    bool ignored[2] = { false, true };
+    git_model_check_ignored(root, dirs, 2u, ignored);
+    CHECK(ignored[0]);
+    CHECK(!ignored[1]);
+    const char mixed[2][GIT_WATCH_REL_CAP] = { "build/", "vendors/causality/causality/" };
+    bool mixed_ignored[2] = { true, true };
+    git_model_check_ignored(root, mixed, 2u, mixed_ignored);
+    CHECK(!mixed_ignored[0]);
+    CHECK(!mixed_ignored[1]);
+}
+
 int main(void)
 {
     test_status_core_records();
@@ -418,6 +486,8 @@ int main(void)
     test_process_untracked_diff();
     test_graph_layout_merge();
     test_graph_layout_unrelated_branches();
+    test_watch_classify();
+    test_check_ignored();
     if (g_failures == 0) {
         printf("sol_git_plugin_tests: all checks passed\n");
         return 0;

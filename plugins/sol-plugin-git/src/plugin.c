@@ -50,6 +50,34 @@ typedef enum GitUiAction {
 
 typedef struct GitPlugin GitPlugin;
 
+enum {
+    GIT_WATCH_QUIET_MS = 300,
+    GIT_WATCH_MAX_WAIT_MS = 2000,
+    GIT_WATCH_POLL_BATCH = 8,
+    GIT_IGNORE_CACHE_CAP = 64,
+};
+
+/* A user-requested task queued behind a background watch refresh. */
+typedef struct GitDeferredTask {
+    bool pending;
+    GitTaskKind kind;
+    char argument[GIT_PATH_CAP];
+    bool flag;
+} GitDeferredTask;
+
+/* Filesystem changes accumulated between debounced refreshes. */
+typedef struct GitWatchState {
+    bool pending;
+    bool unfiltered;
+    bool refs_changed;
+    uint64_t first_ms;
+    uint64_t last_ms;
+    char dirs[GIT_WATCH_DIR_CAP][GIT_WATCH_REL_CAP];
+    size_t dir_count;
+    uint8_t pairs[GIT_WATCH_PAIR_CAP][2];
+    size_t pair_count;
+} GitWatchState;
+
 typedef struct GitActionContext {
     GitPlugin *plugin;
     GitUiAction action;
@@ -65,10 +93,21 @@ struct GitPlugin {
     GitTask *task;
     _Atomic bool task_done;
     bool task_running;
+    bool busy;
     bool shutting_down;
+    GitDeferredTask deferred;
 
     char workspace_root[GIT_PATH_CAP];
+    char workspace_real[GIT_PATH_CAP];
     GitSnapshot snapshot;
+    GitRepoPaths repo_paths;
+    GitWatchState watch;
+    char ignored_dirs[GIT_IGNORE_CACHE_CAP][GIT_WATCH_REL_CAP];
+    size_t ignored_dir_count;
+    size_t ignored_dir_next;
+    bool view_reload_pending;
+    SolFileWatcher *metadata_watch;
+    char metadata_watch_root[GIT_PATH_CAP];
     GitHistory history;
     GitBranches branches;
     GitPanelTab tab;
@@ -92,6 +131,7 @@ struct GitPlugin {
 
     SolSubscriptionToken root_subscription;
     SolSubscriptionToken focus_subscription;
+    SolSubscriptionToken fs_subscription;
 };
 
 /* Copy a string into a fixed destination. */
@@ -455,6 +495,7 @@ static void git_task_worker(void *user_data)
                                                            : task->workspace_root,
                                          task->snapshot.root,
                                          sizeof(task->snapshot.root),
+                                         &task->repo_paths,
                                          task->error, sizeof(task->error));
             if (success) {
                 success = git_model_refresh(task->snapshot.root, &task->snapshot,
@@ -465,6 +506,23 @@ static void git_task_worker(void *user_data)
             success = git_model_refresh(task->repo_root, &task->snapshot,
                                         task->error, sizeof(task->error));
             break;
+        case GIT_TASK_WATCH_REFRESH: {
+            bool all_ignored = task->watch_pair_count > 0u;
+            if (all_ignored) {
+                git_model_check_ignored(task->repo_root,
+                                        (const char (*)[GIT_WATCH_REL_CAP])task->watch_dirs,
+                                        task->watch_dir_count, task->watch_dir_ignored);
+                for (size_t i = 0u; i < task->watch_pair_count && all_ignored; ++i) {
+                    all_ignored = task->watch_dir_ignored[task->watch_pairs[i][0]] ||
+                                  task->watch_dir_ignored[task->watch_pairs[i][1]];
+                }
+            }
+            task->watch_status_skipped = all_ignored;
+            success = all_ignored ||
+                      git_model_refresh(task->repo_root, &task->snapshot,
+                                        task->error, sizeof(task->error));
+            break;
+        }
         case GIT_TASK_HISTORY:
             success = git_model_history(task->repo_root, &task->history,
                                         task->error, sizeof(task->error));
@@ -553,8 +611,8 @@ static void git_task_worker(void *user_data)
             const char *argv[] = { "git", "init", NULL };
             success = git_task_command(task, task->workspace_root, argv, 30000u) &&
                       git_model_discover(task->workspace_root, task->repo_root,
-                                         sizeof(task->repo_root), task->error,
-                                         sizeof(task->error)) &&
+                                         sizeof(task->repo_root), &task->repo_paths,
+                                         task->error, sizeof(task->error)) &&
                       git_model_refresh(task->repo_root, &task->snapshot,
                                         task->error, sizeof(task->error));
             break;
@@ -608,19 +666,241 @@ static const char *git_task_activity(GitTaskKind kind)
         case GIT_TASK_DIFF: return "Loading diff...";
         case GIT_TASK_SHOW_COMMIT: return "Loading commit...";
         case GIT_TASK_BLAME: return "Loading blame...";
+        case GIT_TASK_WATCH_REFRESH: return "";
     }
     return "Running Git...";
 }
 
-/* Submit one task if no other Git operation is in flight. */
+/* Forget every pending change and cached ignore decision. */
+static void git_watch_reset(GitPlugin *plugin)
+{
+    memset(&plugin->watch, 0, sizeof(plugin->watch));
+    plugin->ignored_dir_count = 0u;
+    plugin->ignored_dir_next = 0u;
+    plugin->view_reload_pending = false;
+}
+
+/* Return true when relative lies inside a directory Git already reported ignored. */
+static bool git_watch_cached_ignored(const GitPlugin *plugin, const char *relative)
+{
+    for (size_t i = 0u; i < plugin->ignored_dir_count; ++i) {
+        const char *dir = plugin->ignored_dirs[i];
+        if (strncmp(relative, dir, strlen(dir)) == 0) return true;
+    }
+    return false;
+}
+
+/* Remember an ignored directory, evicting round-robin when the cache is full. */
+static void git_watch_cache_ignored(GitPlugin *plugin, const char *dir)
+{
+    if (git_watch_cached_ignored(plugin, dir)) return;
+    size_t slot = plugin->ignored_dir_count;
+    if (slot < GIT_IGNORE_CACHE_CAP) {
+        ++plugin->ignored_dir_count;
+    } else {
+        slot = plugin->ignored_dir_next;
+        plugin->ignored_dir_next = (plugin->ignored_dir_next + 1u) % GIT_IGNORE_CACHE_CAP;
+    }
+    git_copy_string(plugin->ignored_dirs[slot], GIT_WATCH_REL_CAP, dir);
+}
+
+/* Return the index of dir in the pending candidates, adding it when absent. */
+static int git_watch_candidate(GitWatchState *watch, const char *dir, size_t length)
+{
+    for (size_t i = 0u; i < watch->dir_count; ++i) {
+        if (strlen(watch->dirs[i]) == length &&
+            strncmp(watch->dirs[i], dir, length) == 0) return (int)i;
+    }
+    if (watch->dir_count >= GIT_WATCH_DIR_CAP || length >= GIT_WATCH_REL_CAP) return -1;
+    memcpy(watch->dirs[watch->dir_count], dir, length);
+    watch->dirs[watch->dir_count][length] = '\0';
+    return (int)watch->dir_count++;
+}
+
+/*
+ * Record a working-tree change as ignorable-if-its-directory-is-ignored. The
+ * top-level directory and the direct parent are both candidates, since Git
+ * cannot re-include anything below an ignored directory.
+ */
+static void git_watch_add_worktree(GitPlugin *plugin, const char *relative)
+{
+    GitWatchState *watch = &plugin->watch;
+    if (watch->unfiltered) return;
+    for (size_t i = 0u; i < plugin->snapshot.submodule_count; ++i) {
+        if (git_path_below(plugin->snapshot.submodules[i].path, relative)) {
+            watch->unfiltered = true;
+            return;
+        }
+    }
+    const char *top_end = strchr(relative, '/');
+    const char *parent_end = strrchr(relative, '/');
+    if (!top_end || watch->pair_count >= GIT_WATCH_PAIR_CAP) {
+        watch->unfiltered = true;
+        return;
+    }
+    const int top = git_watch_candidate(watch, relative,
+                                        (size_t)(top_end - relative) + 1u);
+    const int parent = git_watch_candidate(watch, relative,
+                                           (size_t)(parent_end - relative) + 1u);
+    if (top < 0 || parent < 0) {
+        watch->unfiltered = true;
+        return;
+    }
+    watch->pairs[watch->pair_count][0] = (uint8_t)top;
+    watch->pairs[watch->pair_count][1] = (uint8_t)parent;
+    ++watch->pair_count;
+}
+
+/*
+ * Map a watcher path onto the canonical namespace Git reports paths in.
+ *
+ * plugin    Plugin state holding raw and canonical workspace roots.
+ * raw       Path as reported by the filesystem watcher.
+ * out       Receives the canonical path.
+ * capacity  Capacity of out.
+ * Returns false when the path does not fit.
+ */
+static bool git_watch_normalize(const GitPlugin *plugin,
+                                const char *raw,
+                                char *out,
+                                size_t capacity)
+{
+    char path[GIT_PATH_CAP];
+    git_copy_string(path, sizeof(path), raw);
+#if defined(_WIN32)
+    for (char *c = path; *c; ++c) if (*c == '\\') *c = '/';
+#endif
+    const char *rest = plugin->workspace_real[0] && plugin->workspace_root[0] &&
+                       !git_path_below(plugin->workspace_real, path)
+        ? git_path_below(plugin->workspace_root, path) : NULL;
+    const int written = rest
+        ? snprintf(out, capacity, "%s%s%s", plugin->workspace_real,
+                   rest[0] ? "/" : "", rest)
+        : snprintf(out, capacity, "%s", path);
+    return written > 0 && (size_t)written < capacity;
+}
+
+/*
+ * Fold one changed path into the pending refresh.
+ *
+ * plugin  Plugin state.
+ * raw     Changed path from any watcher.
+ */
+static void git_watch_note(GitPlugin *plugin, const char *raw)
+{
+    char path[GIT_PATH_CAP];
+    if (!git_watch_normalize(plugin, raw, path, sizeof(path))) return;
+    const char *relative = NULL;
+    switch (git_watch_classify(plugin->snapshot.root, &plugin->repo_paths, path, &relative)) {
+        case GIT_WATCH_NONE:
+            return;
+        case GIT_WATCH_WORKTREE:
+            if (git_watch_cached_ignored(plugin, relative)) return;
+            git_watch_add_worktree(plugin, relative);
+            break;
+        case GIT_WATCH_IGNORE_RULES:
+            plugin->ignored_dir_count = 0u;
+            plugin->ignored_dir_next = 0u;
+            plugin->watch.unfiltered = true;
+            break;
+        case GIT_WATCH_METADATA:
+            plugin->watch.unfiltered = true;
+            break;
+        case GIT_WATCH_REFS:
+            plugin->watch.unfiltered = true;
+            plugin->watch.refs_changed = true;
+            break;
+    }
+    const uint64_t now = git_monotonic_ms();
+    if (!plugin->watch.pending) plugin->watch.first_ms = now;
+    plugin->watch.pending = true;
+    plugin->watch.last_ms = now;
+}
+
+/* Move pending changes into a watch-refresh task and clear them. */
+static void git_watch_take(GitPlugin *plugin, GitTask *task)
+{
+    GitWatchState *watch = &plugin->watch;
+    task->flag = watch->refs_changed;
+    if (!watch->unfiltered) {
+        memcpy(task->watch_dirs, watch->dirs, sizeof(task->watch_dirs));
+        memcpy(task->watch_pairs, watch->pairs, sizeof(task->watch_pairs));
+        task->watch_dir_count = watch->dir_count;
+        task->watch_pair_count = watch->pair_count;
+    }
+    memset(watch, 0, sizeof(*watch));
+}
+
+/* Put a watch refresh that could not be submitted back as pending work. */
+static void git_watch_restore(GitPlugin *plugin, const GitTask *task)
+{
+    const uint64_t now = git_monotonic_ms();
+    plugin->watch.pending = true;
+    plugin->watch.unfiltered = true;
+    plugin->watch.refs_changed = plugin->watch.refs_changed || task->flag;
+    plugin->watch.first_ms = now;
+    plugin->watch.last_ms = now;
+}
+
+/*
+ * Keep a dedicated watch on the Git common directory when it lives outside
+ * the workspace (workspace is a subdirectory, a submodule, or a linked
+ * worktree), since the workspace watcher never reports those changes.
+ */
+static void git_watch_sync_metadata(GitPlugin *plugin)
+{
+    const char *common = plugin->repo_paths.common_dir;
+    const bool needed = common[0] &&
+        !(plugin->workspace_real[0] && git_path_below(plugin->workspace_real, common));
+    if (needed && plugin->metadata_watch &&
+        strcmp(plugin->metadata_watch_root, common) == 0) return;
+    sol_plugin_directory_watch_destroy(plugin->metadata_watch);
+    plugin->metadata_watch = NULL;
+    plugin->metadata_watch_root[0] = '\0';
+    if (!needed) return;
+    plugin->metadata_watch = sol_plugin_directory_watch_create(plugin->ctx, common);
+    if (plugin->metadata_watch) {
+        git_copy_string(plugin->metadata_watch_root,
+                        sizeof(plugin->metadata_watch_root), common);
+    } else {
+        sol_plugin_log(plugin->ctx, "cannot watch Git directory %s; external "
+                       "commits refresh only on demand", common);
+    }
+}
+
+/*
+ * Submit one task if no other Git operation is in flight. A user task that
+ * arrives while only a background watch refresh runs is queued behind it and
+ * reported busy immediately, so clicks are never silently dropped.
+ *
+ * plugin    Plugin state.
+ * kind      Task to run.
+ * argument  Task-specific path, message, or ref; may be NULL.
+ * flag      Task-specific option.
+ * Returns true when the task was started or queued.
+ */
 static bool git_start_task(GitPlugin *plugin,
                            GitTaskKind kind,
                            const char *argument,
                            bool flag)
 {
-    if (!plugin || plugin->shutting_down || plugin->task_running) return false;
+    if (!plugin || plugin->shutting_down) return false;
     if (kind != GIT_TASK_DISCOVER && kind != GIT_TASK_INIT &&
         !plugin->snapshot.repository) return false;
+    const bool background = kind == GIT_TASK_WATCH_REFRESH;
+    if (plugin->task_running) {
+        if (background || plugin->busy) return false;
+        plugin->deferred.pending = true;
+        plugin->deferred.kind = kind;
+        plugin->deferred.flag = flag;
+        git_copy_string(plugin->deferred.argument, sizeof(plugin->deferred.argument),
+                        argument);
+        plugin->busy = true;
+        git_copy_string(plugin->activity, sizeof(plugin->activity),
+                        git_task_activity(kind));
+        sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
+        return true;
+    }
 
     GitTask *task = (GitTask *)calloc(1u, sizeof(*task));
     if (!task) {
@@ -643,22 +923,31 @@ static bool git_start_task(GitPlugin *plugin,
                     kind == GIT_TASK_CREATE_BRANCH && flag
                         ? plugin->branch_source : plugin->snapshot.branch);
     if (kind == GIT_TASK_PUSH) task->flag = !plugin->snapshot.upstream[0];
+    if (background) git_watch_take(plugin, task);
 
     atomic_store_explicit(&plugin->task_done, false, memory_order_relaxed);
     plugin->task = task;
     plugin->task_running = true;
-    plugin->error[0] = '\0';
-    git_copy_string(plugin->activity, sizeof(plugin->activity),
-                    git_task_activity(kind));
+    plugin->busy = !background;
+    if (!background) {
+        plugin->error[0] = '\0';
+        git_copy_string(plugin->activity, sizeof(plugin->activity),
+                        git_task_activity(kind));
+    }
     if (!sol_plugin_submit_job(plugin->ctx, git_task_worker, task,
                                plugin->task_fence)) {
         plugin->task = NULL;
         plugin->task_running = false;
+        plugin->busy = false;
+        if (background) {
+            git_watch_restore(plugin, task);
+        } else {
+            snprintf(plugin->error, sizeof(plugin->error), "Git job queue is full");
+        }
         free(task);
-        snprintf(plugin->error, sizeof(plugin->error), "Git job queue is full");
         return false;
     }
-    sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
+    if (!background) sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
     return true;
 }
 
@@ -708,20 +997,27 @@ static void git_consume_task(GitPlugin *plugin)
     GitTask *task = plugin->task;
     plugin->task = NULL;
     plugin->task_running = false;
+    plugin->busy = false;
     plugin->activity[0] = '\0';
 
     if (!task) return;
+    const bool background = task->kind == GIT_TASK_WATCH_REFRESH;
+    bool publish = true;
     const bool stale_repository = plugin->rediscover_pending ||
         (task->kind == GIT_TASK_DISCOVER &&
-         strcmp(task->workspace_root, plugin->workspace_root) != 0);
+         strcmp(task->workspace_root, plugin->workspace_root) != 0) ||
+        (background && strcmp(task->repo_root, plugin->snapshot.root) != 0);
     if (!stale_repository && task->exit_code == 0) {
-        plugin->error[0] = '\0';
+        if (!background) plugin->error[0] = '\0';
         switch (task->kind) {
             case GIT_TASK_DISCOVER: {
                 const bool repository_changed =
                     strcmp(plugin->snapshot.root, task->snapshot.root) != 0;
                 plugin->snapshot = task->snapshot;
+                plugin->repo_paths = task->repo_paths;
+                git_watch_sync_metadata(plugin);
                 if (repository_changed) {
+                    git_watch_reset(plugin);
                     memset(&plugin->history, 0, sizeof(plugin->history));
                     memset(&plugin->branches, 0, sizeof(plugin->branches));
                     plugin->commit_message[0] = '\0';
@@ -729,6 +1025,27 @@ static void git_consume_task(GitPlugin *plugin)
                     plugin->branch_source[0] = '\0';
                     plugin->pending_discard[0] = '\0';
                 }
+                break;
+            }
+            case GIT_TASK_WATCH_REFRESH: {
+                bool changed = false;
+                for (size_t i = 0u; i < task->watch_dir_count; ++i) {
+                    if (task->watch_dir_ignored[i]) {
+                        git_watch_cache_ignored(plugin, task->watch_dirs[i]);
+                    }
+                }
+                if (!task->watch_status_skipped) {
+                    changed = memcmp(&plugin->snapshot, &task->snapshot,
+                                     sizeof(plugin->snapshot)) != 0;
+                    if (changed) plugin->snapshot = task->snapshot;
+                }
+                if (task->flag) {
+                    memset(&plugin->history, 0, sizeof(plugin->history));
+                    memset(&plugin->branches, 0, sizeof(plugin->branches));
+                    plugin->view_reload_pending = true;
+                    changed = true;
+                }
+                publish = changed;
                 break;
             }
             case GIT_TASK_REFRESH:
@@ -745,9 +1062,15 @@ static void git_consume_task(GitPlugin *plugin)
             case GIT_TASK_CREATE_BRANCH:
             case GIT_TASK_INIT:
                 plugin->snapshot = task->snapshot;
+                if (task->kind == GIT_TASK_INIT) {
+                    plugin->repo_paths = task->repo_paths;
+                    git_watch_reset(plugin);
+                    git_watch_sync_metadata(plugin);
+                }
                 if (task->kind != GIT_TASK_REFRESH &&
                     task->kind != GIT_TASK_DISCOVER) {
                     memset(&plugin->history, 0, sizeof(plugin->history));
+                    plugin->view_reload_pending = true;
                 }
                 if (task->kind == GIT_TASK_CHECKOUT ||
                     task->kind == GIT_TASK_CREATE_BRANCH) {
@@ -791,24 +1114,37 @@ static void git_consume_task(GitPlugin *plugin)
         }
     } else if (!stale_repository && task->kind == GIT_TASK_DISCOVER) {
         memset(&plugin->snapshot, 0, sizeof(plugin->snapshot));
+        memset(&plugin->repo_paths, 0, sizeof(plugin->repo_paths));
+        git_watch_reset(plugin);
+        git_watch_sync_metadata(plugin);
         if (task->exit_code == 127) {
             git_copy_string(plugin->error, sizeof(plugin->error),
                             "Git executable was not found");
         } else {
             plugin->error[0] = '\0';
         }
-    } else if (!stale_repository) {
+    } else if (!stale_repository && !background) {
         git_copy_string(plugin->error, sizeof(plugin->error), task->error);
+    } else {
+        publish = !background;
     }
 
     free(task->output);
     free(task);
     if (plugin->rediscover_pending) {
         plugin->rediscover_pending = false;
+        publish = true;
         if (plugin->workspace_root[0]) {
             (void)git_start_task(plugin, GIT_TASK_DISCOVER, NULL, false);
         }
     }
+    if (plugin->deferred.pending) {
+        plugin->deferred.pending = false;
+        publish = true;
+        (void)git_start_task(plugin, plugin->deferred.kind,
+                             plugin->deferred.argument, plugin->deferred.flag);
+    }
+    if (!publish) return;
     git_update_status_segment(plugin);
     sol_plugin_notify_side_panel(plugin->ctx, plugin->panel_token);
 }
@@ -931,7 +1267,7 @@ static void git_render_header_status(const GitPlugin *plugin)
         icon = CA_ICON_NF_COD_SOURCE_CONTROL;
         style = "scm-repository-status-icon scm-repository-status-muted";
         snprintf(tooltip, sizeof(tooltip), "No repository open");
-    } else if (plugin->task_running) {
+    } else if (plugin->busy) {
         icon = CA_ICON_NF_COD_SYNC;
         style = "scm-repository-status-icon scm-repository-status-busy";
         snprintf(tooltip, sizeof(tooltip), "%s",
@@ -1116,7 +1452,7 @@ static void git_render_file_row(GitPlugin *plugin,
                                 const GitFileStatus *file,
                                 bool staged)
 {
-    const bool row_disabled = plugin->task_running;
+    const bool row_disabled = plugin->busy;
     char name[128];
     git_display_name(&plugin->snapshot, file->path, name, sizeof(name));
     const bool renamed = file->kind == GIT_FILE_RENAMED && file->original_path[0];
@@ -1207,7 +1543,7 @@ static void git_render_file_group(GitPlugin *plugin,
     ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
     git_render_button(plugin, staged ? "Unstage All" : "Stage All",
                       staged ? GIT_UI_UNSTAGE_ALL : GIT_UI_STAGE_ALL,
-                      NULL, false, plugin->task_running, "scm-section-action");
+                      NULL, false, plugin->busy, "scm-section-action");
     ca_div_end();
 
     for (size_t i = 0u; i < plugin->snapshot.file_count; ++i) {
@@ -1217,6 +1553,100 @@ static void git_render_file_group(GitPlugin *plugin,
             git_render_file_row(plugin, file, staged);
         }
     }
+}
+
+/* Attention rank of a submodule; higher sorts first in the Changes tab. */
+typedef enum GitSubmoduleUrgency {
+    GIT_SUBMODULE_URGENCY_CLEAN = 0,
+    GIT_SUBMODULE_URGENCY_MODIFIED,
+    GIT_SUBMODULE_URGENCY_WARNING,
+    GIT_SUBMODULE_URGENCY_CONFLICT,
+} GitSubmoduleUrgency;
+
+/* Label, style classes, and rank describing one submodule row. */
+typedef struct GitSubmodulePresentation {
+    GitSubmoduleUrgency urgency;
+    const char *label;
+    const char *text_style;
+    const char *card_style;
+} GitSubmodulePresentation;
+
+/*
+ * Classify a submodule for display.
+ *
+ * submodule  Submodule status from the current snapshot.
+ * Returns the row label, text/card style classes, and attention rank.
+ */
+static GitSubmodulePresentation git_submodule_presentation(
+    const GitSubmodule *submodule)
+{
+    if (submodule->state == GIT_SUBMODULE_CONFLICT) {
+        return (GitSubmodulePresentation){
+            GIT_SUBMODULE_URGENCY_CONFLICT, "Conflict", "scm-submodule-conflict",
+            "scm-submodule-row scm-submodule-card-conflict" };
+    }
+    if (submodule->state == GIT_SUBMODULE_UNINITIALIZED) {
+        return (GitSubmodulePresentation){
+            GIT_SUBMODULE_URGENCY_WARNING, "Uninitialized", "scm-submodule-warning",
+            "scm-submodule-row scm-submodule-card-warning" };
+    }
+    if (submodule->state == GIT_SUBMODULE_REVISION_CHANGED) {
+        return (GitSubmodulePresentation){
+            GIT_SUBMODULE_URGENCY_MODIFIED, "Revision changed", "scm-submodule-modified",
+            "scm-submodule-row scm-submodule-card-modified" };
+    }
+    if (submodule->content_untracked) {
+        return (GitSubmodulePresentation){
+            GIT_SUBMODULE_URGENCY_WARNING, "Untracked content", "scm-submodule-warning",
+            "scm-submodule-row scm-submodule-card-warning" };
+    }
+    if (submodule->content_modified) {
+        return (GitSubmodulePresentation){
+            GIT_SUBMODULE_URGENCY_MODIFIED, "Modified content", "scm-submodule-modified",
+            "scm-submodule-row scm-submodule-card-modified" };
+    }
+    return (GitSubmodulePresentation){
+        GIT_SUBMODULE_URGENCY_CLEAN, "Clean", "scm-submodule-clean",
+        "scm-submodule-row scm-submodule-card-clean" };
+}
+
+/*
+ * Render one clickable submodule card that switches the active repository.
+ *
+ * plugin     Plugin state owning action contexts.
+ * submodule  Submodule to render.
+ * look       Presentation computed by git_submodule_presentation.
+ */
+static void git_render_submodule_card(GitPlugin *plugin,
+                                      const GitSubmodule *submodule,
+                                      const GitSubmodulePresentation *look)
+{
+    GitActionContext *context = git_action_context(
+        plugin, GIT_UI_SELECT_REPOSITORY, submodule->path, false);
+    ca_btn_begin(&(Ca_BtnDesc){
+        .direction = CA_HORIZONTAL,
+        .style = look->card_style,
+        .on_click = context ? git_on_action : NULL,
+        .click_data = context,
+        .disabled = plugin->busy || !context,
+    });
+    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_REPO, .style = look->text_style });
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .style = "scm-submodule-info",
+    });
+    ca_text(&(Ca_TextDesc){ .text = submodule->path,
+                             .style = "scm-submodule-path" });
+    char details[96];
+    snprintf(details, sizeof(details), "%.12s  ·  %s", submodule->commit,
+             look->label);
+    ca_text(&(Ca_TextDesc){ .text = details, .style = look->text_style });
+    ca_div_end();
+    ca_btn_end();
+    char tooltip[GIT_PATH_CAP + 64u];
+    snprintf(tooltip, sizeof(tooltip), "Use %s as the active repository",
+             submodule->path);
+    ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
 }
 
 /* Render the changes tab, including commit input and file groups. */
@@ -1234,7 +1664,7 @@ static void git_render_changes(GitPlugin *plugin)
         .on_change = git_on_commit_change,
         .change_data = plugin,
         .style = "scm-commit-input",
-        .disabled = plugin->task_running,
+        .disabled = plugin->busy,
     });
     {
         char commit_label[32];
@@ -1245,7 +1675,7 @@ static void git_render_changes(GitPlugin *plugin)
             git_copy_string(commit_label, sizeof(commit_label), "Commit");
         }
         git_render_button(plugin, commit_label, GIT_UI_COMMIT, NULL, false,
-                          plugin->task_running || plugin->snapshot.staged_count == 0u ||
+                          plugin->busy || plugin->snapshot.staged_count == 0u ||
                           !git_has_content(plugin->commit_message),
                           "scm-primary-action");
     }
@@ -1292,53 +1722,22 @@ static void git_render_changes(GitPlugin *plugin)
         });
         ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
         ca_div_end();
-        for (size_t i = 0u; i < plugin->snapshot.submodule_count; ++i) {
-            const GitSubmodule *submodule = &plugin->snapshot.submodules[i];
-            const char *state = "Clean";
-            const char *style = "scm-submodule-clean";
-            if (submodule->state == GIT_SUBMODULE_UNINITIALIZED) {
-                state = "Uninitialized";
-                style = "scm-submodule-warning";
-            } else if (submodule->state == GIT_SUBMODULE_REVISION_CHANGED) {
-                state = "Revision changed";
-                style = "scm-submodule-modified";
-            } else if (submodule->state == GIT_SUBMODULE_CONFLICT) {
-                state = "Conflict";
-                style = "scm-submodule-conflict";
-            } else if (submodule->content_untracked) {
-                state = "Untracked content";
-                style = "scm-submodule-warning";
-            } else if (submodule->content_modified) {
-                state = "Modified content";
-                style = "scm-submodule-modified";
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_VERTICAL,
+            .style = "scm-submodule-list",
+        });
+        for (int urgency = GIT_SUBMODULE_URGENCY_CONFLICT;
+             urgency >= GIT_SUBMODULE_URGENCY_CLEAN; --urgency) {
+            for (size_t i = 0u; i < plugin->snapshot.submodule_count; ++i) {
+                const GitSubmodule *submodule = &plugin->snapshot.submodules[i];
+                const GitSubmodulePresentation look =
+                    git_submodule_presentation(submodule);
+                if ((int)look.urgency == urgency) {
+                    git_render_submodule_card(plugin, submodule, &look);
+                }
             }
-            GitActionContext *context = git_action_context(
-                plugin, GIT_UI_SELECT_REPOSITORY, submodule->path, false);
-            ca_btn_begin(&(Ca_BtnDesc){
-                .direction = CA_HORIZONTAL,
-                .style = "scm-submodule-row",
-                .on_click = context ? git_on_action : NULL,
-                .click_data = context,
-                .disabled = plugin->task_running || !context,
-            });
-            ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_REPO, .style = style });
-            ca_div_begin(&(Ca_DivDesc){
-                .direction = CA_VERTICAL,
-                .style = "scm-submodule-info",
-            });
-            ca_text(&(Ca_TextDesc){ .text = submodule->path,
-                                     .style = "scm-submodule-path" });
-            char details[96];
-            snprintf(details, sizeof(details), "%.12s  ·  %s", submodule->commit,
-                     state);
-            ca_text(&(Ca_TextDesc){ .text = details, .style = style });
-            ca_div_end();
-            ca_btn_end();
-            char tooltip[GIT_PATH_CAP + 64u];
-            snprintf(tooltip, sizeof(tooltip), "Use %s as the active repository",
-                     submodule->path);
-            ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
         }
+        ca_div_end();
         if (plugin->snapshot.omitted_submodule_count > 0u) {
             char omitted[96];
             snprintf(omitted, sizeof(omitted), "%zu additional submodules omitted",
@@ -1461,7 +1860,7 @@ static void git_render_graph_gutter(const GitCommitEntry *entry,
  * commit's subject/meta text. */
 static void git_render_history(GitPlugin *plugin)
 {
-    if (plugin->history.count == 0u && !plugin->task_running) {
+    if (plugin->history.count == 0u && !plugin->busy) {
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "scm-clean-state" });
         ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_GIT_COMMIT, .style = "scm-clean-icon" });
         ca_text(&(Ca_TextDesc){ .text = "No commits found", .style = "scm-empty" });
@@ -1481,7 +1880,7 @@ static void git_render_history(GitPlugin *plugin)
             .click_data = context,
             .direction = CA_HORIZONTAL,
             .style = "scm-commit-row",
-            .disabled = plugin->task_running || !context,
+            .disabled = plugin->busy || !context,
         });
         git_render_graph_gutter(entry, lane_span, row_height, scale);
         ca_div_begin(&(Ca_DivDesc){
@@ -1522,15 +1921,15 @@ static void git_render_branches(GitPlugin *plugin)
         .on_change = git_on_branch_change,
         .change_data = plugin,
         .style = "scm-branch-input",
-        .disabled = plugin->task_running,
+        .disabled = plugin->busy,
     });
     git_render_button(plugin, "Create", GIT_UI_CREATE_BRANCH, NULL, false,
-                      plugin->task_running || !git_has_content(plugin->new_branch),
+                      plugin->busy || !git_has_content(plugin->new_branch),
                       "scm-primary-action");
     ca_div_end();
     ca_div_end();
 
-    if (plugin->branches.count == 0u && !plugin->task_running) {
+    if (plugin->branches.count == 0u && !plugin->busy) {
         ca_text(&(Ca_TextDesc){ .text = "No local branches", .style = "scm-empty" });
     }
 
@@ -1547,7 +1946,7 @@ static void git_render_branches(GitPlugin *plugin)
             .click_data = context,
             .direction = CA_HORIZONTAL,
             .style = "scm-branch-checkout",
-            .disabled = plugin->task_running || entry->current || !context,
+            .disabled = plugin->busy || entry->current || !context,
         });
         ca_text(&(Ca_TextDesc){
             .text = entry->current ? CA_ICON_NF_COD_CHECK : "",
@@ -1564,7 +1963,7 @@ static void git_render_branches(GitPlugin *plugin)
         snprintf(tooltip, sizeof(tooltip), "Create branch from %s", entry->name);
         git_render_icon_button(plugin, CA_ICON_NF_COD_ADD, tooltip,
                                GIT_UI_CREATE_BRANCH_FROM, entry->name, false,
-                               plugin->task_running, "scm-branch-create-from");
+                               plugin->busy, "scm-branch-create-from");
         ca_div_end();
     }
 }
@@ -1611,7 +2010,7 @@ static void git_panel_render(void *user_data)
         });
         if (plugin->workspace_root[0]) {
             git_render_button(plugin, "Initialize Repository", GIT_UI_INIT,
-                              NULL, false, plugin->task_running,
+                              NULL, false, plugin->busy,
                               "scm-primary-action");
         }
         ca_div_end();
@@ -1638,7 +2037,7 @@ static void git_panel_render(void *user_data)
     if (strcmp(plugin->snapshot.root, plugin->workspace_root) != 0) {
         git_render_button(plugin, "Workspace Repository",
                           GIT_UI_SELECT_WORKSPACE_REPOSITORY, NULL, false,
-                          plugin->task_running, "scm-section-action");
+                          plugin->busy, "scm-section-action");
     }
     if (plugin->snapshot.upstream[0]) {
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "scm-upstream-row" });
@@ -1680,17 +2079,17 @@ static void git_panel_render(void *user_data)
              plugin->snapshot.ahead,
              plugin->snapshot.ahead == 1 ? "" : "s");
     git_render_remote_action(plugin, CA_ICON_NF_COD_GIT_FETCH, "Fetch from remote",
-                             GIT_UI_FETCH, plugin->task_running, false);
+                             GIT_UI_FETCH, plugin->busy, false);
     git_render_remote_action(plugin, CA_ICON_NF_COD_CLOUD_DOWNLOAD, pull_tooltip,
                              GIT_UI_PULL,
-                             plugin->task_running || !plugin->snapshot.upstream[0],
+                             plugin->busy || !plugin->snapshot.upstream[0],
                              pull_ready);
     git_render_remote_action(plugin, CA_ICON_NF_COD_CLOUD_UPLOAD, push_tooltip,
                              GIT_UI_PUSH,
-                             plugin->task_running || plugin->snapshot.detached,
+                             plugin->busy || plugin->snapshot.detached,
                              push_ready);
     git_render_remote_action(plugin, CA_ICON_NF_FA_REFRESH, "Refresh repository",
-                             GIT_UI_REFRESH, plugin->task_running, false);
+                             GIT_UI_REFRESH, plugin->busy, false);
     ca_div_end();
 
     /* Tabs share the row width evenly (flex-grow, centered) instead of a
@@ -1740,13 +2139,88 @@ static const char *git_relative_active_path(const GitPlugin *plugin)
     return *relative ? relative : NULL;
 }
 
+/*
+ * Record the workspace root in both its given and canonical spellings so
+ * watcher paths can be matched against Git's canonical paths.
+ *
+ * plugin  Plugin state.
+ * path    New workspace root, or NULL when cleared.
+ */
+static void git_watch_set_workspace(GitPlugin *plugin, const char *path)
+{
+    git_copy_string(plugin->workspace_root, sizeof(plugin->workspace_root), path);
+    if (!path || !path[0] ||
+        !git_path_canonicalize(path, plugin->workspace_real,
+                               sizeof(plugin->workspace_real))) {
+        git_copy_string(plugin->workspace_real, sizeof(plugin->workspace_real), path);
+    }
+}
+
+/* Observe workspace filesystem batches and schedule a debounced refresh. */
+static bool git_on_fs_changed(const SolEvent *event, void *user_data)
+{
+    GitPlugin *plugin = (GitPlugin *)user_data;
+    const SolFsChangedPayload *payload = event && event->payload
+        ? (const SolFsChangedPayload *)event->payload : NULL;
+    if (!plugin || plugin->shutting_down || !payload ||
+        !plugin->snapshot.repository) return false;
+    for (size_t i = 0u; i < payload->count; ++i) {
+        git_watch_note(plugin, payload->events[i].path);
+    }
+    return false;
+}
+
+/* Drain the out-of-workspace metadata watch into the pending refresh. */
+static void git_watch_poll_metadata(GitPlugin *plugin)
+{
+    if (!plugin->metadata_watch) return;
+    SolFileWatchEvent events[GIT_WATCH_POLL_BATCH];
+    size_t count = 0u;
+    do {
+        count = sol_plugin_directory_watch_poll(plugin->metadata_watch, events,
+                                                GIT_WATCH_POLL_BATCH);
+        if (!plugin->snapshot.repository) continue;
+        for (size_t i = 0u; i < count; ++i) git_watch_note(plugin, events[i].path);
+    } while (count == GIT_WATCH_POLL_BATCH);
+}
+
+/*
+ * Start the debounced background refresh once changes settle (or the
+ * maximum wait elapses), and reload a history/branch view invalidated by
+ * ref changes. Schedules its own wake-up while waiting.
+ */
+static void git_watch_dispatch(GitPlugin *plugin)
+{
+    if (plugin->task_running) return;
+    if (plugin->watch.pending && plugin->snapshot.repository) {
+        const uint64_t now = git_monotonic_ms();
+        const uint64_t quiet_due = plugin->watch.last_ms + GIT_WATCH_QUIET_MS;
+        const uint64_t max_due = plugin->watch.first_ms + GIT_WATCH_MAX_WAIT_MS;
+        const uint64_t due = quiet_due < max_due ? quiet_due : max_due;
+        if (now < due) {
+            sol_plugin_request_tick_after(plugin->ctx, (double)(due - now) / 1000.0);
+            return;
+        }
+        if (git_start_task(plugin, GIT_TASK_WATCH_REFRESH, NULL, false)) return;
+    }
+    if (!plugin->view_reload_pending || !plugin->snapshot.repository) return;
+    plugin->view_reload_pending = false;
+    if (plugin->tab == GIT_PANEL_HISTORY) {
+        (void)git_start_task(plugin, GIT_TASK_HISTORY, NULL, false);
+    } else if (plugin->tab == GIT_PANEL_BRANCHES) {
+        (void)git_start_task(plugin, GIT_TASK_BRANCHES, NULL, false);
+    }
+}
+
 /* Drive completed-task adoption and keyboard submission. */
 static void git_panel_tick(void *user_data)
 {
     GitPlugin *plugin = (GitPlugin *)user_data;
     if (!plugin || plugin->shutting_down) return;
     git_consume_task(plugin);
+    git_watch_poll_metadata(plugin);
     if (!sol_ui_system_is_active(sol_plugin_ui(plugin->ctx))) return;
+    git_watch_dispatch(plugin);
 
     if (plugin->needs_commit_focus && plugin->commit_input) {
         ca_input_focus(plugin->commit_input);
@@ -1795,11 +2269,14 @@ static bool git_on_workspace_root(const SolEvent *event, void *user_data)
     const SolFileTreeRootPayload *payload = event && event->payload
         ? (const SolFileTreeRootPayload *)event->payload : NULL;
     if (!plugin || plugin->shutting_down) return false;
-    git_copy_string(plugin->workspace_root, sizeof(plugin->workspace_root),
-                    payload ? payload->path : NULL);
+    git_watch_set_workspace(plugin, payload ? payload->path : NULL);
     memset(&plugin->snapshot, 0, sizeof(plugin->snapshot));
     memset(&plugin->history, 0, sizeof(plugin->history));
     memset(&plugin->branches, 0, sizeof(plugin->branches));
+    memset(&plugin->repo_paths, 0, sizeof(plugin->repo_paths));
+    memset(&plugin->deferred, 0, sizeof(plugin->deferred));
+    git_watch_reset(plugin);
+    git_watch_sync_metadata(plugin);
     plugin->pending_discard[0] = '\0';
     plugin->rediscover_pending = plugin->task_running;
     if (!plugin->task_running && plugin->workspace_root[0]) {
@@ -1837,7 +2314,7 @@ static bool git_on_command(const char *action,
         } else {
             (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
             plugin->tab = GIT_PANEL_CHANGES;
-            if (!plugin->task_running && plugin->snapshot.repository) {
+            if (!plugin->busy && plugin->snapshot.repository) {
                 (void)git_start_task(plugin, GIT_TASK_REFRESH, NULL, false);
             }
         }
@@ -1857,7 +2334,7 @@ static bool git_on_command(const char *action,
     if (strcmp(action, "git.history") == 0) {
         (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
         plugin->tab = GIT_PANEL_HISTORY;
-        if (!plugin->task_running) {
+        if (!plugin->busy) {
             (void)git_start_task(plugin, GIT_TASK_HISTORY, NULL, false);
         }
         return true;
@@ -1865,7 +2342,7 @@ static bool git_on_command(const char *action,
     if (strcmp(action, "git.branches") == 0) {
         (void)sol_plugin_show_side_panel(plugin->ctx, plugin->panel_token);
         plugin->tab = GIT_PANEL_BRANCHES;
-        if (!plugin->task_running) {
+        if (!plugin->busy) {
             (void)git_start_task(plugin, GIT_TASK_BRANCHES, NULL, false);
         }
         return true;
@@ -2016,6 +2493,8 @@ static void git_plugin_destroy(void *service, void *user_data)
     if (!plugin) return;
     plugin->shutting_down = true;
     if (plugin->task_running) sol_job_fence_wait(plugin->task_fence);
+    sol_plugin_directory_watch_destroy(plugin->metadata_watch);
+    plugin->metadata_watch = NULL;
     if (plugin->task) {
         free(plugin->task->output);
         free(plugin->task);
@@ -2078,11 +2557,13 @@ static bool git_on_load(SolPluginCtx *ctx)
         ctx, SOL_EVENT_FILE_TREE_ROOT, git_on_workspace_root, plugin);
     plugin->focus_subscription = sol_plugin_subscribe(
         ctx, SOL_EVENT_BUFFER_FOCUSED, git_on_buffer_focused, plugin);
-    if (!plugin->root_subscription || !plugin->focus_subscription) return false;
+    plugin->fs_subscription = sol_plugin_subscribe(
+        ctx, SOL_EVENT_FS_CHANGED, git_on_fs_changed, plugin);
+    if (!plugin->root_subscription || !plugin->focus_subscription ||
+        !plugin->fs_subscription) return false;
 
     SolUISystem *ui = sol_plugin_ui(ctx);
-    git_copy_string(plugin->workspace_root, sizeof(plugin->workspace_root),
-                    ui ? sol_ui_system_file_tree_root(ui) : NULL);
+    git_watch_set_workspace(plugin, ui ? sol_ui_system_file_tree_root(ui) : NULL);
     SolBufferId active = sol_plugin_active_buffer(ctx);
     SolBuffer *buffer = sol_buffer_get(sol_plugin_buffers(ctx), active);
     SolTextBuffer *text = buffer ? sol_text_buffer_state(buffer) : NULL;

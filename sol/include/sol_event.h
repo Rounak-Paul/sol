@@ -36,6 +36,7 @@
 #include <stdint.h>
 
 #include "sol_buffer.h"   /* SolBufferId, SolBufferKind for payloads */
+#include "sol_file_watcher.h"  /* SolFileWatchEvent for FS payloads */
 
 #ifdef __cplusplus
 extern "C" {
@@ -184,6 +185,9 @@ size_t sol_event_bus_drain  (SolEventBus *bus, size_t max_events);
 /* -- File tree ----------------------------------------------------- */
 #define SOL_EVENT_FILE_TREE_ROOT     "sol.file_tree.root_changed"
 
+/* -- Filesystem ---------------------------------------------------- */
+#define SOL_EVENT_FS_CHANGED         "sol.fs.changed"
+
 /* -- Commands ------------------------------------------------------ */
 #define SOL_EVENT_COMMAND_INVOKED    "sol.command.invoked"
 
@@ -235,6 +239,16 @@ typedef struct SolTextEditedPayload {
 typedef struct SolFileTreeRootPayload {
     const char *path;
 } SolFileTreeRootPayload;
+
+/*
+ * Payload for SOL_EVENT_FS_CHANGED — one coalesced batch of changes under the
+ * workspace watcher's root, published on the main thread as it is drained.
+ * events is owned by the publisher and valid only for the handler's duration.
+ */
+typedef struct SolFsChangedPayload {
+    const SolFileWatchEvent *events;
+    size_t                   count;
+} SolFsChangedPayload;
 
 /*
  * Payload for SOL_EVENT_COMMAND_INVOKED — fired when a command-flow action

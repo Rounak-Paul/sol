@@ -1500,6 +1500,69 @@ void sol_plugin_wake_ui(SolPluginCtx *ctx)
     if (ui) sol_ui_system_wake(ui);
 }
 
+/*
+ * Schedule a UI tick so plugin deadlines fire without user input.
+ *
+ * ctx            Calling plugin context.
+ * delay_seconds  Seconds until the tick.
+ */
+void sol_plugin_request_tick_after(SolPluginCtx *ctx, double delay_seconds)
+{
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (ui) sol_ui_system_request_frame_after(ui, delay_seconds);
+}
+
+/* Wake the owning UI loop from a directory watch's background thread. */
+static void sol_plugin_directory_watch_wake(void *user_data)
+{
+    sol_plugin_wake_ui((SolPluginCtx *)user_data);
+}
+
+/*
+ * Start a recursive directory watch that wakes the plugin's UI loop.
+ *
+ * ctx   Calling plugin context; must outlive the watch.
+ * path  Directory to watch.
+ * Returns the watch, or NULL on failure.
+ */
+SolFileWatcher *sol_plugin_directory_watch_create(SolPluginCtx *ctx, const char *path)
+{
+    if (!ctx || !path || !path[0]) return NULL;
+    SolFileWatcher *watcher = sol_file_watcher_create();
+    if (!watcher) return NULL;
+    sol_file_watcher_set_wake_callback(watcher, sol_plugin_directory_watch_wake, ctx);
+    if (!sol_file_watcher_set_root(watcher, path)) {
+        sol_file_watcher_destroy(watcher);
+        return NULL;
+    }
+    return watcher;
+}
+
+/*
+ * Drain queued changes from a plugin directory watch.
+ *
+ * watcher     Watch created by sol_plugin_directory_watch_create.
+ * out_events  Destination array.
+ * max_events  Capacity of out_events.
+ * Returns the number of events written.
+ */
+size_t sol_plugin_directory_watch_poll(SolFileWatcher *watcher,
+                                       SolFileWatchEvent *out_events,
+                                       size_t max_events)
+{
+    return watcher ? sol_file_watcher_poll(watcher, out_events, max_events) : 0u;
+}
+
+/*
+ * Stop a plugin directory watch and join its thread.
+ *
+ * watcher  Watch to destroy; NULL is ignored.
+ */
+void sol_plugin_directory_watch_destroy(SolFileWatcher *watcher)
+{
+    sol_file_watcher_destroy(watcher);
+}
+
 /* ================================================================== */
 /* SolPluginCtx — buffer operations                                    */
 /* ================================================================== */

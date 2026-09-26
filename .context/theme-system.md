@@ -54,3 +54,11 @@ contrast.
   active selection, removal, invalid descriptors, and the 96-entry boundary.
 - Runtime startup is required to prove every generated stylesheet registers;
   a successful C build alone cannot validate Causality CSS parsing.
+
+## 2026-09-26 CSS capacity overflow (all plugin themes silently unregistered)
+
+The plugin generated CSS into a fixed 8 KB stack buffer; generated CSS had grown to ~8.2 KB, `css_append`
+flipped `valid=false`, all 66 themes logged "failed to register theme", and the app silently ran on Glass.
+`ThemeCssBuilder` is now heap-backed and grows (doubling) on demand; `build_theme_css` resets and refills one
+caller-owned builder per palette, freed after registration. The only failure mode is OOM. The core registry
+(`sol_theme.c`) never had a size cap — it malloc-copies CSS of any length.

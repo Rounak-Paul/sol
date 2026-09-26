@@ -36,6 +36,18 @@ static const char **git_process_arguments(const char *cwd,
 extern char **environ;
 #endif
 
+/* Return monotonic milliseconds; see git_plugin.h. */
+uint64_t git_monotonic_ms(void)
+{
+#if defined(_WIN32)
+    return (uint64_t)GetTickCount64();
+#else
+    struct timespec value;
+    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0u;
+    return (uint64_t)value.tv_sec * 1000u + (uint64_t)value.tv_nsec / 1000000u;
+#endif
+}
+
 /* Append captured bytes while continuing to drain data after truncation. */
 static void git_capture_append(char *output,
                                size_t output_capacity,
@@ -320,14 +332,6 @@ static char *git_resolve_executable(const char *name)
         cursor = *end ? end + 1u : end;
     }
     return NULL;
-}
-
-/* Return monotonic milliseconds for subprocess timeout checks. */
-static uint64_t git_monotonic_ms(void)
-{
-    struct timespec value;
-    if (clock_gettime(CLOCK_MONOTONIC, &value) != 0) return 0u;
-    return (uint64_t)value.tv_sec * 1000u + (uint64_t)value.tv_nsec / 1000000u;
 }
 
 /* Run Git on Unix with redirected output and a bounded wait. */

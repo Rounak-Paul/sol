@@ -335,6 +335,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         src/core/sol_job.c
         src/core/sol_input.c
         src/core/sol_theme.c
+        src/core/sol_file_watcher.c
         src/ui/command_flow.c
         src/ui/status_bar.c
     )
@@ -346,6 +347,9 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     )
     target_compile_definitions(sol_plugin_tests PRIVATE ${SOL_TEST_DEFS})
     target_link_libraries(sol_plugin_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
+    if(APPLE)
+        target_link_libraries(sol_plugin_tests PRIVATE ${SOL_CORESERVICES_FRAMEWORK})
+    endif()
     if(WIN32)
         # See the causality_EXPORTS comment on the `sol` target above: this
         # target also links the static causality archive directly.

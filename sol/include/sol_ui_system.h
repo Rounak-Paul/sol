@@ -266,6 +266,9 @@ void sol_ui_system_notify_side_panel(SolUISystem *ui,
 /* Wake the Causality event loop after a worker publishes panel state. */
 void sol_ui_system_wake(SolUISystem *ui);
 
+/* Schedule a frame after delay_seconds so timed UI-thread work runs while idle. */
+void sol_ui_system_request_frame_after(SolUISystem *ui, double delay_seconds);
+
 /* Set the active workspace leaf and force a rebuild. Returns true if
  * the focused leaf actually changed. Used by buffer-content click
  * handlers (e.g. clicking a line of text) so they don't have to reach

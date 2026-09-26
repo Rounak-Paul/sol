@@ -257,7 +257,7 @@ static bool git_model_refresh_submodules(const char *root,
     char *output = (char *)calloc(GIT_PROCESS_OUTPUT_CAP, 1u);
     if (!output) return false;
     const char *argv[] = {
-        "git", "submodule", "status", "--recursive", "--cached", NULL
+        "git", "--no-optional-locks", "submodule", "status", "--recursive", "--cached", NULL
     };
     GitProcessResult result = git_process_run(root, argv, output,
                                               GIT_PROCESS_OUTPUT_CAP, 30000u);
@@ -323,32 +323,253 @@ bool git_model_parse_status(const char *data,
     return true;
 }
 
-/* Discover the containing repository for a workspace path. */
+/* Return the byte span of line index `wanted` (0-based) in text. */
+static bool git_output_line(const char *text,
+                            size_t wanted,
+                            const char **line,
+                            size_t *length)
+{
+    const char *cursor = text;
+    for (size_t index = 0u; cursor && *cursor; ++index) {
+        const size_t span = strcspn(cursor, "\r\n");
+        if (index == wanted) {
+            *line = cursor;
+            *length = span;
+            return span > 0u;
+        }
+        cursor += span;
+        while (*cursor == '\r' || *cursor == '\n') ++cursor;
+    }
+    return false;
+}
+
+/* Return true when path is absolute on the host platform. */
+static bool git_path_is_absolute(const char *path)
+{
+#if defined(_WIN32)
+    return path[0] == '/' || path[0] == '\\' ||
+           (path[0] != '\0' && path[1] == ':');
+#else
+    return path[0] == '/';
+#endif
+}
+
+/* Resolve an existing path to canonical absolute form; see git_plugin.h. */
+bool git_path_canonicalize(const char *path, char *out, size_t capacity)
+{
+    if (!path || !path[0] || !out || capacity == 0u) return false;
+#if defined(_WIN32)
+    char *resolved = _fullpath(NULL, path, 0);
+#else
+    char *resolved = realpath(path, NULL);
+#endif
+    if (!resolved) return false;
+    const size_t length = strlen(resolved);
+    const bool fits = length < capacity;
+    if (fits) {
+        memcpy(out, resolved, length + 1u);
+#if defined(_WIN32)
+        for (char *c = out; *c; ++c) if (*c == '\\') *c = '/';
+#endif
+        size_t end = length;
+        while (end > 1u && out[end - 1u] == '/' && out[end - 2u] != ':') out[--end] = '\0';
+    }
+    free(resolved);
+    return fits;
+}
+
+/* Canonicalize a rev-parse directory that may be relative to cwd. */
+static bool git_resolve_git_path(const char *cwd,
+                                 const char *line,
+                                 size_t length,
+                                 char *out,
+                                 size_t capacity)
+{
+    char joined[GIT_PATH_CAP];
+    char value[GIT_PATH_CAP];
+    git_copy_span(value, sizeof(value), line, length);
+    const int written = git_path_is_absolute(value)
+        ? snprintf(joined, sizeof(joined), "%s", value)
+        : snprintf(joined, sizeof(joined), "%s/%s", cwd, value);
+    if (written <= 0 || (size_t)written >= sizeof(joined)) return false;
+    return git_path_canonicalize(joined, out, capacity);
+}
+
+/* Discover the containing repository and its metadata directories. */
 bool git_model_discover(const char *path,
                         char *root,
                         size_t root_capacity,
+                        GitRepoPaths *paths,
                         char *error,
                         size_t error_capacity)
 {
     if (!path || !path[0] || !root || root_capacity == 0u) return false;
-    char *output = (char *)calloc(GIT_PATH_CAP, 1u);
+    char *output = (char *)calloc(3u * GIT_PATH_CAP, 1u);
     if (!output) return false;
-    const char *argv[] = { "git", "rev-parse", "--show-toplevel", NULL };
-    GitProcessResult result = git_process_run(path, argv, output, GIT_PATH_CAP, 15000u);
+    const char *argv[] = {
+        "git", "rev-parse", "--show-toplevel", "--absolute-git-dir",
+        "--git-common-dir", NULL
+    };
+    GitProcessResult result = git_process_run(path, argv, output,
+                                              3u * GIT_PATH_CAP, 15000u);
     if (result.exit_code != 0) {
         git_command_error(error, error_capacity, "Repository discovery", &result, output);
         free(output);
         return false;
     }
-    size_t length = strcspn(output, "\r\n");
-    if (length == 0u) {
+    const char *line = NULL;
+    size_t length = 0u;
+    if (!git_output_line(output, 0u, &line, &length)) {
         if (error && error_capacity > 0u) snprintf(error, error_capacity, "Git returned an empty repository root");
         free(output);
         return false;
     }
-    git_copy_span(root, root_capacity, output, length);
+    git_copy_span(root, root_capacity, line, length);
+    if (paths) {
+        memset(paths, 0, sizeof(*paths));
+        const char *git_line = NULL;
+        const char *common_line = NULL;
+        size_t git_length = 0u;
+        size_t common_length = 0u;
+        if (git_output_line(output, 1u, &git_line, &git_length) &&
+            git_resolve_git_path(path, git_line, git_length,
+                                 paths->git_dir, sizeof(paths->git_dir))) {
+            if (!git_output_line(output, 2u, &common_line, &common_length) ||
+                !git_resolve_git_path(path, common_line, common_length,
+                                      paths->common_dir, sizeof(paths->common_dir))) {
+                git_copy_span(paths->common_dir, sizeof(paths->common_dir),
+                              paths->git_dir, strlen(paths->git_dir));
+            }
+        }
+    }
     free(output);
     return true;
+}
+
+/* Return the remainder of path below dir; see git_plugin.h. */
+const char *git_path_below(const char *dir, const char *path)
+{
+    const size_t length = strlen(dir);
+    if (length == 0u || strncmp(dir, path, length) != 0) return NULL;
+    if (path[length] == '\0') return path + length;
+    if (path[length] != '/') return NULL;
+    return path + length + 1u;
+}
+
+/* Classify a path relative to a Git metadata directory. */
+static GitWatchKind git_classify_metadata(const char *relative)
+{
+    const char *base = strrchr(relative, '/');
+    base = base ? base + 1 : relative;
+    const size_t base_length = strlen(base);
+    if (base_length == 0u) return GIT_WATCH_METADATA;
+    if (base_length >= 5u && strcmp(base + base_length - 5u, ".lock") == 0) {
+        return GIT_WATCH_NONE;
+    }
+    static const char *const k_noise[] = {
+        "objects", "logs", "hooks", "lfs", "fsmonitor--daemon"
+    };
+    const char *component = relative;
+    const char *previous = NULL;
+    size_t previous_length = 0u;
+    while (*component) {
+        const size_t span = strcspn(component, "/");
+        if (span == 4u && strncmp(component, "refs", 4u) == 0) return GIT_WATCH_REFS;
+        for (size_t i = 0u; i < sizeof(k_noise) / sizeof(k_noise[0]); ++i) {
+            if (strlen(k_noise[i]) == span && strncmp(component, k_noise[i], span) == 0) {
+                return GIT_WATCH_NONE;
+            }
+        }
+        if (component[span] == '\0') break;
+        previous = component;
+        previous_length = span;
+        component += span + 1u;
+    }
+    static const char *const k_ref_files[] = {
+        "HEAD", "packed-refs", "MERGE_HEAD", "CHERRY_PICK_HEAD",
+        "REVERT_HEAD", "REBASE_HEAD"
+    };
+    for (size_t i = 0u; i < sizeof(k_ref_files) / sizeof(k_ref_files[0]); ++i) {
+        if (strcmp(base, k_ref_files[i]) == 0) return GIT_WATCH_REFS;
+    }
+    static const char *const k_quiet_files[] = {
+        "FETCH_HEAD", "ORIG_HEAD", "COMMIT_EDITMSG", "gc.log", "description",
+        "shallow"
+    };
+    for (size_t i = 0u; i < sizeof(k_quiet_files) / sizeof(k_quiet_files[0]); ++i) {
+        if (strcmp(base, k_quiet_files[i]) == 0) return GIT_WATCH_NONE;
+    }
+    if (strcmp(base, "exclude") == 0 && previous && previous_length == 4u &&
+        strncmp(previous, "info", 4u) == 0) {
+        return GIT_WATCH_IGNORE_RULES;
+    }
+    return GIT_WATCH_METADATA;
+}
+
+/* Classify one changed path against a repository; see git_plugin.h. */
+GitWatchKind git_watch_classify(const char *repo_root,
+                                const GitRepoPaths *paths,
+                                const char *path,
+                                const char **relative)
+{
+    if (relative) *relative = NULL;
+    if (!repo_root || !repo_root[0] || !path || !path[0]) return GIT_WATCH_NONE;
+    if (paths) {
+        const char *below = paths->git_dir[0] ? git_path_below(paths->git_dir, path) : NULL;
+        if (!below && paths->common_dir[0]) below = git_path_below(paths->common_dir, path);
+        if (below) return git_classify_metadata(below);
+    }
+    const char *below = git_path_below(repo_root, path);
+    if (!below) return GIT_WATCH_NONE;
+    const char *component = below;
+    while (*component) {
+        const size_t span = strcspn(component, "/");
+        if (span == 4u && strncmp(component, ".git", 4u) == 0) {
+            return component[span] == '\0' ? GIT_WATCH_METADATA
+                                           : git_classify_metadata(component + span + 1u);
+        }
+        if (component[span] == '\0') break;
+        component += span + 1u;
+    }
+    const char *base = strrchr(below, '/');
+    base = base ? base + 1 : below;
+    if (strcmp(base, ".gitignore") == 0) return GIT_WATCH_IGNORE_RULES;
+    if (relative) *relative = below;
+    return GIT_WATCH_WORKTREE;
+}
+
+/* Report which candidate directories Git ignores; see git_plugin.h. */
+void git_model_check_ignored(const char *root,
+                             const char dirs[][GIT_WATCH_REL_CAP],
+                             size_t count,
+                             bool *ignored)
+{
+    if (!ignored) return;
+    for (size_t i = 0u; i < count; ++i) ignored[i] = false;
+    if (!root || !dirs || count == 0u || count > GIT_WATCH_DIR_CAP) return;
+    const char *argv[GIT_WATCH_DIR_CAP + 4u];
+    size_t argc = 0u;
+    argv[argc++] = "git";
+    argv[argc++] = "check-ignore";
+    argv[argc++] = "--";
+    for (size_t i = 0u; i < count; ++i) argv[argc++] = dirs[i];
+    argv[argc] = NULL;
+    const size_t capacity = GIT_WATCH_DIR_CAP * (GIT_WATCH_REL_CAP + 1u) + 1u;
+    char *output = (char *)calloc(capacity, 1u);
+    if (!output) return;
+    GitProcessResult result = git_process_run(root, argv, output, capacity, 15000u);
+    if (result.exit_code == 0 && !result.truncated) {
+        const char *line = NULL;
+        size_t length = 0u;
+        for (size_t index = 0u; git_output_line(output, index, &line, &length); ++index) {
+            for (size_t i = 0u; i < count; ++i) {
+                if (strlen(dirs[i]) == length && strncmp(dirs[i], line, length) == 0) {
+                    ignored[i] = true;
+                }
+            }
+        }
+    }
+    free(output);
 }
 
 /* Refresh branch metadata and working-tree status. */
@@ -361,7 +582,7 @@ bool git_model_refresh(const char *root,
     char *output = (char *)calloc(GIT_PROCESS_OUTPUT_CAP, 1u);
     if (!output) return false;
     const char *argv[] = {
-        "git", "status", "--porcelain=v2", "--branch", "-z",
+        "git", "--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z",
         "--untracked-files=all", NULL
     };
     GitProcessResult result = git_process_run(root, argv, output,

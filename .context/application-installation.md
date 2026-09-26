@@ -92,3 +92,15 @@
   transparent ICNS makes that mask visible as a halo or border. Linux keeps
   the rounded PNG; macOS uses the original square `Sol.icns` so the system
   applies exactly one mask.
+
+## 2026-09-26 install (input routing, git watcher, submodule cards, theme fix)
+
+- Build output note: `bin/sol` + `bin/plugins/` are stale leftovers; the build writes `bin/Sol.app/Contents/MacOS/`.
+- Static archives moved from the shared `bin/` to per-tree `${CMAKE_BINARY_DIR}/lib` (root CMakeLists.txt): `build`
+  and `build-release` were overwriting each other's `libcausality.a`, so a Debug target could link a Release archive
+  with a different `Ca_Instance` layout (caught by `causality_shader_cache_tests` reading a field 8 bytes off).
+  Executables/plugins still share `bin/` (last build wins).
+- After a clang update both trees needed `find <tree> -name 'cmake_pch*.pch' -delete`.
+- `cmake --install build-release --prefix /Applications --component Sol`; installed executable
+  `274e4975468df2e65464650629fc126e16eb3575177c6ba733e6eebcb9b4a5ec` matches `bin/Sol.app`, all 13 plugins
+  byte-identical; installed app starts and registers all 66 themes.
