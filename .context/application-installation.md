@@ -111,3 +111,11 @@
 - `/Applications/Sol.app/Contents/MacOS/Sol` sha256 `c82e1a33…c65b` byte-matches `bin/Sol.app`;
   13 plugins; installed themes dylib and executable contain the new `sw-bind-*` rules
   (Preferences/Keybindings tabs, see settings-preferences-keybindings.md). Sol was not running.
+
+## Settings menu consolidation install — 2026-09-27
+
+- `cmake --build build-release` + `cmake --install build-release --prefix
+  /Applications --component Sol`. Installed executable
+  (`18b6ece7d56c57053325d3a486324f43f5609acaf1d47d56e2a8dd991f262042`)
+  byte-matches `bin/Sol.app`; binary contains the single "Settings..." label
+  and no longer the Preferences.../Keybindings... menu labels.
