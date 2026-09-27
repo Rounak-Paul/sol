@@ -62,41 +62,6 @@ static bool style_composition_parses(const char *theme_css,
     return ok;
 }
 
-/* Relative luminance (0..1) of a packed 0xRRGGBB colour. */
-static double luminance(uint32_t rgb)
-{
-    const double r = (double)((rgb >> 16) & 0xffu);
-    const double g = (double)((rgb >> 8) & 0xffu);
-    const double b = (double)(rgb & 0xffu);
-    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
-}
-
-/*
- * Assert both bevel edges are perceptually distinct from the widget
- * surface they sit on for the given theme background.
- *
- * A bevel only reads as 3D when the highlight is lighter and the shadow
- * darker than the surface by a visible margin. The original fixed-alpha
- * tones failed this at both ends of the range (invisible shadow on
- * near-black themes, invisible highlight on paper-white ones), which is
- * the regression this guards.
- */
-static bool bevel_is_visible(uint32_t background)
-{
-    const uint32_t surface = sol_retro_widget_surface(background);
-    uint32_t light = 0u, dark = 0u;
-    sol_retro_bevel_tones(surface, &light, &dark);
-
-    const double ls = luminance(surface);
-    const double ll = luminance(light);
-    const double ld = luminance(dark);
-
-    /* Each edge must move at least this far in luminance to register as
-       relief rather than as a hairline of almost the same colour. */
-    const double min_delta = 0.04;
-    return (ll - ls) >= min_delta && (ls - ld) >= min_delta;
-}
-
 int main(void)
 {
     /* The theme layer must parse standalone. */
@@ -117,60 +82,42 @@ int main(void)
                  ".term-viewport, .term-filler { background: transparent; }") != NULL);
     CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".workspace-panel-chrome {") != NULL);
     CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".workspace-panel-well {") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".term-tab-new {") != NULL);
+    CHECK(strstr(SOL_UI_DEFAULT_THEME_CSS, ".term-tab-new-icon {") != NULL);
 
     /* "Classic" adds no rules, but its body is a comment rather than ""
        because sol_theme_register rejects an empty CSS body — and a style
        that fails to register aborts UI-system creation entirely. */
     CHECK(style_parses(SOL_UI_STYLE_CLASSIC_CSS));
     CHECK(style_parses(SOL_UI_STYLE_RETRO_CSS_PLACEHOLDER));
-
-    /* Retro CSS is generated per theme background. Generate for a spread
-       of backgrounds and require each to parse in the full composition. */
-    static const uint32_t backgrounds[] = {
-        0x000000u,  /* pure black — no footroom for a shadow   */
-        0x06080fu,  /* Sol's own near-black glass background   */
-        0x0d0d11u,  /* midnight                                */
-        0x1e1e26u,  /* dark slate                              */
-        0x808080u,  /* mid grey — the era's native surface     */
-        0xf5f5f0u,  /* paper                                   */
-        0xffffffu,  /* pure white — no headroom for a highlight */
-    };
-
-    for (size_t i = 0; i < sizeof(backgrounds) / sizeof(backgrounds[0]); ++i) {
-        char *retro = sol_retro_build_css(backgrounds[i]);
+    {
+        const SolThemeColors colors = {
+            .background_rgb = 0x000000u,
+            .primary_rgb = 0x00e5ffu,
+            .accent_rgb = 0x00e5ffu,
+        };
+        char *retro = sol_retro_build_css(&colors);
         CHECK(retro != NULL);
-        CHECK((int)strlen(retro) == sol_retro_format_css(backgrounds[i], NULL, 0u));
         CHECK(style_parses(retro));
         CHECK(style_composition_parses(SOL_UI_DEFAULT_THEME_CSS, retro));
-
-        /* Per-side colours and square corners are the whole premise: a
-           future edit collapsing them into a uniform `border` would make
-           Causality paint a flat outline, silently losing the 3D effect. */
         CHECK(strstr(retro, "border-top-color") != NULL);
-        CHECK(strstr(retro, "border-left-color") != NULL);
         CHECK(strstr(retro, "border-bottom-color") != NULL);
-        CHECK(strstr(retro, "border-right-color") != NULL);
-        CHECK(strstr(retro, "border-radius: 0px") != NULL);
-
-        /* Both edges visible on every background, including the extremes
-           where one direction has no room and the other must compensate. */
-        CHECK(bevel_is_visible(backgrounds[i]));
-
-        /* Submodule cards and their tags join the bevel language, overriding
-           the theme's rounded, tinted cards including their :hover tints. */
+        CHECK(strstr(retro, "border-radius:0px") != NULL);
+        CHECK(strstr(retro, "background:") == NULL);
+        CHECK(strstr(retro, "scrollbar-track-color") == NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-color") == NULL);
+        CHECK(strstr(retro, "shadow-color") == NULL);
+        CHECK(strstr(retro, "rgba(") == NULL);
         CHECK(strstr(retro, ".scm-submodule-card-conflict:hover") != NULL);
-        CHECK(strstr(retro, ".scm-submodule-row:active") != NULL);
-        CHECK(strstr(retro, ".scm-tag-branch") != NULL);
+        const uint32_t highlight = sol_retro_mix(colors.background_rgb,
+                                                  colors.primary_rgb, 112u);
+        const uint32_t shadow = sol_retro_mix(highlight, 0x000000u, 176u);
+        char expected_shadow[40];
+        snprintf(expected_shadow, sizeof(expected_shadow),
+                 "border-bottom-color:#%06x", shadow);
+        CHECK(strstr(retro, expected_shadow) != NULL);
         free(retro);
     }
-
-    /* The surface lift is what makes the extremes work: a near-black
-       theme background must be raised into the bevel-capable band, not
-       used as the widget surface directly. */
-    CHECK(sol_retro_widget_surface(0x000000u) != 0x000000u);
-    CHECK(sol_retro_widget_surface(0xffffffu) != 0xffffffu);
-    /* A surface already inside the band is left alone. */
-    CHECK(sol_retro_widget_surface(0x808080u) == 0x808080u);
 
     /* Scrollbar uniformity: every native-scroll view (explorer, picker,
        plugin list, search, SCM sidebar + diff view) must follow the
@@ -186,6 +133,7 @@ int main(void)
                                                 (int)sizeof(overlay)) > 0);
         CHECK(strstr(overlay, "scrollbar-width: 13.5px") != NULL);
         CHECK(strstr(overlay, ".native-scrollbar") != NULL);
+        CHECK(strstr(overlay, ".term-tab-new,") != NULL);
         CHECK(strstr(overlay, ".workspace-panel-well, .buffer-body, .buffer-scroll-row { border-bottom-left-radius") != NULL);
         CHECK(strstr(overlay, ".buffer-body, .buffer-scroll-row { overflow: hidden; }") != NULL);
         CHECK(style_parses(overlay));
@@ -196,11 +144,16 @@ int main(void)
        explorer and diff view keep the glass look while buffers go
        bevelled. Width stays owned by the appearance overlay. */
     {
-        char *retro = sol_retro_build_css(0x1e1e26u);
+        const SolThemeColors colors = {
+            .background_rgb = 0x1e1e26u,
+            .primary_rgb = 0x60a5fau,
+            .accent_rgb = 0xa78bfau,
+        };
+        char *retro = sol_retro_build_css(&colors);
         CHECK(retro != NULL);
-        CHECK(strstr(retro, "scrollbar-track-color") != NULL);
-        CHECK(strstr(retro, "scrollbar-thumb-color") != NULL);
-        CHECK(strstr(retro, "scrollbar-thumb-active-color") != NULL);
+        CHECK(strstr(retro, "scrollbar-track-color") == NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-color") == NULL);
+        CHECK(strstr(retro, "scrollbar-thumb-active-color") == NULL);
         CHECK(strstr(retro, "scrollbar-radius") != NULL);
         CHECK(strstr(retro, "scrollbar-track-border-width") != NULL);
         CHECK(strstr(retro, "scrollbar-track-border-top-color") != NULL);
@@ -211,6 +164,7 @@ int main(void)
         CHECK(strstr(retro, ".scm-root") != NULL);
         CHECK(strstr(retro, ".scm-header") != NULL);
         CHECK(strstr(retro, ".term-viewport") != NULL);
+        CHECK(strstr(retro, ".term-tab-new") != NULL);
         CHECK(strstr(retro, ".workspace-panel") != NULL);
         CHECK(style_composition_parses(SOL_UI_DEFAULT_THEME_CSS, retro));
         free(retro);

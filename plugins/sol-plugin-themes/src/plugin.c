@@ -16,7 +16,7 @@ typedef struct ThemePalette {
     const char *id;
     const char *name;
     const char *background;
-    const char *surface;
+    const char *panel_background;
     const char *elevated;
     const char *text;
     const char *secondary;
@@ -44,7 +44,7 @@ static const ThemePalette k_themes[] = {
     { "com.sol.theme.daylight", "Daylight", "#fdf8f0", "#fffcf7", "#ffffff", "#2c1a0a", "#4a2e12", "#7a5535", "#c2610a", "#d97706", "#b91c1c", "#166534", "#92400e", 0xc2610a, 0xd97706, true },
     { "com.sol.theme.catppuccin", "Catppuccin", "#1e1e2e", "#181825", "#11111b", "#cdd6f4", "#bac2de", "#a6adc8", "#cba6f7", "#94e2d5", "#f38ba8", "#a6e3a1", "#f9e2af", 0xcba6f7, 0x94e2d5, false },
     { "com.sol.theme.obsidian", "Obsidian", "#1a1625", "#242038", "#2e2a40", "#dcddde", "#b5b6bb", "#8e8ea0", "#7c6f9e", "#a8a4c0", "#e06c75", "#98c379", "#e5c07b", 0x7c6f9e, 0xa8a4c0, false },
-    { "com.sol.theme.oled", "OLED", "#000000", "#0a0a0a", "#111111", "#e8e8e8", "#b0b0b0", "#808080", "#00e5ff", "#00e5ff", "#ff5555", "#50fa7b", "#ffb86c", 0x00e5ff, 0x00e5ff, false },
+    { "com.sol.theme.oled", "OLED", "#000000", "#000000", "#000000", "#e8e8e8", "#b0b0b0", "#808080", "#00e5ff", "#00e5ff", "#ff5555", "#50fa7b", "#ffb86c", 0x00e5ff, 0x00e5ff, false },
     { "com.sol.theme.dracula", "Dracula", "#282a36", "#21222c", "#1e1f29", "#f8f8f2", "#e0dff5", "#6272a4", "#bd93f9", "#50fa7b", "#ff5555", "#50fa7b", "#ffb86c", 0xbd93f9, 0x50fa7b, false },
     { "com.sol.theme.nord", "Nord", "#2e3440", "#3b4252", "#434c5e", "#eceff4", "#e5e9f0", "#9099aa", "#88c0d0", "#81a1c1", "#bf616a", "#a3be8c", "#ebcb8b", 0x88c0d0, 0x81a1c1, false },
     { "com.sol.theme.gruvbox", "Gruvbox", "#282828", "#3c3836", "#504945", "#ebdbb2", "#d5c4a1", "#928374", "#fabd2f", "#d65d0e", "#cc241d", "#98971a", "#d79921", 0xfabd2f, 0xd65d0e, false },
@@ -217,17 +217,15 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
     css->valid = true;
     char chrome[32], panel[32], editor[32], raised[32], popup_bg[32], hover[32], selected[32];
     char table_header[32], table_row[32], table_row_alt[32], table_divider[32];
-    const float surface_alpha = theme->light ? 0.62f : 0.48f;
-    const float editor_alpha = theme->light ? 0.58f : 0.45f;
-    if (!color_with_alpha(theme->background, theme->light ? 0.78f : 0.68f, chrome) ||
-        !color_with_alpha(theme->surface, surface_alpha, panel) ||
-        !color_with_alpha(theme->surface, editor_alpha, editor) ||
-        !color_with_alpha(theme->elevated, theme->light ? 0.88f : 0.78f, raised) ||
+    if (!color_with_alpha(theme->background, 1.0f, chrome) ||
+        !color_with_alpha(theme->panel_background, 1.0f, panel) ||
+        !color_with_alpha(theme->panel_background, 1.0f, editor) ||
+        !color_with_alpha(theme->elevated, 1.0f, raised) ||
         !color_with_alpha(theme->elevated, 1.0f, popup_bg) ||
         !color_with_alpha(theme->primary, 0.15f, hover) ||
         !color_with_alpha(theme->primary, 0.32f, selected) ||
         !color_with_alpha(theme->primary, theme->light ? 0.24f : 0.30f, table_header) ||
-        !color_with_alpha(theme->surface, theme->light ? 0.32f : 0.20f, table_row) ||
+        !color_with_alpha(theme->panel_background, theme->light ? 0.32f : 0.20f, table_row) ||
         !color_with_alpha(theme->elevated, theme->light ? 0.44f : 0.30f, table_row_alt) ||
         !color_with_alpha(theme->primary, theme->light ? 0.50f : 0.58f, table_divider))
         return false;
@@ -263,8 +261,11 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
         ".project-tabs{background:%s;}"
         ".project-tab{background:%s;}.project-tab:hover{background:%s;}"
         ".project-tab-active{background:%s;}"
-        ".project-tab-label{color:%s;}.project-tab-active .project-tab-label{color:%s;}",
-        chrome, panel, hover, selected, theme->muted, theme->text);
+        ".project-tab-label{color:%s;}.project-tab-active .project-tab-label{color:%s;}"
+        ".project-tab-new:hover,.term-tab-new:hover{background:%s;}"
+        ".project-tab-new-icon,.term-tab-new-icon{color:%s;}",
+        chrome, panel, hover, selected, theme->muted, theme->text,
+        hover, theme->muted);
 
     css_append(css,
         ".tree-panel,.plugin-side-panel{background:%s;}"

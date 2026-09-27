@@ -103,3 +103,46 @@ Sol wiring:
 
 Build note: after an Xcode/clang update, delete `build/**/cmake_pch*.pch` if the build fails with
 "PCH file built from a different branch".
+
+## Pointer occlusion by stacking layer (2026-09-27)
+
+Bug: with the floating terminal open, clicks hit buttons beneath it and wheel scrolled panels behind it.
+Root cause (Causality `widget.c: ca_widget_input_pass`): hover picking was z-aware, but click/wheel/drag
+dispatch was not — buttons compared their *own* `desc.z_index` (not inherited), every other widget and the
+wheel ignored z entirely.
+
+Engine fix:
+- `pointer_top_z(win, x, y)` = highest effective z among `node_is_pointer_candidate` nodes (shared with hover).
+  Computed once per pass when a button is held/clicked or wheel moved.
+- `point_reaches_node(n, x, y, top_z)` gates every click/drag/context-menu/scrollbar/numeric-drag site.
+- Wheel bubbles DOM-style: `wheel_reaches_node` accepts a scroller in the top layer OR an ancestor of the
+  top-layer hit (`pointer_top_node`), so tab-close buttons (CSS z 1) still scroll their tab strip.
+- New API `ca_scroll_wheel(win, id, dy)` (shares `node_apply_wheel`, step `CA_WHEEL_SCROLL_PX`).
+- Test: `test_stacking_layer_occludes_pointer` in `ca_input_capture_tests.c` (fails on old code).
+
+Consequences for Sol:
+- Any full-coverage z>0 host that should be transparent when empty MUST set `.no_hover = true`
+  (`term_float_host`, `popup_host`, `tree_sticky_host`), else it blocks the whole area beneath.
+- Sticky tree headers (z 5 overlay, not inside tree-list) forward wheel via `sol_ui_on_sticky_tree_scroll`.
+- Router: `float_terminal_active()` stops MOUSE_DOWN buffer focus and wheel buffer scroll while floating.
+- `terminal_cell_at_point` now subtracts the header in FLOAT too (float panel renders the tab header;
+  the old "FLOAT has no header" comment was wrong → rows were offset in float mode).
+
+### Transparent overlay wheel routing correction (2026-09-27)
+
+User-reported symptom: the Git panel's native scrollbar thumb dragged correctly,
+but trackpad/mouse-wheel scrolling over its content did nothing. Explorer still
+worked because the transparent `tree_sticky_host` overlay forwarded wheel input
+to `tree-list`.
+
+Root cause: `wheel_reaches_node` honored stacking ancestry but did not honor
+`no_hover`. The empty z=5 sticky host therefore won the custom-scroll callback
+scan while the Git side panel was visible and forwarded the gesture to the
+absent `tree-list`; native `.scm-content` scrolling never ran. It also did not
+reject hidden scroll consumers, unlike the scrollbar drag scan.
+
+Fix: a `no_hover` node receives wheel input only when the topmost hit is one of
+its descendants, preserving sticky-row forwarding while making an empty overlay
+transparent. Hidden nodes and nodes under hidden ancestors are rejected. The
+`test_transparent_overlay_wheel_routing` regression covers pass-through over the
+empty overlay, descendant bubbling, and hidden-overlay exclusion.

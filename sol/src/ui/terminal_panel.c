@@ -136,6 +136,20 @@ static void on_term_tab_close(Ca_Button *btn, void *user_data)
     sol_ui_system_terminal_notify(ctx->ui);
 }
 
+/*
+ * Open a terminal tab through the registered command path.
+ *
+ * btn        Unused Ca_Button pointer.
+ * user_data  SolUISystem owning the terminal panel.
+ */
+static void on_term_tab_new(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui) return;
+    (void)sol_ui_system_invoke_command(ui, "terminal.tab.new");
+}
+
 static void on_term_viewport_click(Ca_Button *btn, void *user_data)
 {
     (void)btn;
@@ -429,6 +443,19 @@ void sol_ui_render_terminal_panel(SolUISystem *ui)
         ca_btn_end();  /* term-tab-close */
         ca_btn_end();  /* term-tab / term-tab-active */
     }
+    ca_btn_begin(&(Ca_BtnDesc){
+        .style      = "term-tab-new",
+        .direction  = CA_HORIZONTAL,
+        .background = 0u,
+        .on_click   = on_term_tab_new,
+        .click_data = ui,
+        .skip_keyboard_focus = true,
+    });
+    ca_text(&(Ca_TextDesc){
+        .text  = CA_ICON_NF_FA_PLUS,
+        .style = "term-tab-new-icon",
+    });
+    ca_btn_end();  /* term-tab-new */
     ca_div_end();   /* term-header */
 
     /* ---- Viewport (clickable to claim focus) ---- */

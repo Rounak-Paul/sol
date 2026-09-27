@@ -48,7 +48,7 @@
 #include "sol_settings.h"
 #include "sol_text_buffer.h"
 #include "style.h"
-#include "style_retro.h"
+#include "style_registry.h"
 
 #include <ca_gpu.h>
 #include <stdio.h>
@@ -1582,25 +1582,14 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
         if (olen < 0) olen = 0;
     }
 
-    /* The Retro style's bevel tones are derived from the active theme's
-       background: a fixed highlight/shadow pair is invisible on one side
-       at either end of the luminance range (see style_retro.h), so its
-       CSS is generated here rather than stored in the registry, and is
-       regenerated on every theme change as well as every style change. */
-    char *retro = NULL;
-    const char *style_css = NULL;
-    size_t slen = 0u;
+    char *resolved_style_css = NULL;
+    const char *style_css = ui->styles ? sol_theme_active_css(ui->styles) : NULL;
     const char *style_id = ui->styles ? sol_theme_active_id(ui->styles) : NULL;
-    if (style_id && strcmp(style_id, SOL_UI_STYLE_RETRO_ID) == 0) {
-        SolThemeColors colors;
-        const uint32_t background = sol_theme_active_colors(ui->themes, &colors)
-            ? colors.background_rgb : 0x1e1e26u;
-        retro = sol_retro_build_css(background);
-        if (retro) { style_css = retro; slen = strlen(retro); }
-    } else if (ui->styles) {
-        style_css = sol_theme_active_css(ui->styles);
-        slen = style_css ? strlen(style_css) : 0u;
-    }
+    SolThemeColors colors;
+    if (style_id && sol_theme_active_colors(ui->themes, &colors))
+        resolved_style_css = sol_ui_build_style_css(style_id, &colors);
+    if (resolved_style_css) style_css = resolved_style_css;
+    const size_t slen = style_css ? strlen(style_css) : 0u;
 
     char *composed = NULL;
     if (olen > 0 || slen > 0u) {
@@ -1614,9 +1603,8 @@ static bool sol_ui_rebuild_stylesheet(SolUISystem *ui,
             *dst = '\0';
         }
     }
-    free(retro);
-
     Ca_Stylesheet *stylesheet = ca_css_parse(composed ? composed : css);
+    free(resolved_style_css);
     free(composed);
     if (!stylesheet) return false;
 
@@ -1722,6 +1710,7 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .pos_y     = 0.0f,
         .z_index   = 40,
         .style     = "term-float-overlay",
+        .no_hover  = true,   /* transparent when empty — the backdrop child occludes while floating */
     });
     ca_div_set_builder(ui->term_float_host, sol_ui_term_float_builder, ui);
     ca_div_end();   /* term_float_host */
@@ -1757,6 +1746,8 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         .z_index   = 5,
         .style     = "tree-sticky-host",
         .no_hover  = true,   /* transparent to hover — sticky-row children still hit-test */
+        .on_scroll   = sol_ui_on_sticky_tree_scroll,
+        .scroll_data = ui,
     });
     ca_div_set_builder(ui->tree_sticky_host, sol_ui_sticky_tree_builder, ui);
     ca_div_end();   /* tree_sticky_host */
@@ -1881,21 +1872,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
        style (no CSS of its own — the theme already describes the flat
        look), so it must be first to remain the default on a fresh config. */
     ui->styles = sol_theme_registry_create();
-    if (!ui->styles ||
-        !sol_theme_register(ui->styles, &(SolThemeDesc){
-            .id = SOL_UI_STYLE_CLASSIC_ID,
-            .name = SOL_UI_STYLE_CLASSIC_NAME,
-            .css = SOL_UI_STYLE_CLASSIC_CSS,
-        }) ||
-        !sol_theme_register(ui->styles, &(SolThemeDesc){
-            .id = SOL_UI_STYLE_RETRO_ID,
-            .name = SOL_UI_STYLE_RETRO_NAME,
-            /* Placeholder: the real CSS is generated per theme background
-               in sol_ui_rebuild_stylesheet, which special-cases this id.
-               The registry only needs the entry to exist so the style can
-               be listed and selected. */
-            .css = SOL_UI_STYLE_RETRO_CSS_PLACEHOLDER,
-        })) {
+    if (!ui->styles || !sol_ui_register_builtin_styles(ui->styles)) {
         sol_ui_system_destroy(ui);
         return NULL;
     }

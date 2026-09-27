@@ -758,6 +758,7 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".term-tab,"
         ".term-tab-active,"
         ".term-tab-close,"
+        ".term-tab-new,"
         ".welcome-btn,"
         ".welcome-btn-primary,"
         ".scm-tab,"

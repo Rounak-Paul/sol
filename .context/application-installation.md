@@ -163,3 +163,42 @@
 
 - `cmake --build build-release -j 8` then `cmake --install build-release --prefix /Applications --component Sol`.
 - Installed executable byte-matches `bin/Sol.app` (`b3a1300b4ae590dc947bee3a11ba6896e3cd02adc8838225641e8302862e9fab`), 13 plugins, and is newer than the Causality scrollbar paint_barrier fix.
+
+## Float-terminal click-through + OLED true black install — 2026-09-27
+
+- `cmake --build build-release -j 8` then `cmake --install build-release --prefix /Applications --component Sol`.
+- Installed executable `085a1b5709e6d379624a6ebea9ed6e589ee530530467c5c660b8c6c13f1819d1` byte-matches
+  `bin/Sol.app`; all 13 plugins identical (`diff -rq`), themes plugin verified to contain the solid-surface CSS.
+- Includes Causality stacking-layer pointer occlusion and the completed OLED surface fix.
+- Installed executable SHA-256 `dd350527290499203490d560299698d826caca59d77f735634a577db3777ad2e`
+  and themes plugin SHA-256 `cce0ea70ec68af2ba9d76060cd49d24f43a365276ce0be3003965ce472b8b257`
+  byte-match the local bundle after the generic style-descriptor refactor.
+- OLED owns black background/panel/elevated colors at full base-surface alpha. Styles cannot replace
+  semantic fills; Retro retains geometry and derives only relief borders from active theme anchors.
+- Rendered verification used a clean installed process at `/tmp/sol-oled-verify`: title bar, project strip,
+  explorer panel, welcome/editor panel, wells, and status bar render black at panel opacity 1.00.
+
+## Terminal tab plus-button install — 2026-09-27
+
+- Rebuilt the Release executable and themes plugin, then installed the `Sol`
+  component to `/Applications`.
+- Installed executable SHA-256
+  `d8400981c03919b93f38755a76e18b536e4ffda7a3876badbbc4a2fa25929bd8`
+  and themes plugin SHA-256
+  `90140649a5f5021824ec92951967fe409881214f2500ed1d2104a988af046241`
+  byte-match `bin/Sol.app`; all 13 bundled plugins match.
+- The installed build includes the terminal header's theme-aware plus button,
+  which invokes the existing `terminal.tab.new` command path. A Sol process
+  that was already running during installation retains its previous in-memory
+  image until it is quit and relaunched.
+
+## Git panel wheel-routing regression install — 2026-09-27
+
+- Rebuilt and installed the Release bundle after correcting transparent-overlay
+  wheel routing in Causality. Installed executable SHA-256
+  `80e8918ed30f170dc9f54a6cb48701ea41a065919e9216dabc7b8aaf967dd552`
+  byte-matches `bin/Sol.app`; all 13 bundled plugins match.
+- The regression came from the preceding stacking-layer pointer-occlusion work:
+  the Explorer sticky overlay was visually transparent over the Git sidebar but
+  still won wheel dispatch. Scrollbar dragging used a separate visibility-aware
+  path and therefore continued to work.

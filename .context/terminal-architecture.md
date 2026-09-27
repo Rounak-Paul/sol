@@ -109,6 +109,11 @@ overlay that does not participate in the split at all:
 - `sol_ui_render_terminal_panel(ui)` (terminal_panel.c) is reused unchanged
   for all three positions — it only fills whatever div it's given.
 
+**Pointer occlusion** (2026-09-27): the float backdrop (z 40) occludes all
+pointer input beneath it at the engine level — see input-event-routing.md
+"Pointer occlusion by stacking layer". Header height is subtracted in every
+position including FLOAT.
+
 **Hit-testing** (`input_router.c`, `terminal_cell_at_point`): BOTTOM/RIGHT
 re-derive the panel rect from `sol_ui_system_buffer_area_rect` + the split
 ratio (documented in-function — buffer_area_rect already returns the
@@ -193,10 +198,18 @@ churn made the extra synthetic activation (and its
 more frequent, reading as "losing focus" after pressing Enter. Fixed by
 setting `.skip_keyboard_focus = true` on the terminal viewport button and
 both tab buttons (`term-viewport`, `term-tab`/`term-tab-active`,
-`term-tab-close`) in `terminal_panel.c` — none of them should participate
+`term-tab-close`, `term-tab-new`) in `terminal_panel.c` — none of them should participate
 in Tab-navigation or Enter/Space-activation; all real keyboard interaction
 while the terminal is focused goes through `input_router.c`'s PTY-forward
 path, not Causality's generic widget-activation path.
+
+**New-tab affordance** (2026-09-27): the terminal header ends with a compact
+`term-tab-new` plus button matching the project/session tab strip. Its click
+handler calls `sol_ui_system_invoke_command(ui, "terminal.tab.new")`, so pointer
+and key-chord activation share the registered command, event publication,
+project-root working directory, visibility, focus, and notification behavior in
+`main.c`. The panel does not duplicate terminal creation policy. Theme CSS owns
+the icon and hover colors; appearance/style overlays own radius and bevel shape.
 
 **Backdrop blur** (added 2026-09-09): `.term-float-backdrop` (the dimmed
 scrim behind the floating panel) is wired into

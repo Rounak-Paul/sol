@@ -30,10 +30,7 @@
 #define SOL_UI_STYLE_CLASSIC_CSS  "/* classic: no overrides */"
 #define SOL_UI_STYLE_RETRO_ID     "com.sol.style.retro"
 #define SOL_UI_STYLE_RETRO_NAME   "Retro"
-/* Retro's real CSS is generated from the active theme background by
-   sol_retro_build_css (style_retro.h); the registry only stores this
-   marker so the style can be listed and selected. */
-#define SOL_UI_STYLE_RETRO_CSS_PLACEHOLDER "/* retro: generated per theme */"
+#define SOL_UI_STYLE_RETRO_CSS_PLACEHOLDER "/* retro: derived from active theme */"
 
 /* Split bar presentation defaults. */
 #define SOL_UI_SPLIT_BAR_SIZE        SOL_UI_PANEL_GAP_PX
@@ -1646,7 +1643,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  gap: 0px;"
     "  justify-content: flex-start;"
     "  align-items: stretch;"
-    "  overflow: hidden;"
+    "  overflow-y: scroll;"
     "}"
     ".sw-section-title {"
     "  color: #c0c0cc;"
@@ -1714,11 +1711,13 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".sw-setting-hint {"
     "  color: #5c5c6c;"
     "  font-size: 12px;"
-    "  flex-shrink: 1;"
+    "  width: auto;"
+    "  flex-shrink: 0;"
     "  min-width: 0px;"
-    "  overflow: hidden;"
-    "  text-wrap: nowrap;"
+    "  text-wrap: wrap;"
     "}"
+    ".sw-setting-hint-indent { margin-left: 142px; }"
+    ".sw-setting-actions { margin-top: 12px; }"
     ".sw-select-narrow { width: 120px; }"
     /* Settings buttons (Set / Default / Clear / Reset all) */
     ".sw-btn {"
@@ -2055,7 +2054,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  color: #c8c8cc;"
     "  text-wrap: nowrap;"
     "}"
-    ".term-tab-close {"
+    ".term-tab-close, .term-tab-new {"
     "  width: 16px;"
     "  height: 16px;"
     "  align-items: center;"
@@ -2063,10 +2062,10 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  border-radius: 2px;"
     "  flex-shrink: 0;"
     "}"
-    ".term-tab-close:hover {"
+    ".term-tab-close:hover, .term-tab-new:hover {"
     "  background: #3d3d4a;"
     "}"
-    ".term-tab-close-icon {"
+    ".term-tab-close-icon, .term-tab-new-icon {"
     "  font-size: 11px;"
     "  color: #747480;"
     "}"
@@ -2702,7 +2701,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  border-bottom-left-radius: " SOL_UI_PANEL_RADIUS_PX_CSS ";"
     "}"
     ".buffer-tab { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"
-    ".buffer-tab-close, .term-tab-close { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"
+    ".buffer-tab-close, .term-tab-close, .term-tab-new { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"
     ".project-tab { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"
     ".project-tab-close, .project-tab-new { border-radius: " SOL_UI_CONTROL_RADIUS_PX_CSS "; }"
     ".buffer-scrollbar, .buffer-hscrollbar { background: transparent; }"

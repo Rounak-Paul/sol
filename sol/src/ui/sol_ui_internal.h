@@ -706,6 +706,16 @@ void sol_ui_render_file_tree_panel_body(SolUISystem *ui);
 void sol_ui_sticky_tree_builder(Ca_Div *div, void *user_data);
 
 /*
+ * Wheel handler for the sticky-header host: sticky rows visually belong to
+ * the tree list but live in a separate overlay, so forward the wheel to it.
+ *
+ * dx        Horizontal wheel delta (unused).
+ * dy        Vertical wheel delta.
+ * user_data User data (cast to SolUISystem*).
+ */
+void sol_ui_on_sticky_tree_scroll(double dx, double dy, void *user_data);
+
+/*
  * Allocate a context menu context from the pool.
  *
  * ui  UI system.

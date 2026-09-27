@@ -495,6 +495,14 @@ static void render_sticky_row(const SolFileEntry *entry, SolStickyClickCtx *ctx)
     ca_btn_end();
 }
 
+void sol_ui_on_sticky_tree_scroll(double dx, double dy, void *user_data)
+{
+    (void)dx;
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->primary_window || dy == 0.0) return;
+    ca_scroll_wheel(ui->primary_window, "tree-list", dy);
+}
+
 /* Reactive builder installed on tree_sticky_host.
    Subscribes to sig_tree_scroll (fires on every scroll tick) and
    sig_file_tree_rev (fires on tree structure change).  Only the sticky

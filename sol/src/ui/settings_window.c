@@ -108,8 +108,12 @@ struct SolSettingsWindow {
     SwTabCtx      tab_ctxs[SW_TAB_COUNT];
 
     char          scale_input_text[16];
-
-    /* (no text buffers needed — appearance controls use sliders) */
+    char          bg_opacity_text[16];
+    char          corner_radius_text[16];
+    char          panel_opacity_text[16];
+    char          panel_blur_text[16];
+    char          titlebar_blur_text[16];
+    char          scrollbar_width_text[16];
 
     /* Theme select state */
     const char   *theme_names[SW_MAX_THEMES];   /* pointers into registry (stable) */
@@ -162,6 +166,23 @@ static void sw_update_scale_label(SolSettingsWindow *w)
 {
     snprintf(w->scale_input_text, sizeof(w->scale_input_text),
              "%.2f", (double)w->settings->ui_scale);
+}
+
+/* Refresh value labels displayed beside live theme and appearance controls. */
+static void sw_update_theme_value_labels(SolSettingsWindow *w)
+{
+    snprintf(w->bg_opacity_text, sizeof(w->bg_opacity_text), "%.0f%%",
+             (double)(w->settings->bg_opacity * 100.0f));
+    snprintf(w->corner_radius_text, sizeof(w->corner_radius_text), "%.1f px",
+             (double)w->settings->corner_radius);
+    snprintf(w->panel_opacity_text, sizeof(w->panel_opacity_text), "%.0f%%",
+             (double)(w->settings->panel_opacity * 100.0f));
+    snprintf(w->panel_blur_text, sizeof(w->panel_blur_text), "%.1f px",
+             (double)w->settings->panel_blur);
+    snprintf(w->titlebar_blur_text, sizeof(w->titlebar_blur_text), "%.1f px",
+             (double)w->settings->titlebar_blur);
+    snprintf(w->scrollbar_width_text, sizeof(w->scrollbar_width_text), "%.1f px",
+             (double)w->settings->scrollbar_width);
 }
 
 
@@ -453,7 +474,9 @@ static void sw_on_opacity_change(Ca_Slider *sl, void *user_data)
     SolSettingsWindow *w = (SolSettingsWindow *)user_data;
     w->settings->bg_opacity = ca_slider_get(sl);
     if (w->bg_effects) sol_bg_effect_set_opacity(w->bg_effects, w->settings->bg_opacity);
+    sw_update_theme_value_labels(w);
     sol_settings_save(w->settings);
+    sol_ui_bump_u32(w->sig_rev);
 }
 
 /* ------------------------------------------------------------------ */
@@ -466,7 +489,9 @@ static void fn_name(Ca_Slider *sl, void *user_data)                 \
     SolSettingsWindow *w = (SolSettingsWindow *)user_data;           \
     w->settings->field = ca_slider_get(sl);                         \
     sol_ui_system_apply_appearance(w->ui);                           \
+    sw_update_theme_value_labels(w);                                \
     sol_settings_save(w->settings);                                  \
+    sol_ui_bump_u32(w->sig_rev);                                    \
 }
 
 SW_MAKE_SLIDER_CB(sw_on_corner_radius_change,    corner_radius)
@@ -476,6 +501,22 @@ SW_MAKE_SLIDER_CB(sw_on_panel_opacity_change,    panel_opacity)
 SW_MAKE_SLIDER_CB(sw_on_scrollbar_width_change,  scrollbar_width)
 
 #undef SW_MAKE_SLIDER_CB
+
+/* Restore panel appearance controls without changing theme, style, or effect. */
+static void sw_on_appearance_reset(Ca_Button *btn, void *user_data)
+{
+    (void)btn;
+    SolSettingsWindow *w = (SolSettingsWindow *)user_data;
+    w->settings->corner_radius = SOL_SETTINGS_CORNER_RADIUS_DEFAULT;
+    w->settings->panel_opacity = SOL_SETTINGS_PANEL_OPACITY_DEFAULT;
+    w->settings->panel_blur = SOL_SETTINGS_PANEL_BLUR_DEFAULT;
+    w->settings->titlebar_blur = SOL_SETTINGS_TITLEBAR_BLUR_DEFAULT;
+    w->settings->scrollbar_width = SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT;
+    sw_update_theme_value_labels(w);
+    sol_ui_system_apply_appearance(w->ui);
+    sol_settings_save(w->settings);
+    sol_ui_bump_u32(w->sig_rev);
+}
 
 /* ------------------------------------------------------------------ */
 /* Preferences callbacks                                               */
@@ -1035,6 +1076,33 @@ static void sw_render_keybindings_tab(SolSettingsWindow *w)
 /* Content builder                                                     */
 /* ------------------------------------------------------------------ */
 
+/* Render a documented live slider with its formatted current value. */
+static void sw_render_theme_slider(SolSettingsWindow *w,
+                                   const char *label,
+                                   const char *hint,
+                                   const char *value_text,
+                                   float min,
+                                   float max,
+                                   float value,
+                                   Ca_SliderFn on_change)
+{
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
+    ca_text(&(Ca_TextDesc){ .text = label, .style = "sw-setting-label sw-setting-label-wide" });
+    ca_slider(&(Ca_SliderDesc){
+        .min = min,
+        .max = max,
+        .value = value,
+        .on_change = on_change,
+        .change_data = w,
+        .style = "sw-slider",
+    });
+    ca_text(&(Ca_TextDesc){ .text = value_text, .style = "sw-setting-value" });
+    ca_div_end();
+    ca_text(&(Ca_TextDesc){ .text = hint, .style = "sw-setting-hint sw-setting-hint-indent" });
+    ca_div_end();
+}
+
 /*
  * Emit the Theme settings tab: theme dropdown, scale row, effect dropdown,
  * and intensity row.
@@ -1050,7 +1118,7 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     sw_rebuild_theme_table(w);
     sw_rebuild_style_table(w);
 
-    ca_text(&(Ca_TextDesc){ .text = "THEME", .style = "sw-section-title" });
+    ca_text(&(Ca_TextDesc){ .text = "COLOR & STYLE", .style = "sw-section-title" });
     ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
 
     /* ---- Theme selector ---- */
@@ -1070,6 +1138,10 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     });
 
     ca_div_end();
+    ca_text(&(Ca_TextDesc){
+        .text = "Controls the complete semantic color palette. Themes do not set panel opacity.",
+        .style = "sw-setting-hint sw-setting-hint-indent",
+    });
     ca_div_end();
 
     /* ---- Style selector ---- */
@@ -1089,6 +1161,10 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     });
 
     ca_div_end();
+    ca_text(&(Ca_TextDesc){
+        .text = "Controls shape and relief. Derived style colors come from the selected theme.",
+        .style = "sw-setting-hint sw-setting-hint-indent",
+    });
     ca_div_end();
 
     /* ---- Scale row ---- */
@@ -1104,66 +1180,86 @@ static void sw_render_theme_tab(SolSettingsWindow *w)
     ca_text(&(Ca_TextDesc){ .text = "0.5 – 3.0", .style = "sw-setting-value" });
     ca_div_end();
 
-    if (!w->bg_effects) return;
-
-    /* ---- Effect selector ---- */
-    sw_rebuild_effect_table(w);
-
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
-    ca_text(&(Ca_TextDesc){ .text = "Background", .style = "sw-setting-label" });
-
-    ca_select(&(Ca_SelectDesc){
-        .options      = w->effect_names,
-        .option_count = w->effect_count,
-        .selected     = w->effect_selected,
-        .on_change    = sw_on_effect_change,
-        .change_data  = w,
-        .on_hover     = sw_on_effect_hover,
-        .hover_data   = w,
-        .style        = "sw-select",
-    });
-
-    ca_div_end();
-    ca_div_end();
-
-    /* ---- Intensity row ---- */
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
-    ca_text(&(Ca_TextDesc){ .text = "Intensity", .style = "sw-setting-label" });
-    ca_slider(&(Ca_SliderDesc){
-        .min         = SOL_SETTINGS_BG_OPACITY_MIN,
-        .max         = SOL_SETTINGS_BG_OPACITY_MAX,
-        .value       = w->settings->bg_opacity,
-        .on_change   = sw_on_opacity_change,
-        .change_data = w,
-        .style       = "sw-slider",
-    });
-    ca_div_end();
-
-    /* ---- Appearance section ---- */
-    ca_text(&(Ca_TextDesc){ .text = "APPEARANCE", .style = "sw-section-title" });
+    ca_text(&(Ca_TextDesc){ .text = "BACKGROUND EFFECT", .style = "sw-section-title sw-section-title-spaced" });
     ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
 
-#define SW_SLIDER_ROW(label, mn, mx, field_val, cb) \
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" }); \
-    ca_text(&(Ca_TextDesc){ .text = (label), .style = "sw-setting-label" }); \
-    ca_slider(&(Ca_SliderDesc){ \
-        .min         = (mn), \
-        .max         = (mx), \
-        .value       = (field_val), \
-        .on_change   = (cb), \
-        .change_data = w, \
-        .style       = "sw-slider", \
-    }); \
+    if (w->bg_effects) {
+        sw_rebuild_effect_table(w);
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group" });
+        ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "sw-setting-row" });
+        ca_text(&(Ca_TextDesc){ .text = "Effect", .style = "sw-setting-label sw-setting-label-wide" });
+
+        ca_select(&(Ca_SelectDesc){
+            .options = w->effect_names,
+            .option_count = w->effect_count,
+            .selected = w->effect_selected,
+            .on_change = sw_on_effect_change,
+            .change_data = w,
+            .on_hover = sw_on_effect_hover,
+            .hover_data = w,
+            .style = "sw-select",
+        });
+
+        ca_div_end();
+        ca_text(&(Ca_TextDesc){
+            .text = "Animated content rendered behind panels; independent of theme colors and panel opacity.",
+            .style = "sw-setting-hint sw-setting-hint-indent",
+        });
+        ca_div_end();
+
+        sw_render_theme_slider(w, "Effect Intensity",
+            "Changes only the background shader strength; it does not fade panels.",
+            w->bg_opacity_text,
+            SOL_SETTINGS_BG_OPACITY_MIN, SOL_SETTINGS_BG_OPACITY_MAX,
+            w->settings->bg_opacity, sw_on_opacity_change);
+    } else {
+        ca_text(&(Ca_TextDesc){
+            .text = "Background effects are unavailable. Panel appearance controls remain available below.",
+            .style = "sw-setting-hint",
+        });
+    }
+
+    ca_text(&(Ca_TextDesc){ .text = "PANEL APPEARANCE", .style = "sw-section-title sw-section-title-spaced" });
+    ca_hr(&(Ca_HrDesc){ .style = "sw-hr" });
+    sw_render_theme_slider(w, "Panel Opacity",
+        "The only opacity control for panels. 100% shows the theme's exact surface colors.",
+        w->panel_opacity_text,
+        SOL_SETTINGS_PANEL_OPACITY_MIN, SOL_SETTINGS_PANEL_OPACITY_MAX,
+        w->settings->panel_opacity, sw_on_panel_opacity_change);
+    sw_render_theme_slider(w, "Panel Blur",
+        "Backdrop blur behind workspace, editor, terminal, and auxiliary panels.",
+        w->panel_blur_text,
+        SOL_SETTINGS_PANEL_BLUR_MIN, SOL_SETTINGS_PANEL_BLUR_MAX,
+        w->settings->panel_blur, sw_on_panel_blur_change);
+    sw_render_theme_slider(w, "Titlebar Blur",
+        "Independent backdrop blur for the window title bar.",
+        w->titlebar_blur_text,
+        SOL_SETTINGS_TITLEBAR_BLUR_MIN, SOL_SETTINGS_TITLEBAR_BLUR_MAX,
+        w->settings->titlebar_blur, sw_on_titlebar_blur_change);
+    sw_render_theme_slider(w, "Corner Radius",
+        "Rounds panels and controls. Styles such as Retro may intentionally force square geometry.",
+        w->corner_radius_text,
+        SOL_SETTINGS_CORNER_RADIUS_MIN, SOL_SETTINGS_CORNER_RADIUS_MAX,
+        w->settings->corner_radius, sw_on_corner_radius_change);
+    sw_render_theme_slider(w, "Scrollbar Width",
+        "Sets one consistent width for editor and native panel scrollbars.",
+        w->scrollbar_width_text,
+        SOL_SETTINGS_SCROLLBAR_WIDTH_MIN, SOL_SETTINGS_SCROLLBAR_WIDTH_MAX,
+        w->settings->scrollbar_width, sw_on_scrollbar_width_change);
+
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-setting-group sw-setting-actions" });
+    ca_btn_begin(&(Ca_BtnDesc){
+        .text = "Reset Panel Appearance",
+        .style = "sw-btn",
+        .on_click = sw_on_appearance_reset,
+        .click_data = w,
+    });
+    ca_btn_end();
+    ca_text(&(Ca_TextDesc){
+        .text = "Keeps the selected theme, style, and background effect.",
+        .style = "sw-setting-hint sw-setting-hint-indent",
+    });
     ca_div_end();
-
-    SW_SLIDER_ROW("Corner Radius",   SOL_SETTINGS_CORNER_RADIUS_MIN,   SOL_SETTINGS_CORNER_RADIUS_MAX,   w->settings->corner_radius,   sw_on_corner_radius_change)
-    SW_SLIDER_ROW("Panel Opacity",   SOL_SETTINGS_PANEL_OPACITY_MIN,   SOL_SETTINGS_PANEL_OPACITY_MAX,   w->settings->panel_opacity,   sw_on_panel_opacity_change)
-    SW_SLIDER_ROW("Panel Blur",      SOL_SETTINGS_PANEL_BLUR_MIN,      SOL_SETTINGS_PANEL_BLUR_MAX,      w->settings->panel_blur,      sw_on_panel_blur_change)
-    SW_SLIDER_ROW("Titlebar Blur",   SOL_SETTINGS_TITLEBAR_BLUR_MIN,   SOL_SETTINGS_TITLEBAR_BLUR_MAX,   w->settings->titlebar_blur,   sw_on_titlebar_blur_change)
-    SW_SLIDER_ROW("Scrollbar Width", SOL_SETTINGS_SCROLLBAR_WIDTH_MIN, SOL_SETTINGS_SCROLLBAR_WIDTH_MAX, w->settings->scrollbar_width, sw_on_scrollbar_width_change)
-
-#undef SW_SLIDER_ROW
 }
 
 /*
@@ -1196,7 +1292,7 @@ static void sw_content_builder(Ca_Div *div, void *user_data)
     }
     ca_div_end();
 
-    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-right" });
+    ca_div_begin(&(Ca_DivDesc){ .direction = CA_VERTICAL, .style = "sw-right native-scrollbar" });
     switch ((SolUISettingsTab)w->active_tab) {
         case SOL_UI_SETTINGS_TAB_THEME:       sw_render_theme_tab(w);       break;
         case SOL_UI_SETTINGS_TAB_PREFERENCES: sw_render_preferences_tab(w); break;
@@ -1282,6 +1378,7 @@ void sol_ui_settings_window_open(SolUISystem *ui, SolUISettingsTab tab)
     w->active_tab         = (int)tab;
 
     sw_update_scale_label(w);
+    sw_update_theme_value_labels(w);
     sw_update_autosave_delay_label(w);
     w->default_count = sol_config_default_bindings(w->defaults, SW_MAX_DEFAULT_BINDINGS);
     if (w->default_count > SW_MAX_DEFAULT_BINDINGS) w->default_count = SW_MAX_DEFAULT_BINDINGS;

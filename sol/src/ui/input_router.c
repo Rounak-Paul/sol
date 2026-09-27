@@ -242,18 +242,15 @@ static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
     if (!tmgr || !sol_terminal_manager_visible(tmgr)) return false;
     if (!r->ui->term_panel_host) return false;
 
-    const SolTerminalPosition pos = sol_terminal_manager_position(tmgr);
     float vx, vy, vw, vh; /* terminal panel's content box, header not yet excluded */
     ca_div_content_screen_rect(r->ui->term_panel_host, &vx, &vy, &vw, &vh);
     if (vw <= 0.0f || vh <= 0.0f) return false;
     if (x < vx || x >= vx + vw || y < vy || y >= vy + vh) return false;
 
-    /* Docked positions stack the header above the viewport inside the same
-       panel content box; FLOAT has no header row sharing term_panel_host
-       (sol_ui_term_float_builder renders only the viewport into it), so the
-       content box IS the viewport's outer rect. */
+    /* Every position stacks the tab header above the viewport inside the
+       same panel content box (sol_ui_render_terminal_panel emits both). */
     float header_h = 0.0f;
-    if (pos != SOL_TERMINAL_POSITION_FLOAT && r->ui->term_header_host) {
+    if (r->ui->term_header_host) {
         ca_div_screen_rect(r->ui->term_header_host, NULL, NULL, NULL, &header_h);
     }
 
@@ -271,6 +268,21 @@ static bool terminal_cell_at_point(SolInputRouter *r, double x, double y,
     if (out_col) *out_col = (int)(local_x / cell_w);
     if (out_row) *out_row = (int)(local_y / cell_h);
     return true;
+}
+
+/*
+ * Return true when the terminal is shown as the floating overlay. Its
+ * backdrop covers the whole workspace, so while active no pointer input may
+ * reach the buffer area beneath it.
+ *
+ * r  The input router.
+ */
+static bool float_terminal_active(const SolInputRouter *r)
+{
+    SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
+    return tmgr && sol_terminal_manager_visible(tmgr) &&
+           sol_terminal_manager_count(tmgr) > 0u &&
+           sol_terminal_manager_position(tmgr) == SOL_TERMINAL_POSITION_FLOAT;
 }
 
 /* Printable keys arrive twice from GLFW — once as KEY and again decoded
@@ -658,9 +670,7 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
        convention). Scoped strictly to FLOAT — docked BOTTOM/RIGHT have no
        click-outside-defocus behavior, unchanged. Only MOUSE_DOWN triggers
        this; the matching MOUSE_UP is left to fall through normally. */
-    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN && tmgr &&
-        sol_terminal_manager_visible(tmgr) &&
-        sol_terminal_manager_position(tmgr) == SOL_TERMINAL_POSITION_FLOAT &&
+    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN && float_terminal_active(r) &&
         r->ui->term_panel_host) {
         float px, py, pw, ph;
         ca_div_screen_rect(r->ui->term_panel_host, &px, &py, &pw, &ph);
@@ -699,7 +709,7 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
 
     sol_input_system_process_event(r->input, &ie);
 
-    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN) {
+    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN && !float_terminal_active(r)) {
         r->buffer_input_active = point_in_active_buffer_leaf(
             r, r->mouse_x, r->mouse_y, NULL, NULL);
         if (!r->buffer_input_active) {
@@ -798,6 +808,11 @@ static void on_mouse_scroll(const Ca_Event *ev, void *user_data)
             sol_ui_system_terminal_notify(r->ui);
             return;
         }
+    }
+
+    if (float_terminal_active(r)) {
+        r->horizontal_scroll_remainder = 0.0;
+        return;
     }
 
     SolBufferRect root_rect = {0};
