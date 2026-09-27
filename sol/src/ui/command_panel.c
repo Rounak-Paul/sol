@@ -83,40 +83,27 @@ void sol_ui_render_command_flow_panel(SolUISystem *ui)
     const size_t suggestion_count =
         sol_ui_collect_suggestions(ui, suggestions, SOL_UI_MAX_SUGGESTIONS);
 
-    /* Determine row count for height calculation. error-row, empty,
-       or N suggestions all collapse to >=1 row. */
-    size_t row_count;
-    if (ui->leader_no_match) {
-        row_count = 1u;
-    } else if (suggestion_count == 0u) {
-        row_count = 1u; /* the "No bindings" line */
-    } else {
-        row_count = suggestion_count;
-    }
-
-    /* Panel width: prefer 320 logical px, but shrink to fit narrow
-       windows. ui->window_w is updated from the resize callback;
-       fall back to 320 when unknown (first frame, etc.). */
+    /* Panel width: prefer 320 author px, shrunk to fit narrow windows.
+       ui->window_w is logical px while desc sizes are author px that
+       Causality multiplies by ui_scale, so compare in author units.
+       Height is left to content: padding, gaps and borders come from the
+       active style (glass/Retro differ), so a hand-computed height clips
+       the last row whenever a style changes them. */
+    const float ui_scale = sol_ui_system_scale(ui);
+    const float scale = ui_scale > 0.0f ? ui_scale : 1.0f;
     float panel_w = 320.0f;
-    if (ui->window_w > 0 && (float)ui->window_w < panel_w) {
-        panel_w = (float)ui->window_w;
+    if (ui->window_w > 0 && (float)ui->window_w / scale < panel_w) {
+        panel_w = (float)ui->window_w / scale;
     }
-
-    /* Panel height (logical px): padding(6+6) + N*22 + (N-1)*2 gaps.
-       Causality scales this by ui_scale internally, so use logical units. */
-    const float panel_h =
-        12.0f + (float)row_count * 22.0f
-        + (row_count > 1u ? (float)(row_count - 1u) * 2.0f : 0.0f);
 
     /* ---- Floating panel card. The surrounding cf-overlay (absolute,
        full-coverage, flex-end aligned) is provided by ui->popup_host,
        so the panel naturally lands in the bottom-right corner without
-       any pixel math against the viewport. Explicit width+height keep
-       the card from stretching to fill the overlay. */
+       any pixel math against the viewport. flex-end alignment keeps the
+       card from stretching; flex-grow:0 keeps it content-tall. */
     ui->command_panel_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .width     = panel_w,
-        .height    = panel_h,
         .style     = "cf-panel",
     });
 

@@ -678,7 +678,8 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  background: transparent;"
     "  width: 100%;"
     "  height: 100%;"
-    "  padding: 0px " SOL_UI_PANEL_MARGIN_PX_CSS " " SOL_UI_PANEL_MARGIN_PX_CSS " 0px;"
+    "  padding: 0px " SOL_UI_OVERLAY_INSET_RIGHT_PX_CSS " "
+    SOL_UI_OVERLAY_INSET_BOTTOM_PX_CSS " 0px;"
     "  gap: 0px;"
     "  justify-content: flex-end;"
     "  align-items: flex-end;"
@@ -718,22 +719,14 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  overflow: hidden;"
     "}"
     ".term-float-backdrop {"
-    "  background: rgba(0, 0, 0, 0.45);"
+    "  background: transparent;"
     "  width: 100%;"
     "  height: 100%;"
     "  padding: 0px;"
     "  gap: 0px;"
-    /* flex-start: the explicit spacer div above the panel (see
-       sol_ui_term_float_builder) provides the exact vertical offset needed
-       to center within the workspace area (excluding title/status chrome),
-       not the raw window — justify-content:center here would instead
-       center the (spacer + panel) pair as a unit and double-offset it. */
-    "  justify-content: flex-start;"
+    "  justify-content: center;"
     "  align-items: center;"
     "  overflow: hidden;"
-    "}"
-    ".term-float-spacer {"
-    "  flex-shrink: 0;"
     "}"
     /* Key badge */
     ".cf-row-key {"
@@ -2662,14 +2655,21 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "}"
     /* Floating terminal card: same rounding as docked panels, plus a
        drop shadow so it reads as an overlay rather than a workspace pane.
-       flex-grow/shrink: 0 overrides base .term-panel's flex-grow:1 — inside
-       the backdrop's flex column the panel must respect its own explicit
-       width/height (see sol_ui_term_float_builder), not stretch to fill
-       the remaining backdrop space after the spacer div. */
+       Sized as a percentage of the backdrop (the workspace area) and
+       centered by the backdrop's flex alignment. flex-grow/shrink: 0
+       overrides base .term-panel's flex-grow:1 so the card keeps its
+       percentage height instead of stretching to fill the backdrop. */
     ".term-float-panel {"
+    "  width: 82%; height: 78%;"
     "  flex-grow: 0; flex-shrink: 0;"
     "  shadow-offset-y: 10px; shadow-blur: 28px;"
     "  shadow-color: rgba(0, 0, 0, 0.55);"
+    "}"
+    /* Frosted glass: the card's own backdrop-filter shows through, so its
+       inner wells stay clear in every widget style (descendant specificity
+       outranks a style's flat .term-viewport/.term-filler well fill). */
+    ".term-float-panel .term-viewport, .term-float-panel .term-filler {"
+    "  background: transparent;"
     "}"
     /* Focused-panel indicator: a thin inset accent border on whichever
        top-level panel currently owns keyboard focus (tree/plugin

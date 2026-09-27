@@ -1244,9 +1244,9 @@ static void sol_ui_popup_builder(Ca_Div *div, void *user_data)
  *
  * Mirrors sol_ui_popup_builder's shape: an absolute-positioned host that
  * renders nothing when inactive, so toggling the floating terminal never
- * invalidates the workspace content tree. When active, renders a dimmed
+ * invalidates the workspace content tree. When active, renders a clear
  * backdrop (catches click-outside dismissal in input_router.c) with a
- * fixed-size centered panel inside it, reusing sol_ui_render_terminal_panel
+ * percentage-sized centered panel inside it, reusing sol_ui_render_terminal_panel
  * unchanged. Writes term_panel_host/term_viewport_host itself since the
  * docked split path (sol_ui_render_buffer_and_terminal) is skipped for
  * SOL_TERMINAL_POSITION_FLOAT.
@@ -1292,59 +1292,20 @@ static void sol_ui_term_float_builder(Ca_Div *div, void *user_data)
     ui->term_viewport_host = NULL;
     ui->term_header_host   = NULL;
 
-    if (ui->window_w <= 0 || ui->window_h <= 0) {
-        return;
-    }
-
-    /* Center the panel within the visible workspace area. term_float_host
-       (this builder's container, see sol_ui_build_layout) is mounted inside
-       workspace_host as an absolute-positioned div with pos_y=0 — but that
-       0 is already relative to workspace_host's own top edge, which sits
-       BELOW the title bar (workspace_host is a sibling of the title bar
-       inside app-root, not a sibling of app-root itself). So this builder's
-       own coordinate space already excludes the title bar; sizing the
-       backdrop to the full window height and/or adding title_h again here
-       double-counts it and overflows past the window's bottom edge by
-       title_h (confirmed via a UV>1.0 diagnostic during initial
-       implementation). Only the status bar needs accounting for here,
-       since it's reserved space AFTER workspace_host's own extent, not
-       before it. */
-    const float ui_scale = sol_ui_system_scale(ui);
-    const float scale    = ui_scale > 0.0f ? ui_scale : 1.0f;
-    const float status_h = SOL_UI_STATUS_BAR_HEIGHT * scale;
-    const float workspace_h = (float)ui->window_h - status_h;
-
-    /* Dimmed backdrop fills the workspace host's own extent (window minus
-       status bar; the title bar is already excluded by this coordinate
-       space) and catches click-outside (see input_router.c on_mouse_button). */
+    /* Geometry is pure CSS (see .term-float-backdrop/.term-float-panel):
+       the backdrop fills this host — which already spans exactly the
+       workspace area between title and status bars — and flex-centers a
+       percentage-sized card. Explicit pixel sizes here would be author
+       units that Causality scales by ui_scale a second time. */
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
-        .width     = (float)ui->window_w,
-        .height    = workspace_h > 0.0f ? workspace_h : (float)ui->window_h,
         .style     = "term-float-backdrop",
     });
 
-    const float panel_w = (float)ui->window_w * 0.82f;
-    const float panel_h = (workspace_h > 0.0f ? workspace_h : (float)ui->window_h) * 0.78f;
-    const float panel_top_margin = (workspace_h - panel_h) * 0.5f;
     const bool term_focused =
         sol_ui_system_focused_panel(ui) == SOL_UI_FOCUSED_PANEL_TERMINAL;
-
-    /* A spacer above the panel (rather than centering the panel itself)
-       keeps the backdrop's own align-items:center working for horizontal
-       centering while giving exact control over vertical placement. */
-    ca_div_begin(&(Ca_DivDesc){
-        .direction = CA_VERTICAL,
-        .width     = 1.0f,
-        .height    = panel_top_margin > 0.0f ? panel_top_margin : 0.0f,
-        .style     = "term-float-spacer",
-    });
-    ca_div_end();   /* term-float-spacer */
-
     ui->term_panel_host = ca_div_begin(&(Ca_DivDesc){
         .direction     = CA_VERTICAL,
-        .width         = panel_w,
-        .height        = panel_h,
         .corner_radius = sol_ui_panel_corner_radius(ui),
         .style         = term_focused ? "term-panel workspace-panel term-float-panel term-panel-focused"
                                        : "term-panel workspace-panel term-float-panel",
@@ -1750,7 +1711,7 @@ static bool sol_ui_build_layout(SolUISystem *ui)
 
     /* Floating terminal host — absolute overlay sibling of
        workspace_content_host, mirroring popup_host below. Its builder reads
-       terminal visibility/position and emits the dimmed backdrop + centered
+       terminal visibility/position and emits the clear backdrop + centered
        panel only when the terminal is visible and positioned FLOAT. z_index
        40 sits above the workspace (0) but below the which-key popup (50) so
        the popup can still render on top if both are active. */

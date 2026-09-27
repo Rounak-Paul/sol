@@ -145,3 +145,16 @@
   The installed executable (`721177049dcbac779128becb93fc7060b172c17b6c59de320ed7795346e9a299`) is byte-identical to `bin/Sol.app`.
   It contains no debug instrumentation.
 - The running Sol keeps its old in-memory image until it is restarted.
+
+## Backdrop blur rewrite install — 2026-09-27
+
+- `cmake --build build-release` + `cmake --install build-release --prefix
+  /Applications --component Sol`; executable sha256 `540f72ec…a7fb910`,
+  13 plugins. Verified the installed binary carries the new backdrop shader
+  (`v_uv_scale`) and the CSS-percent float card rule (`width: 82%`).
+  No Sol instance was running at install time.
+- Reinstalled same day with the frosted-glass float terminal (clear scrim,
+  blurred card); executable sha256 prefix `014ba6aa8f7b9faa`.
+- Reinstalled again: command overlay (.cf-panel) now content-sized (was
+  clipping its last row); sha256 prefix recorded at install time below.
+  `f26e7f25889054a5`

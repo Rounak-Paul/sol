@@ -12,6 +12,12 @@
 #define SOL_UI_PANEL_RADIUS_PX 8.0f
 #define SOL_UI_PANEL_MARGIN_PX_CSS "8px"
 #define SOL_UI_PANEL_RADIUS_PX_CSS "8px"
+/* Floating overlay card inset (which-key panel) from the workspace host's
+   bottom-right corner, placing the card flush with the pane edges. The
+   workspace pads its right edge by the panel margin but not its bottom, so
+   only the right needs the margin to land on the pane edge. */
+#define SOL_UI_OVERLAY_INSET_RIGHT_PX_CSS SOL_UI_PANEL_MARGIN_PX_CSS
+#define SOL_UI_OVERLAY_INSET_BOTTOM_PX_CSS "0px"
 
 /* Rounding scale shared across the whole UI (see the "Floating rounded
    glass composition" block in style.h and sol_settings_build_appearance_css):
