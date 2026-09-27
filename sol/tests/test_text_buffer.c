@@ -149,6 +149,48 @@ static void test_open_string(SolTestCtx *T)
     sol_buffer_system_destroy(sys);
 }
 
+static void test_read_only_document(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    const char *content = "# Help\nline two\n";
+    SolBufferId id = sol_text_buffer_open_document(
+        sys, "Help", content, strlen(content), true, NULL);
+    SOL_CHECK(T, id != 0u);
+    SolTextBuffer *tb = sol_text_buffer_state(sol_buffer_get(sys, id));
+    SOL_CHECK_NOT_NULL(T, tb);
+    SOL_CHECK(T, sol_text_buffer_is_read_only(tb));
+    SOL_CHECK(T, sol_text_buffer_is_markdown_document(tb));
+    SOL_CHECK(T, sol_text_buffer_source_path(tb) == NULL);
+
+    /* Every mutation entry point refuses; content and dirty flag hold. */
+    sol_text_buffer_set_cursor_byte(tb, 2u);
+    SOL_CHECK(T, !sol_text_buffer_insert_codepoint(tb, 'x'));
+    SOL_CHECK(T, !sol_text_buffer_insert_newline(tb));
+    SOL_CHECK(T, !sol_text_buffer_backspace(tb));
+    SOL_CHECK(T, !sol_text_buffer_delete_forward(tb));
+    SOL_CHECK(T, !sol_text_buffer_insert_bytes(tb, 0u, "y", 1u));
+    SOL_CHECK(T, !sol_text_buffer_delete_bytes(tb, 0u, 1u));
+    SOL_CHECK(T, !sol_text_buffer_delete_line(tb));
+    SOL_CHECK(T, !sol_text_buffer_duplicate_line(tb));
+    SOL_CHECK(T, !sol_text_buffer_delete_word_forward(tb));
+    sol_text_buffer_select_all(tb);
+    SOL_CHECK(T, sol_text_buffer_has_selection(tb));
+    SOL_CHECK(T, !sol_text_buffer_delete_selection(tb));
+    SOL_CHECK(T, !sol_text_buffer_undo(tb));
+    SOL_CHECK(T, !sol_text_buffer_is_dirty(tb));
+
+    const char *err = NULL;
+    SOL_CHECK(T, !sol_text_buffer_save(tb, &err));
+    SOL_CHECK_STR(T, err, "read-only document");
+
+    char line0[32];
+    sol_text_buffer_copy_line(tb, 0, line0, sizeof(line0));
+    SOL_CHECK_STR(T, line0, "# Help");
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_line_count(tb), 2);
+
+    sol_buffer_system_destroy(sys);
+}
+
 static void test_line_count_edge_cases(SolTestCtx *T)
 {
     SolBufferSystem *sys = make_system();
@@ -852,6 +894,7 @@ int main(void)
 
     SOL_RUN(s, test_empty_buffer);
     SOL_RUN(s, test_open_string);
+    SOL_RUN(s, test_read_only_document);
     SOL_RUN(s, test_line_count_edge_cases);
     SOL_RUN(s, test_insert_ascii);
     SOL_RUN(s, test_insert_multibyte);

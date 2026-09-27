@@ -175,6 +175,9 @@ typedef struct SolAppContext {
     SolSubscriptionToken  text_edited_token;
     SolSubscriptionToken  bindings_token;
     SolSubscriptionToken  layout_token;
+    /* The generated help page (read-only document), or 0 when not open.
+       Replaced on every help.open so it reflects the current keymap. */
+    SolBufferId           help_buffer;
     /* Autosave debounce: bumped to (edit time + delay) on every text edit
        while autosave is enabled; the frame loop sweeps all dirty buffers
        once this deadline passes. 0 means no autosave is pending. A single
@@ -482,6 +485,24 @@ static void sol_register_buffer_save_command_defaults(SolUISystem *ui)
     });
 }
 
+/*
+ * Register the help command. Registered in code so leader-h works for
+ * users whose bindings.conf predates it (the file is only seeded once).
+ *
+ * ui  The UI system to register flows with.
+ */
+static void sol_register_help_command_defaults(SolUISystem *ui)
+{
+    if (!ui) return;
+    const SolKeyCode help_sequence[] = { 'H' };
+    (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "help.open",
+        .label  = "Help",
+        .sequence = help_sequence,
+        .sequence_length = 1u,
+    });
+}
+
 /* Register mouse-accessible title-bar entries for built-in workspace views. */
 static void sol_register_workspace_menu_items(SolUISystem *ui)
 {
@@ -521,6 +542,11 @@ static void sol_register_workspace_menu_items(SolUISystem *ui)
             .menu_id = "view", .menu_label = "View",
             .item_id = "ssh-connect", .label = "Connect via SSH...",
             .action = "ssh.connect", .menu_order = 400, .item_order = 30,
+        },
+        {
+            .menu_id = "help", .menu_label = "Help",
+            .item_id = "sol-help", .label = "Sol Help",
+            .action = "help.open", .menu_order = 1000, .item_order = 10,
         },
     };
     for (size_t i = 0u; i < sizeof(items) / sizeof(items[0]); ++i) {
@@ -841,7 +867,7 @@ static bool sol_save_active_buffer(SolAppContext *app)
 {
     if (!app || !app->buffers) return false;
     SolTextBuffer *tb = sol_text_buffer_active(app->buffers);
-    if (!tb) return false;
+    if (!tb || sol_text_buffer_is_read_only(tb)) return false;
 
     const char *err = NULL;
     if (!sol_text_buffer_save(tb, &err)) {
@@ -854,6 +880,36 @@ static bool sol_save_active_buffer(SolAppContext *app)
     sol_buffer_touch(app->buffers, sol_buffer_active_buffer(app->buffers));
     sol_refresh_external_change_status(app);
     return true;
+}
+
+/*
+ * Open the help page in the active pane. The document is regenerated on
+ * every call (the keymap may have changed), replacing any previous help
+ * buffer so only one copy is ever open.
+ *
+ * app  The application context.
+ * Returns  true when the help buffer is open and focused.
+ */
+static bool sol_open_help(SolAppContext *app)
+{
+    if (!app || !app->buffers || !app->ui) return false;
+    size_t len = 0u;
+    char *doc = sol_ui_system_build_help_document(app->ui, &len);
+    if (!doc) {
+        sol_show_error(app, "Could not build the help page (out of memory).");
+        return false;
+    }
+    if (app->help_buffer != 0u && sol_buffer_get(app->buffers, app->help_buffer)) {
+        (void)sol_buffer_close(app->buffers, app->help_buffer);
+    }
+    app->help_buffer = sol_text_buffer_open_document(
+        app->buffers, "Help", doc, len, true, sol_text_view_render);
+    free(doc);
+    if (app->help_buffer == 0u) {
+        sol_show_error(app, "Could not open the help page.");
+        return false;
+    }
+    return sol_buffer_set_active_leaf_buffer(app->buffers, app->help_buffer);
 }
 
 /*
@@ -1672,6 +1728,11 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         return sol_buffer_set_active_leaf_buffer(app->buffers, id);
     }
 
+    /* ---- help.open : generated help page + command cheatsheet. */
+    if (strcmp(p->action, "help.open") == 0) {
+        return sol_open_help(app);
+    }
+
     /* ---- buffer.open : open a file from disk via the file picker. */
     if (strcmp(p->action, "buffer.open") == 0) {
         sol_file_picker_open(app->instance, SOL_FILE_PICKER_FILE, NULL,
@@ -2226,6 +2287,7 @@ static void sol_register_default_command_flows(SolUISystem *ui)
     sol_register_search_command_defaults(ui);
     sol_register_terminal_command_defaults(ui);
     sol_register_buffer_save_command_defaults(ui);
+    sol_register_help_command_defaults(ui);
 }
 
 /*

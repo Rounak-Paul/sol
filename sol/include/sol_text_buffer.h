@@ -83,6 +83,26 @@ SolBufferId sol_text_buffer_open_string(SolBufferSystem *system,
                                         SolBufferRenderFn render);
 
 /*
+ * Open a read-only document buffer from an in-memory string (help pages and
+ * other generated content). It has no source path, can never become dirty,
+ * and every editing, save and reload entry point refuses it; cursor motion,
+ * selection and copy work as usual.
+ *
+ * system        The buffer system.
+ * display_name  Name shown in tabs.
+ * text          Content, or NULL for an empty document.
+ * len           Byte length of text; 0 when text is NULL.
+ * markdown      Render the content as an inline Markdown document.
+ * render        Render callback.
+ * Returns       Buffer id, or 0 on failure.
+ */
+SolBufferId sol_text_buffer_open_document(SolBufferSystem *system,
+                                          const char *display_name,
+                                          const char *text, size_t len,
+                                          bool markdown,
+                                          SolBufferRenderFn render);
+
+/*
  * Find an open text buffer whose source_path matches path (exact strcmp).
  *
  * system  The buffer system.
@@ -108,6 +128,9 @@ const char *sol_text_buffer_source_path(const SolTextBuffer *tb);
 
 /* Returns whether this buffer is a Markdown document rendered inline. */
 bool sol_text_buffer_is_markdown_document(const SolTextBuffer *tb);
+
+/* Returns whether this buffer rejects every edit, save and reload. */
+bool sol_text_buffer_is_read_only(const SolTextBuffer *tb);
 
 /* Returns true when the buffer has edits not yet reflected on disk. */
 bool sol_text_buffer_is_dirty(const SolTextBuffer *tb);

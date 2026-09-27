@@ -163,6 +163,28 @@ static void test_default_bindings_table(SolTestCtx *T)
     SOL_CHECK(T, saw_save_all);
 }
 
+static void test_action_descriptions(SolTestCtx *T)
+{
+    char text[128];
+    SOL_CHECK(T, sol_config_action_description("buffer.save", text, sizeof(text)));
+    SOL_CHECK_STR(T, text, "Save the active buffer to its file.");
+    SOL_CHECK(T, sol_config_action_description("help.open", text, sizeof(text)));
+    /* A prefix or extension of a documented action is not documented. */
+    SOL_CHECK(T, !sol_config_action_description("buffer.save_", text, sizeof(text)));
+    SOL_CHECK(T, !sol_config_action_description("buffer", text, sizeof(text)));
+    SOL_CHECK(T, !sol_config_action_description("git.commit", text, sizeof(text)));
+    SOL_CHECK(T, !sol_config_action_description("buffer.save", text, 4u));
+    SOL_CHECK(T, !sol_config_action_description(NULL, text, sizeof(text)));
+
+    /* Every default binding is documented. */
+    SolConfigBinding table[128];
+    const size_t n = sol_config_default_bindings(table, 128u);
+    for (size_t i = 0u; i < n; ++i) {
+        SOL_CHECK_MSG(T, sol_config_action_description(table[i].action, text, sizeof(text)),
+                      "undocumented default action %s", table[i].action);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* bindings.conf editing                                               */
 /* ------------------------------------------------------------------ */
@@ -396,6 +418,7 @@ int main(void)
     SOL_RUN(suite, test_chord_round_trip);
     SOL_RUN(suite, test_chord_rejects_malformed);
     SOL_RUN(suite, test_default_bindings_table);
+    SOL_RUN(suite, test_action_descriptions);
     SOL_RUN(suite, test_save_binding_is_surgical);
     SOL_RUN(suite, test_unbind_and_reload);
     SOL_RUN(suite, test_save_leader_rebases_literal_binds);

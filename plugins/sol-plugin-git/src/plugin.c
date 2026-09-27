@@ -2430,9 +2430,19 @@ static bool git_on_command(const char *action,
     return false;
 }
 
-/* Register one leader-chord command. */
+/*
+ * Register one leader-chord command.
+ *
+ * plugin  Git plugin state.
+ * action  Action id.
+ * label   Human-readable description (which-key popup, help page).
+ * first   First chord step after the leader.
+ * second  Second chord step.
+ * Returns true on success.
+ */
 static bool git_register_command(GitPlugin *plugin,
                                  const char *action,
+                                 const char *label,
                                  SolKeyCode first,
                                  SolKeyCode second)
 {
@@ -2441,7 +2451,7 @@ static bool git_register_command(GitPlugin *plugin,
         plugin->ctx,
         &(SolPluginCommandDesc){
             .action = action,
-            .label = action,
+            .label = label,
             .chord = chord,
             .chord_length = 2u,
             .callback = git_on_command,
@@ -2583,16 +2593,16 @@ static bool git_on_load(SolPluginCtx *ctx)
         ctx, "git: no repository", "status-plugin");
     if (plugin->status_token == SOL_PLUGIN_STATUS_TOKEN_INVALID) return false;
 
-    if (!git_register_command(plugin, "git.status", 'G', 'G') ||
-        !git_register_command(plugin, "git.refresh", 'G', 'R') ||
-        !git_register_command(plugin, "git.diff", 'G', 'D') ||
-        !git_register_command(plugin, "git.history", 'G', 'L') ||
-        !git_register_command(plugin, "git.branches", 'G', 'H') ||
-        !git_register_command(plugin, "git.blame", 'G', 'B') ||
-        !git_register_command(plugin, "git.commit", 'G', 'C') ||
-        !git_register_command(plugin, "git.fetch", 'G', 'F') ||
-        !git_register_command(plugin, "git.pull", 'G', 'U') ||
-        !git_register_command(plugin, "git.push", 'G', 'P')) {
+    if (!git_register_command(plugin, "git.status",   "Toggle the source control panel", 'G', 'G') ||
+        !git_register_command(plugin, "git.refresh",  "Refresh repository status", 'G', 'R') ||
+        !git_register_command(plugin, "git.diff",     "Diff the active file", 'G', 'D') ||
+        !git_register_command(plugin, "git.history",  "Show commit history", 'G', 'L') ||
+        !git_register_command(plugin, "git.branches", "Show branches", 'G', 'H') ||
+        !git_register_command(plugin, "git.blame",    "Blame the active file", 'G', 'B') ||
+        !git_register_command(plugin, "git.commit",   "Focus the commit message box", 'G', 'C') ||
+        !git_register_command(plugin, "git.fetch",    "Fetch from the remote", 'G', 'F') ||
+        !git_register_command(plugin, "git.pull",     "Pull from the remote", 'G', 'U') ||
+        !git_register_command(plugin, "git.push",     "Push to the remote", 'G', 'P')) {
         return false;
     }
     if (!git_register_menu_items(plugin)) return false;

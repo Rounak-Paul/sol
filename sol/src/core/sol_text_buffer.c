@@ -63,6 +63,7 @@ struct SolTextBuffer {
     int                   scroll_left_col; /* first visible visual column        */
     char                 *source_path;     /* owned; NULL for unsaved/scratch    */
     bool                  markdown_document;
+    bool                  read_only;       /* generated document; never edited   */
 
     SolEventBus          *events;
     SolBufferId           self_id;
@@ -728,6 +729,34 @@ SolBufferId sol_text_buffer_open_string(SolBufferSystem *system,
     return tb_register(system, tb, name, render);
 }
 
+/*
+ * Create a read-only document buffer from a string.
+ *
+ * system        The buffer system.
+ * display_name  Name shown in tabs; "untitled" when NULL.
+ * text          Content; may be NULL.
+ * len           Length of text in bytes.
+ * markdown      Render as an inline Markdown document.
+ * render        The render function for the buffer.
+ * Returns       The allocated buffer ID, or 0 on failure.
+ */
+SolBufferId sol_text_buffer_open_document(SolBufferSystem *system,
+                                          const char *display_name,
+                                          const char *text, size_t len,
+                                          bool markdown,
+                                          SolBufferRenderFn render)
+{
+    if (!system) return 0u;
+    SolRope *rope = text && len > 0u
+                        ? sol_rope_from_bytes((const uint8_t *)text, len)
+                        : sol_rope_create();
+    SolTextBuffer *tb = tb_create_from_rope(rope, NULL);
+    if (!tb) return 0u;
+    tb->markdown_document = markdown;
+    tb->read_only = true;
+    return tb_register(system, tb, display_name ? display_name : "untitled", render);
+}
+
 /* ------------------------------------------------------------------ */
 /* Find / accessors                                                    */
 /* ------------------------------------------------------------------ */
@@ -876,6 +905,17 @@ bool sol_text_buffer_is_markdown_document(const SolTextBuffer *tb)
 }
 
 /*
+ * Report whether a buffer is a read-only document.
+ *
+ * tb  The text buffer.
+ * Returns  true for buffers opened with sol_text_buffer_open_document.
+ */
+bool sol_text_buffer_is_read_only(const SolTextBuffer *tb)
+{
+    return tb && tb->read_only;
+}
+
+/*
  * Report whether a buffer has unsaved edits.
  *
  * tb  The text buffer.
@@ -990,6 +1030,10 @@ static bool tb_atomic_write(const SolRope *rope, const char *dest_path,
 
 bool sol_text_buffer_save(SolTextBuffer *tb, const char **out_error)
 {
+    if (tb && tb->read_only) {
+        if (out_error) *out_error = "read-only document";
+        return false;
+    }
     if (!tb) {
         if (out_error) *out_error = "no buffer";
         return false;
@@ -1007,6 +1051,10 @@ bool sol_text_buffer_save(SolTextBuffer *tb, const char **out_error)
 bool sol_text_buffer_save_as(SolTextBuffer *tb, const char *path,
                              const char **out_error)
 {
+    if (tb && tb->read_only) {
+        if (out_error) *out_error = "read-only document";
+        return false;
+    }
     if (!tb || !path || !path[0]) {
         if (out_error) *out_error = "no buffer or path";
         return false;
@@ -1045,6 +1093,10 @@ bool sol_text_buffer_save_as(SolTextBuffer *tb, const char *path,
 
 bool sol_text_buffer_reload_from_disk(SolTextBuffer *tb, const char **out_error)
 {
+    if (tb && tb->read_only) {
+        if (out_error) *out_error = "read-only document";
+        return false;
+    }
     if (!tb) {
         if (out_error) *out_error = "no buffer";
         return false;
@@ -1394,6 +1446,7 @@ static void tb_update_preferred_col(SolTextBuffer *tb)
  */
 bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     /* Replace selection if active. */
     if (tb->has_selection) sol_text_buffer_delete_selection(tb);
@@ -1421,6 +1474,7 @@ bool sol_text_buffer_insert_codepoint(SolTextBuffer *tb, uint32_t cp)
  */
 bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) sol_text_buffer_delete_selection(tb);
     const uint8_t nl = '\n';
@@ -1444,6 +1498,7 @@ bool sol_text_buffer_insert_newline(SolTextBuffer *tb)
  */
 bool sol_text_buffer_backspace(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
     if (tb->cursor_byte == 0u) return false;
@@ -1478,6 +1533,7 @@ bool sol_text_buffer_backspace(SolTextBuffer *tb)
  */
 bool sol_text_buffer_delete_forward(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
     const size_t step = tb_cp_len_at(tb->rope, tb->cursor_byte);
@@ -1662,6 +1718,7 @@ bool sol_text_buffer_insert_bytes(SolTextBuffer *tb,
                                    size_t byte_offset,
                                    const char *text, size_t len)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope || !text || len == 0u) return false;
     const size_t total = sol_rope_byte_len(tb->rope);
     if (byte_offset > total) return false;
@@ -1691,6 +1748,7 @@ bool sol_text_buffer_insert_bytes(SolTextBuffer *tb,
 bool sol_text_buffer_delete_bytes(SolTextBuffer *tb,
                                    size_t byte_offset, size_t byte_count)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope || byte_count == 0u) return false;
     const size_t total = sol_rope_byte_len(tb->rope);
     if (byte_offset >= total) return false;
@@ -1801,6 +1859,7 @@ void sol_text_buffer_clear_selection(SolTextBuffer *tb)
  */
 bool sol_text_buffer_delete_selection(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope || !tb->has_selection) return false;
     size_t sel_start, sel_end;
     sol_text_buffer_selection_range(tb, &sel_start, &sel_end);
@@ -2045,6 +2104,7 @@ void sol_text_buffer_move_word(SolTextBuffer *tb, int dir, bool extend_sel)
  */
 bool sol_text_buffer_delete_word_back(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
     const size_t total = sol_rope_byte_len(tb->rope);
@@ -2114,6 +2174,7 @@ bool sol_text_buffer_delete_word_back(SolTextBuffer *tb)
  */
 bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     if (tb->has_selection) return sol_text_buffer_delete_selection(tb);
     const size_t cursor = tb->cursor_byte;
@@ -2179,6 +2240,7 @@ bool sol_text_buffer_delete_word_forward(SolTextBuffer *tb)
  */
 bool sol_text_buffer_duplicate_line(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     const size_t line       = sol_text_buffer_cursor_line(tb);
     const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
@@ -2220,6 +2282,7 @@ bool sol_text_buffer_duplicate_line(SolTextBuffer *tb)
  */
 bool sol_text_buffer_delete_line(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope) return false;
     const size_t line       = sol_text_buffer_cursor_line(tb);
     const size_t line_start = sol_rope_byte_of_line(tb->rope, line);
@@ -2287,6 +2350,7 @@ bool sol_text_buffer_can_redo(const SolTextBuffer *tb)
  */
 bool sol_text_buffer_undo(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope || tb->undo_top <= 0) return false;
     --tb->undo_top;
     const TbEditRecord *rec = &tb->undo_stack[tb->undo_top];
@@ -2328,6 +2392,7 @@ bool sol_text_buffer_undo(SolTextBuffer *tb)
  */
 bool sol_text_buffer_redo(SolTextBuffer *tb)
 {
+    if (tb && tb->read_only) return false;
     if (!tb || !tb->rope || tb->undo_top >= tb->undo_end) return false;
     const TbEditRecord *rec = &tb->undo_stack[tb->undo_top];
     ++tb->undo_top;

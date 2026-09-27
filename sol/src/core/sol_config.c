@@ -106,6 +106,16 @@ static const char *const SOL_DEFAULT_BINDINGS_CONF =
     "#   terminal.position.right    Dock terminal on the right.\n"
     "#   terminal.position.float    Float terminal as a centered overlay.\n"
     "#\n"
+    "# Project\n"
+    "#   project.create          Open a new project session.\n"
+    "#   project.next            Switch to the next project session.\n"
+    "#   project.previous        Switch to the previous project session.\n"
+    "#   project.close           Close the active project session.\n"
+    "#   project.switcher        Pick a project session from a list.\n"
+    "#\n"
+    "# Help\n"
+    "#   help.open               Open the help page and command cheatsheet.\n"
+    "#\n"
     "# Edit  (scope prefixes: w = word, l = line; none = char / selection)\n"
     "#   edit.copy               Copy selection to clipboard.\n"
     "#   edit.copy_word          Copy word at cursor to clipboard.\n"
@@ -169,7 +179,8 @@ static const char *const SOL_DEFAULT_BINDINGS_CONF =
     "bind L e d            edit.delete_char\n"
     "bind L e w d          edit.delete_word\n"
     "bind L e w backspace  edit.delete_word_back\n"
-    "bind L e l d          edit.delete_line\n";
+    "bind L e l d          edit.delete_line\n"
+    "bind L h              help.open\n";
 
 /* ------------------------------------------------------------------ */
 /* Path helpers                                                        */
@@ -516,6 +527,44 @@ bool sol_config_format_chord(const SolKeyCode      *sequence,
         used += (size_t)n;
     }
     return true;
+}
+
+/*
+ * Look up a built-in action's one-line description. The bindings template's
+ * "Available actions" comment block is the single source of these texts; its
+ * entries have the form "#   <action>   <description>".
+ *
+ * action   Action name, e.g. "buffer.save".
+ * buf      Destination buffer.
+ * size     Capacity of buf in bytes.
+ * Returns  true when the action is documented and the text fit in buf.
+ */
+bool sol_config_action_description(const char *action, char *buf, size_t size)
+{
+    if (!action || !action[0] || !buf || size == 0u) return false;
+    buf[0] = '\0';
+    const size_t action_len = strlen(action);
+    const char *line = SOL_DEFAULT_BINDINGS_CONF;
+    while (*line) {
+        const char *end = strchr(line, '\n');
+        if (!end) end = line + strlen(line);
+        if (strncmp(line, "#   ", 4u) == 0) {
+            const char *name = line + 4;
+            if ((size_t)(end - name) > action_len &&
+                strncmp(name, action, action_len) == 0 &&
+                (name[action_len] == ' ' || name[action_len] == '\t')) {
+                const char *text = name + action_len;
+                while (text < end && (*text == ' ' || *text == '\t')) ++text;
+                const size_t text_len = (size_t)(end - text);
+                if (text_len == 0u || text_len >= size) return false;
+                memcpy(buf, text, text_len);
+                buf[text_len] = '\0';
+                return true;
+            }
+        }
+        line = *end ? end + 1 : end;
+    }
+    return false;
 }
 
 /* ------------------------------------------------------------------ */

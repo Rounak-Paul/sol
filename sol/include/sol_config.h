@@ -105,6 +105,16 @@ bool sol_config_format_chord(const SolKeyCode      *sequence,
                              size_t                 size);
 
 /*
+ * Built-in action description from the bindings template.
+ *
+ * action   Action name, e.g. "buffer.save".
+ * buf      Destination buffer.
+ * size     Capacity of buf in bytes.
+ * Returns  true when the action is documented and the text fit in buf.
+ */
+bool sol_config_action_description(const char *action, char *buf, size_t size);
+
+/*
  * Canonical lowercase name of a leader modifier.
  *
  * mod      SOL_MOD_CTRL, SOL_MOD_ALT, SOL_MOD_SUPER or SOL_MOD_SHIFT.

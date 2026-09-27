@@ -203,6 +203,18 @@ bool sol_ui_system_set_keymap_override(SolUISystem           *ui,
 
 /* Forget all keymap overrides and restore every command's default chord. */
 void sol_ui_system_reset_keymap(SolUISystem *ui);
+/*
+ * Build the help page as a Markdown document: a command cheatsheet
+ * generated from the effective keymap (leader, user overrides, plugin
+ * commands) followed by the application guide.
+ *
+ * ui       The UI system owning the command registry.
+ * out_len  Receives the document length in bytes; may be NULL.
+ * Returns  A heap-allocated NUL-terminated string the caller frees, or
+ *          NULL on allocation failure.
+ */
+char *sol_ui_system_build_help_document(const SolUISystem *ui, size_t *out_len);
+
 /* Invoke an action through the registered callback and command event bus. */
 bool sol_ui_system_invoke_command(SolUISystem *ui, const char *action);
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event);
