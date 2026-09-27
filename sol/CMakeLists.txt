@@ -300,6 +300,31 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     endif()
     add_test(NAME sol_command_flow_tests COMMAND sol_command_flow_tests)
 
+    # ---- Config + settings persistence tests ----------------------------
+    # Runs against an isolated $HOME so bindings.conf / settings.json edits
+    # never touch the developer's real ~/.sol.
+    add_executable(sol_config_tests
+        tests/test_config.c
+        tests/stubs/sol_ui_bump_stub.c
+        src/ui/command_flow.c
+        src/core/sol_config.c
+        src/core/sol_settings.c
+        src/core/sol_theme.c
+        ${SOL_CORE_TEST_SRC}
+    )
+    target_include_directories(sol_config_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${Vulkan_INCLUDE_DIRS}
+    )
+    target_compile_definitions(sol_config_tests PRIVATE ${SOL_TEST_DEFS})
+    target_link_libraries(sol_config_tests PRIVATE causality Threads::Threads ${CMAKE_DL_LIBS} ${CAUSALITY_LINUX_DEPS})
+    if(WIN32)
+        target_compile_definitions(sol_config_tests PRIVATE causality_EXPORTS)
+    endif()
+    add_test(NAME sol_config_tests COMMAND sol_config_tests)
+
     # ---- Integration tests (event+buffer+text-buffer end-to-end) -------
     add_executable(sol_integration_tests
         tests/test_integration.c

@@ -139,6 +139,7 @@ struct SolFilePicker {
 
 /* Singly-linked head of all live pickers. */
 static SolFilePicker *g_pickers = NULL;
+static bool           g_default_show_hidden = false;
 
 /* ---------------------------------------------------------------- */
 /* Small helpers                                                     */
@@ -1287,6 +1288,16 @@ static void fp_destroy(SolFilePicker *p)
 /* ---------------------------------------------------------------- */
 
 /*
+ * Set the initial hidden-entry visibility for pickers opened from now on.
+ *
+ * show  true to list hidden entries by default.
+ */
+void sol_file_picker_set_default_show_hidden(bool show)
+{
+    g_default_show_hidden = show;
+}
+
+/*
  * Create and open a new file/folder picker window.
  * Resolves the initial directory (falls back to the user's home directory), allocates the picker
  * struct, creates the Causality window, and registers the picker in the
@@ -1314,6 +1325,7 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
     p->callback  = on_select;
     p->user_data = user_data;
     p->sort_asc  = true;   /* default: ascending by name */
+    p->show_hidden = g_default_show_hidden;
 
     /* Resolve initial directory. */
     char        home_buf[4096];

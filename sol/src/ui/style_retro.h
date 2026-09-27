@@ -299,7 +299,7 @@ static inline int sol_retro_format_css(uint32_t background_rgb,
         ".scm-branch-create-from, .scm-section-action, .scm-primary-action,"
         ".scm-danger-action, .scm-remote-action,"
         ".buffer-tab-close, .term-tab-close, .project-tab-close,"
-        ".project-tab-new, .status-bar-badge, .cf-row-key, .pm-badge {"
+        ".project-tab-new, .status-bar-badge, .cf-row-key, .pm-badge, .sw-btn {"
         "  background: #%06x;"
         "  border-top-width: 1px; border-left-width: 1px;"
         "  border-bottom-width: 1px; border-right-width: 1px;"
@@ -320,7 +320,7 @@ static inline int sol_retro_format_css(uint32_t background_rgb,
         ".scm-action:active, .scm-primary-action:active,"
         ".scm-danger-action:active,"
         ".buffer-tab-close:active, .term-tab-close:active,"
-        ".project-tab-close:active, .project-tab-new:active {"
+        ".project-tab-close:active, .project-tab-new:active, .sw-btn:active {"
         "  background: #%06x;"
         "  border-top-color: #%06x; border-left-color: #%06x;"
         "  border-bottom-color: #%06x; border-right-color: #%06x;"
@@ -328,7 +328,7 @@ static inline int sol_retro_format_css(uint32_t background_rgb,
 
         /* ---- Inputs: always sunken wells, they receive content ---- */
         ".fp-new-folder-input, .search-input, .pm-search-input,"
-        ".sw-scale-input, .sw-select, .scm-commit-input, .scm-branch-input {"
+        ".sw-scale-input, .sw-select, .sw-bind-input, .scm-commit-input, .scm-branch-input {"
         "  background: #%06x;"
         "  border-top-width: 1px; border-left-width: 1px;"
         "  border-bottom-width: 1px; border-right-width: 1px;"

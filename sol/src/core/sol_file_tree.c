@@ -14,7 +14,7 @@
  *
  * Sort order per directory: directories first, then files; ties broken by
  * case-insensitive name compare. Hidden entries (leading '.') are filtered
- * out — Sol won't show dotfiles in this pass.
+ * out unless sol_file_tree_set_show_hidden enabled them.
  */
 
 #include "sol_file_tree.h"
@@ -61,6 +61,8 @@ struct SolFileTree {
     /* Optional caller-owned event bus. When attached, the tree
        publishes sol.file_tree.root_changed on every set_root success. */
     SolEventBus *events;
+
+    bool show_hidden;        /* list dotfiles / dot-directories            */
 };
 
 /* Increment the attached revision signal to notify reactive subscribers. */
@@ -207,7 +209,10 @@ static bool load_children(SolFileTree *t, size_t dir_idx)
     SolDirectoryEntry entry;
     while (sol_platform_dir_next(&iter, &entry)) {
         const char *name = entry.name;
-        if (name[0] == '.') continue;     /* skip hidden + . / .. */
+        if (name[0] == '.') {
+            if (name[1] == '\0' || (name[1] == '.' && name[2] == '\0')) continue;
+            if (!t->show_hidden) continue;
+        }
 
         bool is_dir = entry.is_directory;
 
@@ -354,6 +359,27 @@ SolFileTree *sol_file_tree_create(void)
 {
     SolFileTree *t = (SolFileTree *)calloc(1u, sizeof(SolFileTree));
     return t;
+}
+
+/*
+ * Choose whether hidden entries are listed, re-scanning on change.
+ *
+ * tree  The file tree.
+ * show  true to list hidden entries.
+ * Returns  true if the value changed.
+ */
+bool sol_file_tree_set_show_hidden(SolFileTree *tree, bool show)
+{
+    if (!tree || tree->show_hidden == show) return false;
+    tree->show_hidden = show;
+    if (tree->root_path) (void)sol_file_tree_refresh(tree);
+    return true;
+}
+
+/* Returns whether hidden entries are currently listed. */
+bool sol_file_tree_show_hidden(const SolFileTree *tree)
+{
+    return tree ? tree->show_hidden : false;
 }
 
 /* Free all resources owned by the file tree. Passing NULL is a no-op. */

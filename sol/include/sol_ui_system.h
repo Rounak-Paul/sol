@@ -175,11 +175,33 @@ Ca_Window *sol_ui_system_primary_window(SolUISystem *ui);
  */
 float sol_ui_system_scale(const SolUISystem *ui);
 
+/* Register (or update) a command with its default chord; see command_flow.c. */
 bool sol_ui_system_register_command_flow(SolUISystem *ui, const SolCommandFlowDesc *desc);
 
 /* Unregister a previously-registered command flow by action string.
  * Returns true if found and removed, false if not found.              */
 bool sol_ui_system_unregister_command_flow(SolUISystem *ui, const char *action);
+/*
+ * Set the user's chord for an action — the bindings.conf layer over the
+ * defaults supplied at registration. It beats any registration-time
+ * default, including ones registered later (e.g. by plugins). A NULL
+ * sequence or zero length unbinds the action while keeping the command.
+ *
+ * ui         The UI system.
+ * action     Action name.
+ * sequence   Key steps after the leader.
+ * modifiers  Per-step non-leader modifiers (may be NULL).
+ * length     Step count.
+ * Returns    false for invalid input or a full registry.
+ */
+bool sol_ui_system_set_keymap_override(SolUISystem           *ui,
+                                       const char            *action,
+                                       const SolKeyCode      *sequence,
+                                       const SolModifierMask *modifiers,
+                                       size_t                 length);
+
+/* Forget all keymap overrides and restore every command's default chord. */
+void sol_ui_system_reset_keymap(SolUISystem *ui);
 /* Invoke an action through the registered callback and command event bus. */
 bool sol_ui_system_invoke_command(SolUISystem *ui, const char *action);
 bool sol_ui_system_handle_input_event(SolUISystem *ui, const SolInputEvent *event);
@@ -392,8 +414,30 @@ typedef struct SolSettings SolSettings;
  * system (typically it lives in the application's stack frame). */
 void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings);
 
-/* Open the settings window. No-op if one is already open. */
-void sol_ui_system_open_settings_window(SolUISystem *ui);
+/* Pages of the settings window. */
+typedef enum SolUISettingsTab {
+    SOL_UI_SETTINGS_TAB_THEME = 0,
+    SOL_UI_SETTINGS_TAB_PREFERENCES,
+    SOL_UI_SETTINGS_TAB_KEYBINDINGS,
+    SOL_UI_SETTINGS_TAB_COUNT,
+} SolUISettingsTab;
+
+/* Open the settings window on tab, or switch the open one to tab. */
+void sol_ui_system_open_settings_window(SolUISystem *ui, SolUISettingsTab tab);
+
+/*
+ * Push the attached settings' behavioural preferences (hidden-file
+ * visibility, caret blink, menu toggle labels) into the live UI.
+ *
+ * Call after any change to those fields — from the settings window, a
+ * menu toggle, or a settings.json reload.
+ *
+ * ui  The UI system.
+ */
+void sol_ui_system_apply_preferences(SolUISystem *ui);
+
+/* True when the text caret should blink (the default without settings). */
+bool sol_ui_system_caret_blink_enabled(const SolUISystem *ui);
 
 /* Forward declarations — include sol_ssh_config.h / sol_ssh_window.h for
  * the full types. */

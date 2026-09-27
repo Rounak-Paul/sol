@@ -288,13 +288,62 @@ static void test_register_update_existing(SolTestCtx *T)
 
 static void test_register_replaces_chord_owner(SolTestCtx *T)
 {
+    /* The later default takes the chord; the earlier command stays
+       registered (menus can still invoke it) but becomes unbound. */
     SolUISystem *ui = make_ui();
     SolKeyCode seq[] = { 'F', 'F' };
     SolModifierMask mods[] = { SOL_MOD_NONE, SOL_MOD_NONE };
     SOL_CHECK(T, regN(ui, "search.old_owner", "Old owner", seq, mods, 2u));
     SOL_CHECK(T, regN(ui, "search.find_files", "Find files", seq, mods, 2u));
-    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 1u);
-    SOL_CHECK_STR(T, ui->command_flows[0].action, "search.find_files");
+    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 2u);
+    SOL_CHECK_STR(T, ui->command_flows[0].action, "search.old_owner");
+    SOL_CHECK_EQ_SZ(T, ui->command_flows[0].sequence_length, 0u);
+    SOL_CHECK_STR(T, ui->command_flows[1].action, "search.find_files");
+    SOL_CHECK_EQ_SZ(T, ui->command_flows[1].sequence_length, 2u);
+    free_ui(ui);
+}
+
+static void test_keymap_override_beats_later_default(SolTestCtx *T)
+{
+    /* bindings.conf loads before plugins register: a plugin default must
+       neither steal a user chord nor replace the user's chord for its own
+       action. */
+    SolUISystem *ui = make_ui();
+    const SolKeyCode user_seq[] = { 'G', 'B' };
+    SOL_CHECK(T, sol_ui_system_set_keymap_override(ui, "buffer.new", user_seq, NULL, 2u));
+    const SolKeyCode own_seq[] = { 'Q' };
+    SOL_CHECK(T, sol_ui_system_set_keymap_override(ui, "git.push", own_seq, NULL, 1u));
+
+    const SolKeyCode blame_seq[] = { 'G', 'B' };
+    SOL_CHECK(T, regN(ui, "git.blame", "Blame", blame_seq, NULL, 2u));
+    const SolKeyCode push_seq[] = { 'G', 'P' };
+    SOL_CHECK(T, regN(ui, "git.push", "Push", push_seq, NULL, 2u));
+
+    const SolCommandFlowBinding *flows = ui->command_flows;
+    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 3u);
+    SOL_CHECK_STR(T, flows[0].action, "buffer.new");
+    SOL_CHECK_EQ_SZ(T, flows[0].sequence_length, 2u);
+    SOL_CHECK_STR(T, flows[1].action, "git.push");
+    SOL_CHECK_EQ_SZ(T, flows[1].sequence_length, 1u);
+    SOL_CHECK_EQ_INT(T, (int)flows[1].sequence[0], 'Q');
+    SOL_CHECK_EQ_SZ(T, flows[1].default_length, 2u);
+    SOL_CHECK_STR(T, flows[2].action, "git.blame");
+    SOL_CHECK_EQ_SZ(T, flows[2].sequence_length, 0u);
+
+    /* Resetting drops the user layer: unowned commands disappear and
+       owned ones get their defaults back. */
+    sol_ui_system_reset_keymap(ui);
+    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 2u);
+    SOL_CHECK_STR(T, flows[0].action, "git.push");
+    SOL_CHECK_EQ_SZ(T, flows[0].sequence_length, 2u);
+    SOL_CHECK_EQ_INT(T, (int)flows[0].sequence[1], 'P');
+    SOL_CHECK_STR(T, flows[1].action, "git.blame");
+    SOL_CHECK_EQ_SZ(T, flows[1].sequence_length, 2u);
+
+    /* Unbinding keeps the command (and its callback) registered. */
+    SOL_CHECK(T, sol_ui_system_set_keymap_override(ui, "git.blame", NULL, NULL, 0u));
+    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 2u);
+    SOL_CHECK_EQ_SZ(T, flows[1].sequence_length, 0u);
     free_ui(ui);
 }
 
@@ -312,12 +361,17 @@ static void test_register_null_action(SolTestCtx *T)
 
 static void test_register_zero_sequence(SolTestCtx *T)
 {
-    /* Sequence length 0 with no .key set — must reject. */
+    /* No chord registers an unbound, menu/palette-only command. */
     SolUISystem *ui = make_ui();
     bool ok = sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
         .action = "noop", .key = SOL_KEY_UNKNOWN, .sequence = NULL, .sequence_length = 0,
     });
-    SOL_CHECK(T, !ok);
+    SOL_CHECK(T, ok);
+    SOL_CHECK_EQ_SZ(T, ui->command_flow_count, 1u);
+    SOL_CHECK_EQ_SZ(T, ui->command_flows[0].sequence_length, 0u);
+    SOL_CHECK(T, !sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "", .key = 'A',
+    }));
     free_ui(ui);
 }
 
@@ -582,6 +636,7 @@ int main(void)
     SOL_RUN(s, test_register_multi_key);
     SOL_RUN(s, test_register_update_existing);
     SOL_RUN(s, test_register_replaces_chord_owner);
+    SOL_RUN(s, test_keymap_override_beats_later_default);
     SOL_RUN(s, test_register_null_action);
     SOL_RUN(s, test_register_zero_sequence);
     SOL_RUN(s, test_register_capacity);

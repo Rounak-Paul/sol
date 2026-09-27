@@ -116,4 +116,19 @@ bool sol_file_tree_toggle(SolFileTree *tree, size_t index);
  */
 bool sol_file_tree_refresh(SolFileTree *tree);
 
+/*
+ * Choose whether hidden entries (names starting with '.') are listed.
+ *
+ * Re-scans the mounted root, preserving expansion state, when the value
+ * changes. The "." and ".." pseudo-entries are never listed.
+ *
+ * tree  The file tree.
+ * show  true to list hidden entries.
+ * Returns  true if the value changed.
+ */
+bool sol_file_tree_set_show_hidden(SolFileTree *tree, bool show);
+
+/* Returns whether hidden entries are currently listed. */
+bool sol_file_tree_show_hidden(const SolFileTree *tree);
+
 #endif /* SOL_FILE_TREE_H */

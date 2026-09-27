@@ -1443,8 +1443,8 @@ void sol_text_view_render(const SolBuffer *buffer,
              * CSS px before handing off to Ca_DivDesc. */
             const float adv = glyph_advance_px_for(caret_win) / ui_scale;
             const float caret_x = (float)cp_count * adv;
-            const bool  visible = caret_blink_visible(
-                args ? args->leaf_id : 0u, cur_line, cur_col);
+            const bool  visible = !sol_ui_system_caret_blink_enabled(ui) ||
+                caret_blink_visible(args ? args->leaf_id : 0u, cur_line, cur_col);
 
             /* Fallbacks in layout space (matching what ca_font_line_metrics
              * would return if a font were already loaded). */

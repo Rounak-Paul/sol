@@ -31,7 +31,7 @@
 /* Compile-time configuration                                          */
 /* ------------------------------------------------------------------ */
 
-#define SOL_UI_MAX_COMMAND_FLOWS      64u
+#define SOL_UI_MAX_COMMAND_FLOWS      128u
 #define SOL_UI_MAX_MENU_ITEMS         64u
 #define SOL_UI_MAX_SPLIT_CALLBACKS   256u
 #define SOL_UI_MAX_ACTION_LEN         63u
@@ -119,6 +119,17 @@ typedef struct SolUISidePanel {
     bool                    in_use;
 } SolUISidePanel;
 
+/*
+ * One command in the registry.
+ *
+ * A command has an owner chord (the default its registrant supplied via
+ * sol_ui_system_register_command_flow) and an effective chord, which is
+ * what matching uses. The effective chord differs from the default when
+ * the user keymap overrides it (sol_ui_system_set_keymap_override) or
+ * when a later registration took the same chord. sequence_length == 0
+ * means unbound: the command still exists — menus and
+ * sol_ui_system_invoke_command reach it — but no chord fires it.
+ */
 typedef struct SolCommandFlowBinding {
     char                    action[SOL_UI_MAX_ACTION_LEN + 1u];
     char                    label[SOL_UI_MAX_LABEL_LEN + 1u];
@@ -127,9 +138,22 @@ typedef struct SolCommandFlowBinding {
        modifier is implicit and stripped before matching). */
     SolModifierMask         step_modifiers[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
     size_t                  sequence_length;
+    SolKeyCode              default_sequence[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    SolModifierMask         default_modifiers[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    size_t                  default_length;
+    bool                    owned;       /* registered by code or a plugin     */
+    bool                    user_chord;  /* effective chord is a user override */
     SolInputActionCallback  callback;
     void                   *user_data;
 } SolCommandFlowBinding;
+
+/* A user keymap entry from bindings.conf; length 0 means "unbind". */
+typedef struct SolKeymapOverride {
+    char            action[SOL_UI_MAX_ACTION_LEN + 1u];
+    SolKeyCode      sequence[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    SolModifierMask modifiers[SOL_UI_MAX_FLOW_SEQUENCE_LEN];
+    size_t          length;
+} SolKeymapOverride;
 
 typedef struct SolUIMenuItem {
     struct SolUISystem *ui;
@@ -356,6 +380,8 @@ struct SolUISystem {
 
     SolCommandFlowBinding command_flows[SOL_UI_MAX_COMMAND_FLOWS];
     size_t                command_flow_count;
+    SolKeymapOverride     keymap_overrides[SOL_UI_MAX_COMMAND_FLOWS];
+    size_t                keymap_override_count;
 
     /* Last-known window size in logical px. Updated from the resize
        callback; consumed by the floating command panel for responsive
@@ -434,6 +460,9 @@ struct SolUISystem {
        re-evaluates state when the active effect or opacity changes. */
     Ca_Signal          *sig_bg_effect_rev;
     Ca_Signal          *sig_theme_rev;
+    /* Bumped by sol_ui_system_apply_preferences so views showing
+       preference state (settings window, menus) re-read it. */
+    Ca_Signal          *sig_prefs_rev;
 
     /* Terminal manager — NULL until sol_ui_system_set_terminal_manager is called. */
     SolTerminalManager *terminal_mgr;
@@ -749,17 +778,13 @@ void sol_ui_plugin_window_open(Ca_Instance *instance, SolPluginManager *pm);
 void sol_ui_plugin_window_tick(void);
 
 /*
- * Open the settings window.
+ * Open the settings window on the given tab, or switch an already open
+ * window for this UI system to that tab.
  *
- * instance    Causality instance for the window.
- * settings    Settings object to edit.
- * bg_effects  Background effect registry for the effect picker (may be NULL).
+ * ui   UI system providing settings, registries, and signals.
+ * tab  Tab to show.
  */
-void sol_ui_settings_window_open(Ca_Instance *instance, SolSettings *settings,
-                                  SolBgEffectRegistry *bg_effects,
-                                  Ca_Signal *bg_effect_revision,
-                                  SolUISystem *ui,
-                                  Ca_Signal *theme_revision);
+void sol_ui_settings_window_open(SolUISystem *ui, SolUISettingsTab tab);
 
 /*
  * Update the settings window each frame.

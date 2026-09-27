@@ -172,6 +172,7 @@ typedef struct SolAppContext {
     bool                  file_clipboard_cut;
     SolSettings           settings;
     SolSubscriptionToken  text_edited_token;
+    SolSubscriptionToken  bindings_token;
     /* Autosave debounce: bumped to (edit time + delay) on every text edit
        while autosave is enabled; the frame loop sweeps all dirty buffers
        once this deadline passes. 0 means no autosave is pending. A single
@@ -308,11 +309,7 @@ static void sol_project_tabs(Ca_Div *div, void *data);
 static void sol_project_switcher_open(SolProjectHost *host);
 /** Advance the switcher window's lifecycle; reaps it once closed. */
 static void sol_project_switcher_tick(SolProjectHost *host);
-
-/* Debounce interval: a dirty buffer is saved this long after its last
-   edit, provided no further edit arrives first. Chosen to avoid writing
-   to disk on every keystroke while still feeling near-immediate. */
-#define SOL_AUTOSAVE_DEBOUNCE_NS 1500000000ull
+static void sol_reload_bindings(SolAppContext *app);
 
 typedef struct SolDeletePathRequest {
     SolAppContext *app;
@@ -1365,15 +1362,15 @@ static bool sol_on_text_edited_for_autosave(const SolEvent *event, void *user_da
 {
     SolAppContext *app = (SolAppContext *)user_data;
     if (!app || !app->settings.autosave_enabled) return false;
-    app->autosave_deadline_ns = event->timestamp_ns + SOL_AUTOSAVE_DEBOUNCE_NS;
+    const double delay_s = (double)app->settings.autosave_delay;
+    app->autosave_deadline_ns = event->timestamp_ns + (uint64_t)(delay_s * 1e9);
     /* The main loop blocks in glfwWaitEvents() between input events, so
        without this the debounce deadline would only ever be checked the
        next time the user happens to move the mouse or press a key —
        autosave would silently never fire while idle. This wakes the
        loop once the debounce window elapses even with no further input. */
     if (app->instance) {
-        ca_instance_request_frame_after(
-            app->instance, (double)SOL_AUTOSAVE_DEBOUNCE_NS / 1e9);
+        ca_instance_request_frame_after(app->instance, delay_s);
     }
     return false;
 }
@@ -1519,12 +1516,13 @@ static void sol_drain_settings_watcher(SolAppContext *app)
     if (n == 0u) return;
 
     bool settings_touched = false;
+    bool bindings_touched = false;
     for (size_t i = 0u; i < n; ++i) {
-        if (strcmp(sol_platform_basename(events[i].path), "settings.json") == 0) {
-            settings_touched = true;
-            break;
-        }
+        const char *name = sol_platform_basename(events[i].path);
+        if (strcmp(name, "settings.json") == 0) settings_touched = true;
+        else if (strcmp(name, "bindings.conf") == 0) bindings_touched = true;
     }
+    if (bindings_touched) sol_reload_bindings(app);
     if (!settings_touched) return;
 
     SolSettings fresh = sol_settings_defaults();
@@ -1575,10 +1573,21 @@ static void sol_drain_settings_watcher(SolAppContext *app)
         ca_instance_set_scale(app->instance, cur->ui_scale);
     }
 
-    /* autosave_enabled has no live-applied side effect beyond the flag
-       itself (sol_run_autosave_sweep reads app->settings directly each
-       frame), so a plain assignment is enough to pick it up. */
-    cur->autosave_enabled = fresh.autosave_enabled;
+    /* The autosave fields are read live by the autosave subscriber and
+       sweep; the others need pushing into the explorer, pickers, caret,
+       and the menu labels that mirror them. */
+    const bool preferences_changed =
+        fresh.autosave_enabled  != cur->autosave_enabled  ||
+        fresh.autosave_delay    != cur->autosave_delay    ||
+        fresh.caret_blink       != cur->caret_blink       ||
+        fresh.show_hidden_files != cur->show_hidden_files;
+    if (preferences_changed) {
+        cur->autosave_enabled  = fresh.autosave_enabled;
+        cur->autosave_delay    = fresh.autosave_delay;
+        cur->caret_blink       = fresh.caret_blink;
+        cur->show_hidden_files = fresh.show_hidden_files;
+        sol_ui_system_apply_preferences(app->ui);
+    }
 }
 
 static bool sol_toggle_explorer_focus(SolAppContext *app)
@@ -2201,6 +2210,50 @@ static void sol_register_project_commands(SolUISystem *ui)
     }
 }
 
+/*
+ * Register every built-in command flow. These precede bindings.conf so its
+ * bind and unbind lines override them.
+ *
+ * ui  The UI system to register flows with.
+ */
+static void sol_register_default_command_flows(SolUISystem *ui)
+{
+    sol_register_project_commands(ui);
+    sol_register_search_command_defaults(ui);
+    sol_register_terminal_command_defaults(ui);
+    sol_register_buffer_save_command_defaults(ui);
+}
+
+/*
+ * Re-apply bindings.conf on top of the registered defaults. Commands keep
+ * their owners (and plugin callbacks); only the user keymap layer is
+ * rebuilt. Idempotent, so it is safe to run for both the in-process change
+ * event and the config-dir watcher that follows the same write.
+ *
+ * app  The application context.
+ */
+static void sol_reload_bindings(SolAppContext *app)
+{
+    if (!app || !app->ui) return;
+    sol_ui_system_reset_keymap(app->ui);
+    app->command_flows_loaded = sol_config_load_bindings(app->ui);
+}
+
+/*
+ * Subscriber for SOL_EVENT_BINDINGS_CHANGED: reload the keymap right away
+ * rather than waiting for the config-dir watcher to report the write.
+ *
+ * event      Unused.
+ * user_data  The SolAppContext.
+ * Returns    false so other subscribers still observe the change.
+ */
+static bool sol_on_bindings_changed(const SolEvent *event, void *user_data)
+{
+    (void)event;
+    sol_reload_bindings((SolAppContext *)user_data);
+    return false;
+}
+
 /** Create an isolated project runtime for path; NULL creates an empty project. */
 static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
 {
@@ -2262,11 +2315,11 @@ static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
     app->startup_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
         .event_name = SOL_EVENT_APP_STARTUP, .handler = sol_on_startup_event,
     });
-    sol_register_project_commands(app->ui);
-    sol_register_search_command_defaults(app->ui);
-    sol_register_terminal_command_defaults(app->ui);
-    sol_register_buffer_save_command_defaults(app->ui);
-    app->command_flows_loaded = sol_config_load_bindings(app->ui);
+    app->bindings_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
+        .event_name = SOL_EVENT_BINDINGS_CHANGED, .handler = sol_on_bindings_changed, .user_data = app,
+    });
+    sol_register_default_command_flows(app->ui);
+    sol_reload_bindings(app);
     sol_register_workspace_menu_items(app->ui);
     app->terminal_mgr = sol_terminal_manager_create(host->instance);
     if (!app->terminal_mgr) goto fail;

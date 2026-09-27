@@ -104,3 +104,10 @@
 - `cmake --install build-release --prefix /Applications --component Sol`; installed executable
   `274e4975468df2e65464650629fc126e16eb3575177c6ba733e6eebcb9b4a5ec` matches `bin/Sol.app`, all 13 plugins
   byte-identical; installed app starts and registers all 66 themes.
+
+## 2026-09-27 settings-tabs release install
+
+- `cmake --build build-release -j8` + `cmake --install build-release --prefix /Applications --component Sol`.
+- `/Applications/Sol.app/Contents/MacOS/Sol` sha256 `c82e1a33…c65b` byte-matches `bin/Sol.app`;
+  13 plugins; installed themes dylib and executable contain the new `sw-bind-*` rules
+  (Preferences/Keybindings tabs, see settings-preferences-keybindings.md). Sol was not running.

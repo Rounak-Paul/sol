@@ -220,6 +220,61 @@ cleanup:
     free(move_file);
 }
 
+/* Return whether the visible projection contains an entry named name. */
+static bool tree_lists(const SolFileTree *tree, const char *name)
+{
+    for (size_t i = 0; i < sol_file_tree_visible_count(tree); ++i) {
+        const SolFileEntry *e = sol_file_tree_visible(tree, i);
+        if (e && strcmp(e->name, name) == 0) return true;
+    }
+    return false;
+}
+
+/*
+ * Hidden entries are filtered by default, listed once show_hidden is on
+ * (re-scanning the mounted root), and "." / ".." never appear.
+ */
+static void test_show_hidden_toggle(SolTestCtx *T)
+{
+    char root[256];
+    snprintf(root, sizeof(root), "/tmp/sol_tree_hidden_%llu",
+             (unsigned long long)sol_test_now_ns());
+    char *hidden_dir = sol_platform_path_join(root, ".config");
+    char *hidden_file = sol_platform_path_join(root, ".env");
+    char *shown_file = sol_platform_path_join(root, "main.c");
+    SolFileTree *tree = sol_file_tree_create();
+    SOL_CHECK_NOT_NULL(T, tree);
+    if (!hidden_dir || !hidden_file || !shown_file || !tree) goto cleanup;
+
+    SOL_CHECK(T, sol_platform_mkdir_p(hidden_dir));
+    SOL_CHECK(T, write_file_bytes(hidden_file, "A=1"));
+    SOL_CHECK(T, write_file_bytes(shown_file, "int main;"));
+
+    SOL_CHECK(T, !sol_file_tree_show_hidden(tree));
+    SOL_CHECK(T, sol_file_tree_set_root(tree, root));
+    SOL_CHECK(T, tree_lists(tree, "main.c"));
+    SOL_CHECK(T, !tree_lists(tree, ".env"));
+    SOL_CHECK(T, !tree_lists(tree, ".config"));
+
+    SOL_CHECK(T, sol_file_tree_set_show_hidden(tree, true));
+    SOL_CHECK(T, !sol_file_tree_set_show_hidden(tree, true));
+    SOL_CHECK(T, tree_lists(tree, ".env"));
+    SOL_CHECK(T, tree_lists(tree, ".config"));
+    SOL_CHECK(T, !tree_lists(tree, "."));
+    SOL_CHECK(T, !tree_lists(tree, ".."));
+
+    SOL_CHECK(T, sol_file_tree_set_show_hidden(tree, false));
+    SOL_CHECK(T, !tree_lists(tree, ".env"));
+    SOL_CHECK(T, tree_lists(tree, "main.c"));
+
+cleanup:
+    sol_file_tree_destroy(tree);
+    (void)sol_platform_remove_path_recursive(root);
+    free(hidden_dir);
+    free(hidden_file);
+    free(shown_file);
+}
+
 int main(void)
 {
     SolTestSuite suite;
@@ -227,5 +282,6 @@ int main(void)
     SOL_RUN(suite, test_root_clear_notifies_and_resets);
     SOL_RUN(suite, test_refresh_does_not_publish_root_event);
     SOL_RUN(suite, test_platform_recursive_file_ops);
+    SOL_RUN(suite, test_show_hidden_toggle);
     return sol_suite_report(&suite);
 }

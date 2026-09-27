@@ -62,6 +62,14 @@ SolFilePicker *sol_file_picker_open(Ca_Instance          *instance,
                                     void                 *user_data);
 
 /*
+ * Set whether newly opened pickers list hidden (dot) entries initially.
+ * Each picker's own toolbar toggle still overrides it for that window.
+ *
+ * show  true to list hidden entries by default.
+ */
+void sol_file_picker_set_default_show_hidden(bool show);
+
+/*
  * Reap any pickers whose window has been closed.
  *
  * Call this once per frame from the primary window's on_frame hook.

@@ -539,92 +539,144 @@ size_t sol_ui_collect_suggestions(SolUISystem *ui,
 }
 
 /* ------------------------------------------------------------------ */
+/* Chord assignment                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Give a flow its effective chord, resolving collisions so every chord has
+ * at most one owner. A chord from the user keymap always wins; an owner
+ * default never displaces a user chord (so plugin load order cannot undo
+ * bindings.conf); between two defaults the later assignment wins. A
+ * displaced flow stays registered, just unbound.
+ *
+ * ui             UI system owning the registry.
+ * flow           Flow to update.
+ * sequence       Key steps (ignored when length is 0).
+ * modifiers      Per-step modifiers, or NULL for none.
+ * length         Step count; 0 unbinds the flow.
+ * from_override  true when the chord comes from the user keymap.
+ */
+static void sol_ui_flow_assign_chord(SolUISystem           *ui,
+                                     SolCommandFlowBinding *flow,
+                                     const SolKeyCode      *sequence,
+                                     const SolModifierMask *modifiers,
+                                     size_t                 length,
+                                     bool                   from_override)
+{
+    memset(flow->sequence, 0, sizeof(flow->sequence));
+    memset(flow->step_modifiers, 0, sizeof(flow->step_modifiers));
+    flow->sequence_length = 0u;
+    flow->user_chord      = from_override;
+    if (length == 0u || !sequence) return;
+
+    SolCommandFlowBinding candidate = *flow;
+    for (size_t i = 0u; i < length; ++i) {
+        candidate.sequence[i] = sol_ui_normalize_flow_key(sequence[i]);
+        candidate.step_modifiers[i] = modifiers
+            ? (SolModifierMask)(modifiers[i] & ~ui->leader_modifier)
+            : SOL_MOD_NONE;
+    }
+    candidate.sequence_length = length;
+
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        SolCommandFlowBinding *other = &ui->command_flows[i];
+        if (other == flow || other->sequence_length == 0u) continue;
+        if (!sol_ui_flows_have_same_chord(other, &candidate)) continue;
+        if (other->user_chord && !from_override) return;
+        memset(other->sequence, 0, sizeof(other->sequence));
+        memset(other->step_modifiers, 0, sizeof(other->step_modifiers));
+        other->sequence_length = 0u;
+        other->user_chord      = false;
+    }
+
+    memcpy(flow->sequence, candidate.sequence, sizeof(flow->sequence));
+    memcpy(flow->step_modifiers, candidate.step_modifiers, sizeof(flow->step_modifiers));
+    flow->sequence_length = length;
+}
+
+/* Return the keymap override for action, or NULL. */
+static SolKeymapOverride *sol_ui_find_override(SolUISystem *ui, const char *action)
+{
+    for (size_t i = 0u; i < ui->keymap_override_count; ++i) {
+        if (strcmp(ui->keymap_overrides[i].action, action) == 0) {
+            return &ui->keymap_overrides[i];
+        }
+    }
+    return NULL;
+}
+
+/* Append an empty flow for action; NULL when the registry is full. */
+static SolCommandFlowBinding *sol_ui_append_flow(SolUISystem *ui, const char *action)
+{
+    if (ui->command_flow_count >= SOL_UI_MAX_COMMAND_FLOWS) return NULL;
+    SolCommandFlowBinding *flow = &ui->command_flows[ui->command_flow_count++];
+    memset(flow, 0, sizeof(*flow));
+    sol_ui_copy_text(flow->action, sizeof(flow->action), action);
+    sol_ui_copy_text(flow->label, sizeof(flow->label), action);
+    return flow;
+}
+
+/* ------------------------------------------------------------------ */
 /* Public registration API                                             */
 /* ------------------------------------------------------------------ */
 
 /*
- * Register a new command-flow binding, or update an existing one with the
- * same action name.  If another binding already owns the same chord it is
- * replaced, ensuring every chord has exactly one owner.
+ * Register a command, or update the one with the same action name. The
+ * descriptor's chord becomes the command's default; the effective chord is
+ * the user's keymap override when one exists. A descriptor without a chord
+ * registers an unbound (menu/palette-only) command.
  *
  * ui    The UI system to register into.
- * desc  Descriptor containing the action name, key sequence, label, and
- *       optional callback.
+ * desc  Action name, label, optional chord, and optional callback. A NULL
+ *       callback means matching only publishes SOL_EVENT_COMMAND_INVOKED.
  * Returns true on success, false when the descriptor is invalid or the
  *         registry is full.
  */
 bool sol_ui_system_register_command_flow(SolUISystem *ui,
                                          const SolCommandFlowDesc *desc)
 {
-    if (!ui || !desc || !desc->action) {
+    if (!ui || !desc || !desc->action || !desc->action[0]) {
         return false;
     }
-    /* `callback` is optional. When NULL, matching the flow simply
-       publishes SOL_EVENT_COMMAND_INVOKED { action } and lets event
-       subscribers do the work — this is how config-loaded bindings
-       (which only know action names) wire up to behaviour. */
 
-    size_t sequence_length = 0u;
+    SolKeyCode      default_seq[SOL_UI_MAX_FLOW_SEQUENCE_LEN] = {0};
+    SolModifierMask default_mods[SOL_UI_MAX_FLOW_SEQUENCE_LEN] = {0};
+    size_t          default_len = 0u;
     if (desc->sequence && desc->sequence_length > 0u) {
-        sequence_length = desc->sequence_length;
+        if (desc->sequence_length > SOL_UI_MAX_FLOW_SEQUENCE_LEN) return false;
+        default_len = desc->sequence_length;
+        memcpy(default_seq, desc->sequence, default_len * sizeof(default_seq[0]));
+        if (desc->step_modifiers) {
+            memcpy(default_mods, desc->step_modifiers, default_len * sizeof(default_mods[0]));
+        }
     } else if (desc->key != SOL_KEY_UNKNOWN) {
-        sequence_length = 1u;
+        default_len     = 1u;
+        default_seq[0]  = desc->key;
+        default_mods[0] = desc->step_modifiers ? desc->step_modifiers[0] : SOL_MOD_NONE;
     }
-    if (sequence_length == 0u || sequence_length > SOL_UI_MAX_FLOW_SEQUENCE_LEN) {
-        return false;
+    for (size_t i = 0u; i < default_len; ++i) {
+        default_seq[i]  = sol_ui_normalize_flow_key(default_seq[i]);
+        default_mods[i] = (SolModifierMask)(default_mods[i] & ~ui->leader_modifier);
     }
 
     SolCommandFlowBinding *flow = sol_ui_find_flow_by_action(ui, desc->action);
-    if (!flow) {
-        if (ui->command_flow_count >= SOL_UI_MAX_COMMAND_FLOWS) {
-            return false;
-        }
-        flow = &ui->command_flows[ui->command_flow_count++];
-        memset(flow, 0, sizeof(*flow));
-        sol_ui_copy_text(flow->action, sizeof(flow->action), desc->action);
-    } else {
-        memset(flow->sequence, 0, sizeof(flow->sequence));
-    }
+    if (!flow) flow = sol_ui_append_flow(ui, desc->action);
+    if (!flow) return false;
 
-    flow->sequence_length = sequence_length;
-    /* Default step_modifiers to 0 (no modifier) before optional copy. */
-    for (size_t i = 0u; i < SOL_UI_MAX_FLOW_SEQUENCE_LEN; ++i) {
-        flow->step_modifiers[i] = SOL_MOD_NONE;
-    }
-    if (desc->sequence && desc->sequence_length > 0u) {
-        for (size_t i = 0u; i < sequence_length; ++i) {
-            flow->sequence[i] = sol_ui_normalize_flow_key(desc->sequence[i]);
-            if (desc->step_modifiers) {
-                /* Strip leader modifier defensively — callers should
-                   never include it but a stray bit must not break
-                   matching. */
-                flow->step_modifiers[i] =
-                    (SolModifierMask)(desc->step_modifiers[i] & ~ui->leader_modifier);
-            }
-        }
-    } else {
-        flow->sequence[0] = sol_ui_normalize_flow_key(desc->key);
-        if (desc->step_modifiers) {
-            flow->step_modifiers[0] =
-                (SolModifierMask)(desc->step_modifiers[0] & ~ui->leader_modifier);
-        }
-    }
-
+    flow->owned     = true;
     flow->callback  = desc->callback;
     flow->user_data = desc->user_data;
     sol_ui_copy_text(flow->label, sizeof(flow->label),
                      desc->label ? desc->label : desc->action);
+    memcpy(flow->default_sequence, default_seq, sizeof(flow->default_sequence));
+    memcpy(flow->default_modifiers, default_mods, sizeof(flow->default_modifiers));
+    flow->default_length = default_len;
 
-    /* A chord has one owner. Later config/plugin registrations therefore
-       replace built-in defaults deterministically. */
-    for (size_t i = ui->command_flow_count; i > 0u; --i) {
-        const size_t index = i - 1u;
-        SolCommandFlowBinding *candidate = &ui->command_flows[index];
-        if (strcmp(candidate->action, desc->action) == 0) continue;
-        if (sol_ui_flows_have_same_chord(candidate, flow)) {
-            sol_ui_remove_flow_at(ui, index);
-            flow = sol_ui_find_flow_by_action(ui, desc->action);
-        }
+    const SolKeymapOverride *ov = sol_ui_find_override(ui, desc->action);
+    if (ov) {
+        sol_ui_flow_assign_chord(ui, flow, ov->sequence, ov->modifiers, ov->length, true);
+    } else {
+        sol_ui_flow_assign_chord(ui, flow, default_seq, default_mods, default_len, false);
     }
 
     /* Registration affects the which-key suggestion set; notify the
@@ -634,7 +686,86 @@ bool sol_ui_system_register_command_flow(SolUISystem *ui,
 }
 
 /*
+ * Set the user's chord for an action (the bindings.conf layer). It applies
+ * to the command now if registered, and to its registration later if not.
+ * An action nobody has registered becomes an event-driven command.
+ *
+ * ui         The UI system.
+ * action     Action name.
+ * sequence   Key steps after the leader; NULL or length 0 unbinds.
+ * modifiers  Per-step modifiers (may be NULL).
+ * length     Step count.
+ * Returns    false for invalid input or when the keymap/registry is full.
+ */
+bool sol_ui_system_set_keymap_override(SolUISystem           *ui,
+                                       const char            *action,
+                                       const SolKeyCode      *sequence,
+                                       const SolModifierMask *modifiers,
+                                       size_t                 length)
+{
+    if (!ui || !action || !action[0] || length > SOL_UI_MAX_FLOW_SEQUENCE_LEN) return false;
+    if (!sequence) length = 0u;
+
+    SolKeymapOverride *ov = sol_ui_find_override(ui, action);
+    if (!ov) {
+        if (ui->keymap_override_count >= SOL_UI_MAX_COMMAND_FLOWS) return false;
+        ov = &ui->keymap_overrides[ui->keymap_override_count++];
+        memset(ov, 0, sizeof(*ov));
+        sol_ui_copy_text(ov->action, sizeof(ov->action), action);
+    }
+    memset(ov->sequence, 0, sizeof(ov->sequence));
+    memset(ov->modifiers, 0, sizeof(ov->modifiers));
+    ov->length = length;
+    for (size_t i = 0u; i < length; ++i) {
+        ov->sequence[i]  = sequence[i];
+        ov->modifiers[i] = modifiers ? modifiers[i] : SOL_MOD_NONE;
+    }
+
+    SolCommandFlowBinding *flow = sol_ui_find_flow_by_action(ui, action);
+    if (!flow && length > 0u) flow = sol_ui_append_flow(ui, action);
+    if (flow) sol_ui_flow_assign_chord(ui, flow, ov->sequence, ov->modifiers, ov->length, true);
+    else if (length > 0u) return false;
+
+    sol_ui_bump_u32(ui->sig_flow_registry_rev);
+    return true;
+}
+
+/*
+ * Drop the user keymap: forget every override, remove commands that only
+ * existed because of one, and give every registered command its default
+ * chord again (in registration order, as at startup). Any chord in
+ * progress is cancelled since its prefix may no longer lead anywhere.
+ *
+ * ui  The UI system.
+ */
+void sol_ui_system_reset_keymap(SolUISystem *ui)
+{
+    if (!ui) return;
+    memset(ui->keymap_overrides, 0, sizeof(ui->keymap_overrides));
+    ui->keymap_override_count = 0u;
+
+    for (size_t i = ui->command_flow_count; i > 0u; --i) {
+        if (!ui->command_flows[i - 1u].owned) sol_ui_remove_flow_at(ui, i - 1u);
+    }
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        SolCommandFlowBinding *flow = &ui->command_flows[i];
+        flow->sequence_length = 0u;
+        flow->user_chord      = false;
+    }
+    for (size_t i = 0u; i < ui->command_flow_count; ++i) {
+        SolCommandFlowBinding *flow = &ui->command_flows[i];
+        sol_ui_flow_assign_chord(ui, flow, flow->default_sequence,
+                                 flow->default_modifiers, flow->default_length, false);
+    }
+
+    sol_ui_reset_leader_prefix(ui);
+    sol_ui_bump_u32(ui->sig_flow_registry_rev);
+}
+
+/*
  * Remove the flow binding for the given action name from the registry.
+ * The user's keymap override (if any) is kept so a re-registration of the
+ * same action picks it up again.
  *
  * ui      The UI system to modify.
  * action  The action name whose binding should be removed.
@@ -650,10 +781,7 @@ bool sol_ui_system_unregister_command_flow(SolUISystem *ui, const char *action)
         if (strcmp(ui->command_flows[i].action, action) != 0) {
             continue;
         }
-        for (size_t j = i + 1u; j < ui->command_flow_count; ++j) {
-            ui->command_flows[j - 1u] = ui->command_flows[j];
-        }
-        --ui->command_flow_count;
+        sol_ui_remove_flow_at(ui, i);
         sol_ui_bump_u32(ui->sig_flow_registry_rev);
         return true;
     }

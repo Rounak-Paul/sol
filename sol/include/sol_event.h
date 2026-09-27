@@ -191,6 +191,11 @@ size_t sol_event_bus_drain  (SolEventBus *bus, size_t max_events);
 /* -- Commands ------------------------------------------------------ */
 #define SOL_EVENT_COMMAND_INVOKED    "sol.command.invoked"
 
+/* -- Configuration ------------------------------------------------- */
+/* Published after bindings.conf was rewritten in-process (no payload);
+   subscribers re-register the keymap from disk. */
+#define SOL_EVENT_BINDINGS_CHANGED   "sol.bindings.changed"
+
 /*
  * Payload for SOL_EVENT_APP_STARTUP — fired exactly once after subsystems
  * are up but before the frame loop spins.

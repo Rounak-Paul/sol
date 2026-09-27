@@ -20,6 +20,14 @@
  *       "titlebar_blur": 12.0,
  *       "panel_opacity": 1.0,
  *       "scrollbar_width": 8.0
+ *     },
+ *     "editor": {
+ *       "autosave": false,
+ *       "autosave_delay": 1.5,
+ *       "caret_blink": true
+ *     },
+ *     "explorer": {
+ *       "show_hidden": false
  *     }
  *   }
  *
@@ -73,6 +81,11 @@
 #define SOL_SETTINGS_SCROLLBAR_WIDTH_MIN     2.0f
 #define SOL_SETTINGS_SCROLLBAR_WIDTH_MAX     20.0f
 #define SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT 8.0f
+
+/* Editor behaviour tunables */
+#define SOL_SETTINGS_AUTOSAVE_DELAY_MIN     0.5f
+#define SOL_SETTINGS_AUTOSAVE_DELAY_MAX     10.0f
+#define SOL_SETTINGS_AUTOSAVE_DELAY_DEFAULT 1.5f
 
 /* ------------------------------------------------------------------ */
 /* Settings aggregate                                                  */
@@ -133,6 +146,19 @@ typedef struct SolSettings {
      * debounce interval after the last edit. Default: false — saving
      * remains an explicit user action unless opted in. */
     bool autosave_enabled;
+
+    /* Seconds of edit inactivity before an autosave sweep runs.
+     * Range: [SOL_SETTINGS_AUTOSAVE_DELAY_MIN, SOL_SETTINGS_AUTOSAVE_DELAY_MAX]. */
+    float autosave_delay;
+
+    /* When false the text caret is drawn solid and the per-frame blink
+     * rebuild is skipped entirely. Default: true. */
+    bool caret_blink;
+
+    /* ---- Explorer ---- */
+    /* When true, dotfiles and dot-directories are listed in the explorer
+     * tree and file pickers open with hidden entries visible. Default: false. */
+    bool show_hidden_files;
 } SolSettings;
 
 /* ------------------------------------------------------------------ */

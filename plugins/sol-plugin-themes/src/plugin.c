@@ -328,18 +328,20 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
 
     css_append(css,
         ".welcome-pane,.fp-list,.search-results,.pm-right,.sw-right{background:%s;}"
-        ".welcome-title{color:%s;}"
-        ".welcome-subtitle,.welcome-section-label,.term-tab{color:%s;}"
-        ".welcome-desc{color:%s;}.welcome-hr,.sw-hr,.pm-hr{background:%s;}"
-        ".welcome-btn,.pm-btn,.pm-btn-enable,.pm-btn-disable,.cf-row-key{background:%s;color:%s;}"
+        ".welcome-title,.sw-section-title{color:%s;}"
+        ".welcome-subtitle,.welcome-section-label,.term-tab,.sw-tab-label,.sw-setting-hint,"
+        ".sw-bind-group,.sw-bind-status{color:%s;}"
+        ".welcome-desc,.sw-setting-label,.sw-bind-action{color:%s;}.welcome-hr,.sw-hr,.pm-hr{background:%s;}"
+        ".welcome-btn,.pm-btn,.pm-btn-enable,.pm-btn-disable,.cf-row-key,.sw-btn{background:%s;color:%s;}"
         ".welcome-btn-primary{background:%s;color:%s;}"
-        ".welcome-btn:hover,.welcome-btn-primary:hover,.pm-btn:hover{background:%s;}"
+        ".welcome-btn:hover,.welcome-btn-primary:hover,.pm-btn:hover,.sw-btn:hover{background:%s;}"
         ".fp-root,.search-root-window,.pm-root,.sw-root,.cf-panel{background:%s;}"
         ".fp-toolbar,.fp-footer,.fp-colhdr,.search-header,.search-footer,.pm-left,.sw-left,.pm-search-row{background:%s;}"
         ".fp-row:hover,.search-result:hover,.pm-item:hover,.sw-tab-btn:hover{background:%s;}"
         ".fp-row-selected,.search-result-selected,.pm-item-selected,.sw-tab-btn-active{background:%s;}"
-        ".fp-new-folder-input,.search-input,.pm-search-input,.sw-scale-input,.sw-select{background:%s;color:%s;}"
-        ".search-result-line,.cf-row-key-text{color:%s;}"
+        ".fp-new-folder-input,.search-input,.pm-search-input,.sw-scale-input,.sw-select,"
+        ".sw-bind-input{background:%s;color:%s;}"
+        ".search-result-line,.cf-row-key-text,.sw-bind-leader,.sw-setting-value{color:%s;}"
         ".ca-popup-root{background:%s;}"
         ".ca-popup-card,.ca-select-popup,.ca-tooltip,.ca-context-menu,.ca-menubar-popup{background:%s;color:%s;}"
         ".ca-overlay-hover{background:%s;}.ca-overlay-selected{background:%s;color:%s;}",
@@ -425,10 +427,10 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
        alpha keeps it visibly dimmed without hardcoding an off-palette gray. */
     css_append(css,
         ".scm-header-action:disabled,.scm-action:disabled,.scm-section-action:disabled,"
-        ".scm-primary-action:disabled,.scm-danger-action:disabled{background:%s;color:%s;}"
+        ".scm-primary-action:disabled,.scm-danger-action:disabled,.sw-btn:disabled{background:%s;color:%s;}"
         ".scm-header-action:disabled:hover,.scm-action:disabled:hover,"
         ".scm-section-action:disabled:hover,.scm-primary-action:disabled:hover,"
-        ".scm-danger-action:disabled:hover{background:%s;color:%s;}"
+        ".scm-danger-action:disabled:hover,.sw-btn:disabled:hover{background:%s;color:%s;}"
         ".scm-icon-action:disabled,.scm-header-icon-action:disabled,"
         ".scm-action-icon:disabled,.scm-remote-action:disabled{color:%s;}"
         ".scm-icon-action:disabled:hover,.scm-header-icon-action:disabled:hover,"
@@ -440,9 +442,11 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
         ".scm-submodule-clean{color:%s;}"
         ".scm-submodule-modified{color:%s;}"
         ".scm-submodule-warning{color:%s;}"
-        ".scm-submodule-conflict{color:%s;}",
+        ".scm-submodule-conflict{color:%s;}"
+        ".sw-bind-status-error{color:%s;}"
+        ".sw-tab-label-active{color:%s;}",
         theme->primary, theme->muted, theme->warning, theme->warning,
-        theme->danger);
+        theme->danger, theme->danger, theme->text);
     if (!append_submodule_card_css(css, theme)) return false;
     css_append(css,
         ".scm-remote-action{color:%s;}"

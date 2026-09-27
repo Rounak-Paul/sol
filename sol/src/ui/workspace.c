@@ -65,6 +65,7 @@ static void sol_ui_menu_open_settings_action(void *user_data);
 static void sol_ui_menu_save_action(void *user_data);
 static void sol_ui_menu_save_all_action(void *user_data);
 static void sol_ui_menu_toggle_autosave_action(void *user_data);
+static void sol_ui_menu_toggle_hidden_files_action(void *user_data);
 static bool sol_ui_dispatch_command(SolUISystem *ui,
                                     SolCommandFlowBinding *flow,
                                     const char *action,
@@ -1379,7 +1380,8 @@ static void sol_ui_on_frame(void *user_data)
      * on_frame is called at ctx depth=-1 (between layout and paint),
      * which is the safe window for triggering a reactive flush via
      * sol_ui_bump_u32 without overflowing the widget stack. */
-    if (ui->buffers && sol_buffer_active_buffer(ui->buffers) != 0) {
+    if (ui->buffers && sol_buffer_active_buffer(ui->buffers) != 0 &&
+        sol_ui_system_caret_blink_enabled(ui)) {
         sol_ui_bump_u32(ui->sig_buffer_rev);
         if (bg_frame_interval <= 0.0)
             ca_instance_wake();
@@ -1808,6 +1810,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
     ui->sig_side_panel_rev    = ca_signal_u32  (instance, 0u);
     ui->sig_bg_effect_rev     = ca_signal_u32  (instance, 0u);
     ui->sig_theme_rev         = ca_signal_u32  (instance, 0u);
+    ui->sig_prefs_rev         = ca_signal_u32  (instance, 0u);
     ui->sig_focused_panel     = ca_signal_u32  (instance, (uint32_t)SOL_UI_FOCUSED_PANEL_BUFFER);
     if (!ui->sig_buffer_rev || !ui->sig_file_tree_rev ||
         !ui->sig_file_tree_visible ||
@@ -1815,7 +1818,7 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
         !ui->sig_flow_registry_rev || !ui->sig_window_rev ||
         !ui->sig_tree_scroll || !ui->sig_terminal_rev ||
         !ui->sig_side_panel_rev || !ui->sig_bg_effect_rev ||
-        !ui->sig_theme_rev || !ui->sig_focused_panel) {
+        !ui->sig_theme_rev || !ui->sig_prefs_rev || !ui->sig_focused_panel) {
         sol_ui_system_destroy(ui);
         return NULL;
     }
@@ -1962,6 +1965,7 @@ void sol_ui_system_destroy(SolUISystem *ui)
     ca_signal_destroy(ui->sig_tree_scroll);
     ca_signal_destroy(ui->sig_bg_effect_rev);
     ca_signal_destroy(ui->sig_theme_rev);
+    ca_signal_destroy(ui->sig_prefs_rev);
     ca_signal_destroy(ui->sig_terminal_rev);
     ca_signal_destroy(ui->sig_side_panel_rev);
     free(ui);
@@ -2345,15 +2349,14 @@ static void sol_ui_menu_open_plugin_manager_action(void *user_data)
 }
 
 /*
- * Menu action handler for "Settings" (Sol > Settings).
- *
- * Opens the settings window via the UI system.
+ * Menu action handler for "Settings..." (Sol > Settings...).
  *
  * user_data  The SolUISystem to open the settings window in.
  */
 static void sol_ui_menu_open_settings_action(void *user_data)
 {
-    sol_ui_system_open_settings_window((SolUISystem *)user_data);
+    sol_ui_system_open_settings_window((SolUISystem *)user_data,
+                                       SOL_UI_SETTINGS_TAB_THEME);
 }
 
 /*
@@ -2397,7 +2400,24 @@ static void sol_ui_menu_toggle_autosave_action(void *user_data)
     if (!ui || !ui->settings) return;
     ui->settings->autosave_enabled = !ui->settings->autosave_enabled;
     sol_settings_save(ui->settings);
-    sol_ui_system_refresh_title_bar_menus(ui);
+    sol_ui_system_apply_preferences(ui);
+}
+
+/*
+ * Menu action handler for the "Hidden Files" toggle (View > Show Hidden Files).
+ *
+ * Flips show_hidden_files, persists it, and applies it to the explorer
+ * and file pickers; the label is rebuilt with the new state.
+ *
+ * user_data  The SolUISystem owning the menu.
+ */
+static void sol_ui_menu_toggle_hidden_files_action(void *user_data)
+{
+    SolUISystem *ui = (SolUISystem *)user_data;
+    if (!ui || !ui->settings) return;
+    ui->settings->show_hidden_files = !ui->settings->show_hidden_files;
+    sol_settings_save(ui->settings);
+    sol_ui_system_apply_preferences(ui);
 }
 
 /* Dispatch a command callback and publish its action on the command event bus. */
@@ -2707,6 +2727,12 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
     (void)sol_ui_append_menu_build_item(&groups[0], "settings", "Settings...",
                                         sol_ui_menu_open_settings_action, ui,
                                         false, 50);
+    (void)sol_ui_append_menu_build_item(
+        &groups[2], "hidden-files",
+        (ui->settings && ui->settings->show_hidden_files)
+            ? "Show Hidden Files: On" : "Show Hidden Files: Off",
+        sol_ui_menu_toggle_hidden_files_action, ui,
+        false, 10);
     (void)sol_ui_append_menu_build_item(&groups[1], "search-separator", "",
                                         NULL, NULL, true, 30);
     (void)sol_ui_append_menu_build_item(&groups[2], "plugin-separator", "",
@@ -3066,18 +3092,46 @@ void sol_ui_system_set_settings(SolUISystem *ui, SolSettings *settings)
     if (!ui) return;
     ui->settings = settings;
     sol_ui_system_apply_appearance(ui);
+    sol_ui_system_apply_preferences(ui);
 }
 
 /*
- * Open the settings window.
+ * Push behavioural preferences from the attached settings into the live UI.
  *
- * ui  The UI system owning the instance and settings.
+ * ui  The UI system to update.
  */
-void sol_ui_system_open_settings_window(SolUISystem *ui)
+void sol_ui_system_apply_preferences(SolUISystem *ui)
+{
+    if (!ui || !ui->settings) return;
+    const bool show_hidden = ui->settings->show_hidden_files;
+    sol_file_tree_set_show_hidden(ui->file_tree, show_hidden);
+    sol_file_picker_set_default_show_hidden(show_hidden);
+    sol_ui_bump_u32(ui->sig_buffer_rev);
+    sol_ui_bump_u32(ui->sig_prefs_rev);
+    sol_ui_system_refresh_title_bar_menus(ui);
+}
+
+/*
+ * Report whether the text caret should blink.
+ *
+ * ui  The UI system (may be NULL).
+ * Returns  The caret_blink preference, or true when no settings are attached.
+ */
+bool sol_ui_system_caret_blink_enabled(const SolUISystem *ui)
+{
+    return !ui || !ui->settings || ui->settings->caret_blink;
+}
+
+/*
+ * Open the settings window on a tab.
+ *
+ * ui   The UI system owning the instance and settings.
+ * tab  Tab to show.
+ */
+void sol_ui_system_open_settings_window(SolUISystem *ui, SolUISettingsTab tab)
 {
     if (!ui || !ui->instance || !ui->settings) return;
-    sol_ui_settings_window_open(ui->instance, ui->settings, ui->bg_effects,
-                                ui->sig_bg_effect_rev, ui, ui->sig_theme_rev);
+    sol_ui_settings_window_open(ui, tab);
 }
 
 /*

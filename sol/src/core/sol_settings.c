@@ -49,6 +49,9 @@ SolSettings sol_settings_defaults(void)
         .panel_opacity    = SOL_SETTINGS_PANEL_OPACITY_DEFAULT,
         .scrollbar_width  = SOL_SETTINGS_SCROLLBAR_WIDTH_DEFAULT,
         .autosave_enabled = false,
+        .autosave_delay   = SOL_SETTINGS_AUTOSAVE_DELAY_DEFAULT,
+        .caret_blink      = true,
+        .show_hidden_files = false,
     };
     snprintf(s.theme_id, sizeof(s.theme_id), "%s", SOL_SETTINGS_THEME_ID_DEFAULT);
     snprintf(s.style_id, sizeof(s.style_id), "%s", SOL_SETTINGS_STYLE_ID_DEFAULT);
@@ -328,6 +331,41 @@ static void jp_parse_appearance(JP *j, SolSettings *s)
 }
 
 /*
+ * Parse a boolean field value, consuming the value even when it is not a
+ * boolean so a mistyped entry cannot desynchronise the surrounding object.
+ *
+ * j    Parser cursor positioned at the value.
+ * out  Receives the value when it is a valid boolean; untouched otherwise.
+ */
+static void jp_field_bool(JP *j, bool *out)
+{
+    bool v = false;
+    if (jp_bool(j, &v)) *out = v;
+    else jp_skip_value(j);
+}
+
+/*
+ * Parse a numeric field value, keeping it only when inside [mn, mx].
+ * Non-numeric values are consumed and ignored.
+ *
+ * j    Parser cursor positioned at the value.
+ * out  Receives the value when valid and in range; untouched otherwise.
+ * mn   Inclusive lower bound.
+ * mx   Inclusive upper bound.
+ */
+static void jp_field_float(JP *j, float *out, float mn, float mx)
+{
+    jp_skip_ws(j);
+    const char *start = j->p;
+    const float v = jp_float(j);
+    if (j->p == start) {
+        jp_skip_value(j);
+        return;
+    }
+    if (!isnan(v) && v >= mn && v <= mx) *out = v;
+}
+
+/*
  * Parse editor-behavior object from JSON.
  *
  * j  Parser cursor positioned at editor object.
@@ -343,8 +381,38 @@ static void jp_parse_editor(JP *j, SolSettings *s)
         if (!jp_string(j, key, sizeof(key))) break;
         if (!jp_expect(j, ':')) break;
         if (strcmp(key, "autosave") == 0) {
-            bool v = false;
-            if (jp_bool(j, &v)) s->autosave_enabled = v;
+            jp_field_bool(j, &s->autosave_enabled);
+        } else if (strcmp(key, "autosave_delay") == 0) {
+            jp_field_float(j, &s->autosave_delay,
+                           SOL_SETTINGS_AUTOSAVE_DELAY_MIN,
+                           SOL_SETTINGS_AUTOSAVE_DELAY_MAX);
+        } else if (strcmp(key, "caret_blink") == 0) {
+            jp_field_bool(j, &s->caret_blink);
+        } else {
+            jp_skip_value(j);
+        }
+        jp_skip_ws(j);
+        if (*j->p == ',') ++j->p;
+    }
+}
+
+/*
+ * Parse explorer-behavior object from JSON.
+ *
+ * j  Parser cursor positioned at explorer object.
+ * s  Settings struct to populate.
+ */
+static void jp_parse_explorer(JP *j, SolSettings *s)
+{
+    if (!jp_expect(j, '{')) return;
+    while (*j->p) {
+        jp_skip_ws(j);
+        if (*j->p == '}') { ++j->p; break; }
+        char key[64];
+        if (!jp_string(j, key, sizeof(key))) break;
+        if (!jp_expect(j, ':')) break;
+        if (strcmp(key, "show_hidden") == 0) {
+            jp_field_bool(j, &s->show_hidden_files);
         } else {
             jp_skip_value(j);
         }
@@ -374,6 +442,8 @@ static void jp_parse_root(JP *j, SolSettings *s)
             jp_parse_appearance(j, s);
         } else if (strcmp(key, "editor") == 0) {
             jp_parse_editor(j, s);
+        } else if (strcmp(key, "explorer") == 0) {
+            jp_parse_explorer(j, s);
         } else {
             jp_skip_value(j);
         }
@@ -504,7 +574,12 @@ bool sol_settings_save(const SolSettings *settings)
         "    \"scrollbar_width\": %.2f\n"
         "  },\n"
         "  \"editor\": {\n"
-        "    \"autosave\": %s\n"
+        "    \"autosave\": %s,\n"
+        "    \"autosave_delay\": %.2f,\n"
+        "    \"caret_blink\": %s\n"
+        "  },\n"
+        "  \"explorer\": {\n"
+        "    \"show_hidden\": %s\n"
         "  }\n"
         "}\n",
         (double)settings->ui_scale,
@@ -517,7 +592,10 @@ bool sol_settings_save(const SolSettings *settings)
         (double)settings->titlebar_blur,
         (double)settings->panel_opacity,
         (double)settings->scrollbar_width,
-        settings->autosave_enabled ? "true" : "false");
+        settings->autosave_enabled ? "true" : "false",
+        (double)settings->autosave_delay,
+        settings->caret_blink ? "true" : "false",
+        settings->show_hidden_files ? "true" : "false");
 
     /* fflush + sync before replace: the atomic rename only guarantees the
        destination sees a complete *file*, and fflush only moves our

@@ -167,3 +167,15 @@ bool sol_ui_system_unregister_theme(SolUISystem *ui, const char *id)
 {
     return ui && sol_theme_unregister(ui->themes, id);
 }
+
+/* workspace.c owns the real accessors; the stubs keep the same contract
+   so sol_config.c can be linked against a calloc'd SolUISystem.      */
+SolModifierMask sol_ui_system_leader_modifier(const SolUISystem *ui)
+{
+    return ui ? ui->leader_modifier : SOL_MOD_NONE;
+}
+
+void sol_ui_system_set_leader_modifier(SolUISystem *ui, SolModifierMask mod)
+{
+    if (ui) ui->leader_modifier = mod;
+}
