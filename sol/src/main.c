@@ -2356,7 +2356,18 @@ fail:
 static void sol_project_activate(SolProjectHost *host, SolAppContext *app)
 {
     if (!app || host->active == app) return;
-    if (host->active) sol_ui_system_set_active(host->active->ui, false);
+    /* The shared router only forwards window resizes to the active project,
+       so the outgoing UI holds the authoritative window size. Hand it over
+       before switching; otherwise a project created or resized while in the
+       background lays out against stale extents (e.g. its buffer rows stop
+       short of a maximized window's bottom edge). */
+    int win_w = 0, win_h = 0;
+    if (host->active) {
+        sol_ui_system_window_size(host->active->ui, &win_w, &win_h);
+        sol_ui_system_set_active(host->active->ui, false);
+    }
+    if (win_w > 0 && win_h > 0)
+        sol_ui_system_on_window_resize(app->ui, win_w, win_h);
     host->active = app;
     sol_crash_track_events(app->events);
     if (!host->router)

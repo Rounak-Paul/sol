@@ -119,3 +119,10 @@
   (`18b6ece7d56c57053325d3a486324f43f5609acaf1d47d56e2a8dd991f262042`)
   byte-matches `bin/Sol.app`; binary contains the single "Settings..." label
   and no longer the Preferences.../Keybindings... menu labels.
+
+## Buffer-extents fix install — 2026-09-27
+
+- `cmake --build build-release` + `cmake --install build-release --prefix /Applications --component Sol`.
+- Installed executable (`9437f1dcbd2f6e5213561d44281de29e1c0f8f973ceed2733c25aecef052c14d`)
+  byte-matches `bin/Sol.app`; 13 plugins present. Includes the stale per-project window-size
+  handover and single-margin buffer-rect fix (see buffer-extents-stale-window-size-2026-09-27.md).

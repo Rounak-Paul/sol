@@ -147,7 +147,9 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     const float project_tabs_h = ui->project_tabs_builder ? SOL_UI_PROJECT_TABS_HEIGHT * scale : 0.0f;
     float root_y = title_h + panel_margin + project_tabs_h;
     float root_w = (float)ui->window_w - panel_margin * 2.0f;
-    float root_h = (float)ui->window_h - title_h - status_h - panel_margin * 2.0f - project_tabs_h;
+    /* .workspace-main-content pads top/left/right by the panel margin but
+       not the bottom, so only one margin is removed vertically. */
+    float root_h = (float)ui->window_h - title_h - status_h - panel_margin - project_tabs_h;
 
     if (root_w < 0.0f) root_w = 0.0f;
     if (root_h < 0.0f) root_h = 0.0f;
