@@ -130,3 +130,11 @@ system `libhvf` to satisfy the optional HVF module FreeType's `ftinit.c`
 references unconditionally) confirmed glyph coverage for all newly-added
 ranges in the emoji face before writing the fix. `cmake --build` and full
 `ctest` (14/14) pass after the change.
+
+## Mono symbols layer + grid snapping (2026-09-27)
+
+Superseded ordering: styled → regular → Causality Mono Symbols (JuliaMono
+subset) → Noto Emoji → DejaVu Sans → `?`. Fallback glyphs are snapped to the
+primary monospace cell × `ca_codepoint_cell_width`. The BMP emoji list that
+used to live in sol_terminal.c is replaced by generated UCD tables in
+Causality. Details: `terminal-glyph-grid-and-dim-2026-09-27.md`.

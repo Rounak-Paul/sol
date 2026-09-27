@@ -37,8 +37,9 @@ typedef enum SolTermColorMode {
     SOL_TERM_COLOR_RGB,            /* 24-bit true color */
 } SolTermColorMode;
 
+/* 4 bytes: stored per cell three times, so the mode is kept in a byte. */
 typedef struct SolTermColor {
-    SolTermColorMode mode;
+    uint8_t mode;                           /* SolTermColorMode */
     union {
         uint8_t index;                      /* SOL_TERM_COLOR_INDEXED */
         struct { uint8_t r, g, b; } rgb;    /* SOL_TERM_COLOR_RGB     */
@@ -57,11 +58,31 @@ typedef struct SolTermColor {
 #define SOL_TERM_ATTR_WIDE      (1u << 8)   /* double-width CJK character */
 #define SOL_TERM_ATTR_WIDE_TAIL (1u << 9)   /* trailing cell of a wide pair; not rendered */
 
+/* Underline style (SGR 4:n / 21), stored in attrs bits 10-12. Meaningful
+   only while SOL_TERM_ATTR_UNDERLINE is set. */
+#define SOL_TERM_ATTR_UL_SHIFT  10u
+#define SOL_TERM_ATTR_UL_MASK   (7u << SOL_TERM_ATTR_UL_SHIFT)
+
+typedef enum SolTermUnderlineStyle {
+    SOL_TERM_UNDERLINE_SINGLE = 0,
+    SOL_TERM_UNDERLINE_DOUBLE = 1,
+    SOL_TERM_UNDERLINE_CURLY  = 2,
+    SOL_TERM_UNDERLINE_DOTTED = 3,
+    SOL_TERM_UNDERLINE_DASHED = 4,
+} SolTermUnderlineStyle;
+
+/* Returns the underline style encoded in a cell's attrs. */
+static inline SolTermUnderlineStyle sol_term_underline_style(uint16_t attrs)
+{
+    return (SolTermUnderlineStyle)((attrs & SOL_TERM_ATTR_UL_MASK) >> SOL_TERM_ATTR_UL_SHIFT);
+}
+
 /* Atomic unit of the terminal grid. */
 typedef struct SolTermCell {
     uint32_t     codepoint;   /* Unicode codepoint; 0 = empty (renders as space) */
     SolTermColor fg;
     SolTermColor bg;
+    SolTermColor ul;          /* SGR 58 underline colour; DEFAULT = follow fg */
     uint16_t     attrs;       /* SOL_TERM_ATTR_* bitmask */
 } SolTermCell;
 

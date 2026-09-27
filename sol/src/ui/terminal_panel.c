@@ -17,6 +17,7 @@
 #include <causality.h>
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ================================================================== */
@@ -148,40 +149,76 @@ static void on_term_viewport_click(Ca_Button *btn, void *user_data)
 }
 
 /* ================================================================== */
-/* Cell attribute comparison                                           */
-/* ================================================================== */
-
-/* Two cells belong to the same run if their visual attributes match.
-   Only compares fg, bg, and relevant attr flags — codepoint is excluded. */
-static bool cells_same_run(const SolTermCell *a, const SolTermCell *b,
-                            bool a_is_cursor, bool b_is_cursor)
-{
-    if (a_is_cursor != b_is_cursor) return false;
-    if (a->fg.mode != b->fg.mode)   return false;
-    if (a->bg.mode != b->bg.mode)   return false;
-    if (a->attrs   != b->attrs)     return false;
-    switch (a->fg.mode) {
-    case SOL_TERM_COLOR_INDEXED: if (a->fg.index != b->fg.index) return false; break;
-    case SOL_TERM_COLOR_RGB:
-        if (a->fg.rgb.r != b->fg.rgb.r || a->fg.rgb.g != b->fg.rgb.g ||
-            a->fg.rgb.b != b->fg.rgb.b) return false;
-        break;
-    default: break;
-    }
-    switch (a->bg.mode) {
-    case SOL_TERM_COLOR_INDEXED: if (a->bg.index != b->bg.index) return false; break;
-    case SOL_TERM_COLOR_RGB:
-        if (a->bg.rgb.r != b->bg.rgb.r || a->bg.rgb.g != b->bg.rgb.g ||
-            a->bg.rgb.b != b->bg.rgb.b) return false;
-        break;
-    default: break;
-    }
-    return true;
-}
-
-/* ================================================================== */
 /* Row rendering                                                       */
 /* ================================================================== */
+
+/* Share of the foreground alpha kept for SGR 2 (faint) text. */
+#define TERM_DIM_ALPHA_NUM 3u
+#define TERM_DIM_ALPHA_DEN 5u
+
+#define TERM_STYLE_BASES        6u   /* 4 font variants + 2 cursor kinds */
+#define TERM_STYLE_DECORATIONS  4u   /* none, underline, strike, both    */
+#define TERM_STYLE_UL_STYLES    5u   /* SolTermUnderlineStyle values     */
+#define TERM_STYLE_MAX_LEN      96u
+
+/*
+ * Pick the CSS class list for a cell: font variant (or cursor kind), SGR 4 /
+ * SGR 9 decoration and the SGR 4:n underline style. Every combination is
+ * built once into a fixed table, so equal styles share one pointer and run
+ * boundaries can compare styles by pointer.
+ *
+ * attrs      Cell SOL_TERM_ATTR_* flags.
+ * is_cursor  Whether the cursor sits on the cell.
+ * focused    Whether the terminal panel has keyboard focus.
+ * Returns    Space-separated class names (static storage).
+ */
+static const char *term_cell_style(uint16_t attrs, bool is_cursor, bool focused)
+{
+    static const char *const bases[TERM_STYLE_BASES] = {
+        "term-cell", "term-cell-bold", "term-cell-italic", "term-cell-bold-italic",
+        "term-cursor-unfocused", "term-cursor-focused",
+    };
+    static const char *const decorations[TERM_STYLE_DECORATIONS] = {
+        "", " term-underline", " term-strike", " term-underline-strike",
+    };
+    static const char *const ul_styles[TERM_STYLE_UL_STYLES] = {
+        "", " term-ul-double", " term-ul-curly", " term-ul-dotted", " term-ul-dashed",
+    };
+    static char table[TERM_STYLE_BASES][TERM_STYLE_DECORATIONS][TERM_STYLE_UL_STYLES]
+                     [TERM_STYLE_MAX_LEN];
+    static bool built = false;
+    if (!built) {
+        for (size_t b = 0; b < TERM_STYLE_BASES; ++b)
+            for (size_t d = 0; d < TERM_STYLE_DECORATIONS; ++d)
+                for (size_t u = 0; u < TERM_STYLE_UL_STYLES; ++u)
+                    snprintf(table[b][d][u], TERM_STYLE_MAX_LEN, "%s%s%s",
+                             bases[b], decorations[d], (d & 1u) ? ul_styles[u] : "");
+        built = true;
+    }
+
+    const size_t base = is_cursor
+        ? (focused ? 5u : 4u)
+        : (((attrs & SOL_TERM_ATTR_BOLD)   ? 1u : 0u) |
+           ((attrs & SOL_TERM_ATTR_ITALIC) ? 2u : 0u));
+    const size_t decoration = ((attrs & SOL_TERM_ATTR_UNDERLINE) ? 1u : 0u) |
+                              ((attrs & SOL_TERM_ATTR_STRIKE)    ? 2u : 0u);
+    size_t ul_style = (decoration & 1u) ? (size_t)sol_term_underline_style(attrs) : 0u;
+    if (ul_style >= TERM_STYLE_UL_STYLES) ul_style = 0u;
+    return table[base][decoration][ul_style];
+}
+
+/*
+ * Apply SGR 2 (faint) to a foreground colour by reducing its alpha, so the
+ * text fades toward whatever panel background shows through it.
+ *
+ * rgba     Foreground colour as 0xRRGGBBAA.
+ * Returns  The same colour at TERM_DIM_ALPHA_NUM/DEN of its alpha.
+ */
+static uint32_t term_dim_rgba(uint32_t rgba)
+{
+    const uint32_t alpha = (rgba & 0xFFu) * TERM_DIM_ALPHA_NUM / TERM_DIM_ALPHA_DEN;
+    return (rgba & 0xFFFFFF00u) | alpha;
+}
 
 /* Maximum UTF-8 bytes per run: up to 256 cells × 4 bytes + NUL. */
 #define TERM_RUN_BUF_SIZE 1056
@@ -215,7 +252,7 @@ static void render_term_row(const SolTerminal *term, int row,
     int  run_len = 0;
 
     /* Determine effective fg/bg for the current run; rendered at run end. */
-    uint32_t run_fg = 0u, run_bg = 0u;
+    uint32_t run_fg = 0u, run_bg = 0u, run_ul = 0u;
     const char *run_style = "term-cell";
     bool run_started = false;
     bool prev_cursor = false;
@@ -255,25 +292,23 @@ static void render_term_row(const SolTerminal *term, int row,
             if (cell_bg == sol_term_color_to_rgba(&(SolTermColor){ .mode = SOL_TERM_COLOR_DEFAULT }, false)) {
                 cell_bg = 0u;   /* default bg → transparent (no overdraw) */
             }
+            if (cell->attrs & SOL_TERM_ATTR_DIM) cell_fg = term_dim_rgba(cell_fg);
         }
+        /* Explicit SGR 58 colour for the underline; 0 draws it in the text
+           colour, as does a cell without underline. */
+        const uint32_t cell_ul =
+            ((cell->attrs & SOL_TERM_ATTR_UNDERLINE) && cell->ul.mode != SOL_TERM_COLOR_DEFAULT)
+                ? sol_term_color_to_rgba(&cell->ul, true)
+                : 0u;
 
-        const char *cell_style;
-        if (is_cursor) {
-            cell_style = focused ? "term-cursor-focused" : "term-cursor-unfocused";
-        } else {
-            const bool bold   = (cell->attrs & SOL_TERM_ATTR_BOLD)   != 0u;
-            const bool italic = (cell->attrs & SOL_TERM_ATTR_ITALIC)  != 0u;
-            if (bold && italic) cell_style = "term-cell-bold-italic";
-            else if (bold)      cell_style = "term-cell-bold";
-            else if (italic)    cell_style = "term-cell-italic";
-            else                cell_style = "term-cell";
-        }
+        const char *cell_style = term_cell_style(cell->attrs, is_cursor, focused);
 
         /* Decide whether this cell continues the current run or starts a new one. */
         const bool new_run = !run_started ||
                              is_cursor != prev_cursor ||
                              cell_fg != run_fg ||
                              cell_bg != run_bg ||
+                             cell_ul != run_ul ||
                              cell_style != run_style ||
                              run_len >= TERM_RUN_BUF_SIZE - 6;
 
@@ -288,6 +323,7 @@ static void render_term_row(const SolTerminal *term, int row,
                 .text  = run_buf,
                 .style = run_style,
                 .color = run_fg,
+                .decoration_color = run_ul,
             });
             ca_div_end();
             run_len = 0;
@@ -296,6 +332,7 @@ static void render_term_row(const SolTerminal *term, int row,
         if (new_run || !run_started) {
             run_fg      = cell_fg;
             run_bg      = cell_bg;
+            run_ul      = cell_ul;
             run_style   = cell_style;
             run_started = true;
         }
@@ -324,6 +361,7 @@ static void render_term_row(const SolTerminal *term, int row,
             .text  = run_buf,
             .style = run_style,
             .color = run_fg,
+            .decoration_color = run_ul,
         });
         ca_div_end();
     }

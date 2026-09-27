@@ -126,3 +126,22 @@
 - Installed executable (`9437f1dcbd2f6e5213561d44281de29e1c0f8f973ceed2733c25aecef052c14d`)
   byte-matches `bin/Sol.app`; 13 plugins present. Includes the stale per-project window-size
   handover and single-margin buffer-rect fix (see buffer-extents-stale-window-size-2026-09-27.md).
+
+## 2026-09-27 layout-persistence release install
+
+- `cmake --build build-release -j` + `cmake --install build-release --prefix /Applications --component Sol`.
+- Installed executable (`d850498385f0e06fdf528c879a7db70112d554348dce0e608b5589de323f4227`) byte-matches `bin/Sol.app`
+  and contains the `sol.layout.changed` event. See `workspace-layout-persistence-2026-09-27.md`.
+- Note: the release build writes to `bin/Sol.app`, overwriting the Debug build there.
+
+## 2026-09-27 terminal glyph-grid release install
+
+- Same install flow; installed executable byte-matches `bin/Sol.app` and embeds
+  the "Causality Mono Symbols" face.
+
+## XTMODKEYS underline fix install — 2026-09-27
+
+- `cmake --build build-release -j` then `cmake --install build-release --prefix /Applications --component Sol`.
+  The installed executable (`721177049dcbac779128becb93fc7060b172c17b6c59de320ed7795346e9a299`) is byte-identical to `bin/Sol.app`.
+  It contains no debug instrumentation.
+- The running Sol keeps its old in-memory image until it is restarted.

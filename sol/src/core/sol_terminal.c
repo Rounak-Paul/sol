@@ -63,6 +63,8 @@ static uint8_t ansi_cube_to_byte(uint8_t v) { return v ? (uint8_t)(55 + v * 40) 
 #define SOL_TERM_DEFAULT_COLS        80
 #define SOL_TERM_DEFAULT_ROWS        24
 #define SOL_TERM_MAX_PARAMS          16
+/* Numeric parameters saturate here instead of overflowing int. */
+#define SOL_TERM_MAX_PARAM_VALUE     65535
 #define SOL_TERM_SCROLLBACK_MAX    5000
 #define SOL_TERM_OUTPUT_RING_SIZE 524288   /* 512 KB — handles large cmatrix bursts */
 #define SOL_TERM_TITLE_MAX           256
@@ -198,6 +200,9 @@ struct SolTerminal {
     char         vt_intermediate[4];
     int          vt_n_intermediate;
     int          vt_params[SOL_TERM_MAX_PARAMS];
+    /* true when vt_params[i] is a ':'-separated sub-parameter of the
+       preceding parameter (ITU T.416 form, e.g. SGR 4:3 or 38:2::r:g:b). */
+    bool         vt_param_sub[SOL_TERM_MAX_PARAMS];
     int          vt_n_params;
     bool         vt_dcs_private;    /* '?' prefix in DEC mode sets */
     uint8_t      vt_csi_marker;     /* CSI private-marker byte seen: 0, '?', '<', '=', '>' */
@@ -516,98 +521,25 @@ static void term_new_line(SolTerminal *term)
 }
 
 /*
- * Return true if a codepoint occupies two terminal columns.
- *
- * Covers the East Asian Wide and Fullwidth ranges plus the emoji blocks
- * that terminals conventionally render double-width, per Unicode TR11.
- *
- * cp       Unicode codepoint.
- * Returns  true for double-width codepoints, false otherwise.
- */
-/*
- * BMP legacy symbols with default Emoji_Presentation=Yes (Unicode emoji-data.txt):
- * these render as an emoji glyph without needing a VS16 selector, so terminals
- * measure them as double-width. Deliberately narrower than the Misc Symbols
- * (2600-26FF) / Dingbats (2700-27BF) / Misc Symbols and Arrows (2B00-2BFF)
- * blocks that contain them — most codepoints in those blocks are
- * Emoji_Presentation=No (text-default, e.g. suit symbols, plain arrows) and
- * must stay single-width; only VS16 (U+FE0F) would widen those, which this
- * terminal does not track as a separate combining step.
- */
-static bool term_codepoint_is_bmp_wide_emoji(uint32_t cp)
-{
-    return (cp >= 0x231Au && cp <= 0x231Bu) ||  /* watch, hourglass done   */
-           (cp >= 0x23E9u && cp <= 0x23ECu) ||  /* fast-forward..fast down */
-           cp == 0x23F0u ||                     /* alarm clock             */
-           cp == 0x23F3u ||                     /* hourglass not done      */
-           (cp >= 0x25FDu && cp <= 0x25FEu) ||  /* medium-small squares    */
-           (cp >= 0x2614u && cp <= 0x2615u) ||  /* umbrella, hot beverage  */
-           (cp >= 0x2648u && cp <= 0x2653u) ||  /* zodiac (Aries..Pisces)  */
-           cp == 0x267Fu ||                     /* wheelchair symbol       */
-           cp == 0x2693u ||                     /* anchor                  */
-           cp == 0x26A1u ||                     /* high voltage            */
-           (cp >= 0x26AAu && cp <= 0x26ABu) ||  /* white/black circle      */
-           (cp >= 0x26BDu && cp <= 0x26BEu) ||  /* soccer ball, baseball   */
-           (cp >= 0x26C4u && cp <= 0x26C5u) ||  /* snowman, sun+cloud      */
-           cp == 0x26CEu ||                     /* Ophiuchus               */
-           cp == 0x26D4u ||                     /* no entry                */
-           cp == 0x26EAu ||                     /* church                  */
-           (cp >= 0x26F2u && cp <= 0x26F3u) ||  /* fountain, flag in hole  */
-           cp == 0x26F5u ||                     /* sailboat                */
-           cp == 0x26FAu ||                     /* tent                    */
-           cp == 0x26FDu ||                     /* fuel pump               */
-           cp == 0x2705u ||                     /* check mark button       */
-           (cp >= 0x270Au && cp <= 0x270Bu) ||  /* raised fist, raised hand*/
-           cp == 0x2728u ||                     /* sparkles                */
-           cp == 0x274Cu ||                     /* cross mark              */
-           cp == 0x274Eu ||                     /* cross mark button       */
-           (cp >= 0x2753u && cp <= 0x2755u) ||  /* red question..white excl*/
-           cp == 0x2757u ||                     /* red exclamation mark    */
-           (cp >= 0x2795u && cp <= 0x2797u) ||  /* plus, minus, divide     */
-           cp == 0x27B0u ||                     /* curly loop              */
-           cp == 0x27BFu ||                     /* double curly loop       */
-           (cp >= 0x2B1Bu && cp <= 0x2B1Cu) ||  /* black/white large square*/
-           cp == 0x2B50u ||                     /* star                    */
-           cp == 0x2B55u;                       /* hollow red circle       */
-}
-
-static bool term_codepoint_is_wide(uint32_t cp)
-{
-    return (cp >= 0x1100u  && cp <= 0x115Fu) ||  /* Hangul Jamo init.    */
-           (cp >= 0x2E80u  && cp <= 0x303Eu) ||  /* CJK radicals, Kangxi */
-           (cp >= 0x3041u  && cp <= 0x33FFu) ||  /* Kana, CJK compat     */
-           (cp >= 0x3400u  && cp <= 0x4DBFu) ||  /* CJK ext A            */
-           (cp >= 0x4E00u  && cp <= 0x9FFFu) ||  /* CJK unified          */
-           (cp >= 0xA000u  && cp <= 0xA4CFu) ||  /* Yi                   */
-           (cp >= 0xAC00u  && cp <= 0xD7A3u) ||  /* Hangul syllables     */
-           (cp >= 0xF900u  && cp <= 0xFAFFu) ||  /* CJK compat ideograph */
-           (cp >= 0xFE30u  && cp <= 0xFE6Fu) ||  /* CJK compat forms     */
-           (cp >= 0xFF00u  && cp <= 0xFF60u) ||  /* Fullwidth forms      */
-           (cp >= 0xFFE0u  && cp <= 0xFFE6u) ||  /* Fullwidth signs      */
-           term_codepoint_is_bmp_wide_emoji(cp) ||
-           (cp >= 0x1F300u && cp <= 0x1F64Fu) || /* Misc symbols, emoji  */
-           (cp >= 0x1F680u && cp <= 0x1F6FFu) || /* Transport and map    */
-           (cp >= 0x1F900u && cp <= 0x1F9FFu) || /* Supplemental symbols */
-           (cp >= 0x1FA00u && cp <= 0x1FAFFu) || /* Symbols/Pictographs Ext-A */
-           (cp >= 0x20000u && cp <= 0x3FFFDu);   /* CJK ext B and beyond */
-}
-
-/*
  * Write a codepoint into the current cursor cell and advance the cursor.
  *
  * Double-width codepoints occupy two cells: the lead cell carries the
  * codepoint and SOL_TERM_ATTR_WIDE, the trailing cell is marked
  * SOL_TERM_ATTR_WIDE_TAIL and is skipped by the renderer. A wide glyph
  * that would straddle the right margin wraps to the next line instead of
- * being split.
+ * being split. Widths come from ca_codepoint_cell_width, the same table the
+ * font renderer snaps glyph advances to; zero-width codepoints (combining
+ * marks, ZWJ, variation selectors) occupy no cell and are dropped, since a
+ * cell holds a single codepoint.
  *
  * term       Terminal.
  * codepoint  Unicode codepoint to write.
  */
 static void term_put_char(SolTerminal *term, uint32_t codepoint)
 {
-    const bool wide = term_codepoint_is_wide(codepoint);
-    const int  width = wide ? 2 : 1;
+    const int width = ca_codepoint_cell_width(codepoint);
+    if (width == 0) return;
+    const bool wide = width == 2;
 
     if (term->pending_wrap && term->mode_autowrap) {
         term->screen[term->cur_row].cells[term->cols - 1].attrs &=
@@ -698,6 +630,88 @@ static void vt_execute(SolTerminal *term, uint8_t byte)
 /* VT — SGR (Select Graphic Rendition) attribute handler               */
 /* ================================================================== */
 
+/*
+ * Parse an extended colour (SGR 38 / 48 / 58) starting at params[i].
+ *
+ * Accepts both encodings: the ';' form (38;5;n and 38;2;r;g;b, whose values
+ * are separate parameters) and the ':' sub-parameter form (38:5:n,
+ * 38:2:r:g:b and 38:2:colorspace:r:g:b).
+ *
+ * term     Terminal whose parsed CSI parameters are read.
+ * i        Index of the 38/48/58 parameter.
+ * out      Receives the colour when one was decoded.
+ * Returns  Index of the last parameter consumed.
+ */
+static int vt_sgr_extended_color(const SolTerminal *term, int i, SolTermColor *out)
+{
+    const int  n = term->vt_n_params;
+    const int *p = term->vt_params;
+    int subs = 0;
+    while (i + subs + 1 < n && term->vt_param_sub[i + subs + 1]) subs++;
+
+    int mode_at, r_at = -1, index_at = -1, last;
+    if (subs > 0) {
+        mode_at = i + 1;
+        last    = i + subs;
+        if (p[mode_at] == 5 && subs >= 2)      index_at = i + 2;
+        else if (p[mode_at] == 2 && subs >= 5) r_at = i + 3;
+        else if (p[mode_at] == 2 && subs == 4) r_at = i + 2;
+    } else {
+        mode_at = i + 1;
+        last    = i;
+        if (mode_at < n && p[mode_at] == 5 && i + 2 < n) {
+            index_at = i + 2;
+            last = i + 2;
+        } else if (mode_at < n && p[mode_at] == 2 && i + 4 < n) {
+            r_at = i + 2;
+            last = i + 4;
+        }
+    }
+    if (index_at >= 0) {
+        out->mode  = SOL_TERM_COLOR_INDEXED;
+        out->index = (uint8_t)(p[index_at] > 255 ? 255 : p[index_at]);
+    } else if (r_at >= 0) {
+        out->mode  = SOL_TERM_COLOR_RGB;
+        out->rgb.r = (uint8_t)(p[r_at]     > 255 ? 255 : p[r_at]);
+        out->rgb.g = (uint8_t)(p[r_at + 1] > 255 ? 255 : p[r_at + 1]);
+        out->rgb.b = (uint8_t)(p[r_at + 2] > 255 ? 255 : p[r_at + 2]);
+    }
+    return last;
+}
+
+/*
+ * Turn underline on in the current pen with the given style.
+ *
+ * term   Terminal whose pen is updated.
+ * style  Underline style to record in the attrs style bits.
+ */
+static void vt_sgr_set_underline(SolTerminal *term, SolTermUnderlineStyle style)
+{
+    term->cur_attrs.attrs = (uint16_t)((term->cur_attrs.attrs & ~SOL_TERM_ATTR_UL_MASK) |
+                                       SOL_TERM_ATTR_UNDERLINE |
+                                       ((unsigned)style << SOL_TERM_ATTR_UL_SHIFT));
+}
+
+/*
+ * Turn underline off in the current pen and reset its style bits.
+ *
+ * term  Terminal whose pen is updated.
+ */
+static void vt_sgr_clear_underline(SolTerminal *term)
+{
+    term->cur_attrs.attrs &= (uint16_t)~(SOL_TERM_ATTR_UNDERLINE | SOL_TERM_ATTR_UL_MASK);
+}
+
+/*
+ * Apply an SGR (CSI ... m) sequence to the terminal's current pen.
+ *
+ * Sub-parameters (':') attach to the parameter before them: SGR 4:0 turns
+ * underline off and 4:1..4:5 select single, double, curly, dotted and
+ * dashed underline (21 is double); sub-parameters of other attributes are
+ * skipped.
+ *
+ * term  Terminal whose parsed CSI parameters and pen are used.
+ */
 static void vt_sgr(SolTerminal *term)
 {
     int n = term->vt_n_params;
@@ -706,7 +720,9 @@ static void vt_sgr(SolTerminal *term)
     if (n == 0) { p[0] = 0; n = 1; }
 
     for (int i = 0; i < n; ++i) {
-        int v = p[i];
+        if (term->vt_param_sub[i]) continue;
+        const int v = p[i];
+        const bool has_sub = i + 1 < n && term->vt_param_sub[i + 1];
         switch (v) {
         case 0:
             memset(&term->cur_attrs, 0, sizeof(term->cur_attrs));
@@ -716,14 +732,20 @@ static void vt_sgr(SolTerminal *term)
         case 1: term->cur_attrs.attrs |= SOL_TERM_ATTR_BOLD;      break;
         case 2: term->cur_attrs.attrs |= SOL_TERM_ATTR_DIM;       break;
         case 3: term->cur_attrs.attrs |= SOL_TERM_ATTR_ITALIC;    break;
-        case 4: term->cur_attrs.attrs |= SOL_TERM_ATTR_UNDERLINE; break;
+        case 4:
+            if (!has_sub)             vt_sgr_set_underline(term, SOL_TERM_UNDERLINE_SINGLE);
+            else if (p[i + 1] == 0)   vt_sgr_clear_underline(term);
+            else if (p[i + 1] <= 5)   vt_sgr_set_underline(term, (SolTermUnderlineStyle)(p[i + 1] - 1));
+            else                      vt_sgr_set_underline(term, SOL_TERM_UNDERLINE_SINGLE);
+            break;
         case 5: term->cur_attrs.attrs |= SOL_TERM_ATTR_BLINK;     break;
         case 7: term->cur_attrs.attrs |= SOL_TERM_ATTR_REVERSE;   break;
         case 8: term->cur_attrs.attrs |= SOL_TERM_ATTR_INVISIBLE; break;
         case 9: term->cur_attrs.attrs |= SOL_TERM_ATTR_STRIKE;    break;
+        case 21: vt_sgr_set_underline(term, SOL_TERM_UNDERLINE_DOUBLE); break;
         case 22: term->cur_attrs.attrs &= (uint16_t)~(SOL_TERM_ATTR_BOLD | SOL_TERM_ATTR_DIM); break;
         case 23: term->cur_attrs.attrs &= (uint16_t)~SOL_TERM_ATTR_ITALIC;    break;
-        case 24: term->cur_attrs.attrs &= (uint16_t)~SOL_TERM_ATTR_UNDERLINE; break;
+        case 24: vt_sgr_clear_underline(term); break;
         case 25: term->cur_attrs.attrs &= (uint16_t)~SOL_TERM_ATTR_BLINK;     break;
         case 27: term->cur_attrs.attrs &= (uint16_t)~SOL_TERM_ATTR_REVERSE;   break;
         case 28: term->cur_attrs.attrs &= (uint16_t)~SOL_TERM_ATTR_INVISIBLE; break;
@@ -734,17 +756,7 @@ static void vt_sgr(SolTerminal *term)
             term->cur_attrs.fg.index = (uint8_t)(v - 30);
             break;
         case 38:
-            if (i + 2 < n && p[i+1] == 5) {
-                term->cur_attrs.fg.mode  = SOL_TERM_COLOR_INDEXED;
-                term->cur_attrs.fg.index = (uint8_t)p[i+2];
-                i += 2;
-            } else if (i + 4 < n && p[i+1] == 2) {
-                term->cur_attrs.fg.mode    = SOL_TERM_COLOR_RGB;
-                term->cur_attrs.fg.rgb.r   = (uint8_t)p[i+2];
-                term->cur_attrs.fg.rgb.g   = (uint8_t)p[i+3];
-                term->cur_attrs.fg.rgb.b   = (uint8_t)p[i+4];
-                i += 4;
-            }
+            i = vt_sgr_extended_color(term, i, &term->cur_attrs.fg);
             break;
         case 39:
             term->cur_attrs.fg.mode = SOL_TERM_COLOR_DEFAULT;
@@ -755,20 +767,16 @@ static void vt_sgr(SolTerminal *term)
             term->cur_attrs.bg.index = (uint8_t)(v - 40);
             break;
         case 48:
-            if (i + 2 < n && p[i+1] == 5) {
-                term->cur_attrs.bg.mode  = SOL_TERM_COLOR_INDEXED;
-                term->cur_attrs.bg.index = (uint8_t)p[i+2];
-                i += 2;
-            } else if (i + 4 < n && p[i+1] == 2) {
-                term->cur_attrs.bg.mode    = SOL_TERM_COLOR_RGB;
-                term->cur_attrs.bg.rgb.r   = (uint8_t)p[i+2];
-                term->cur_attrs.bg.rgb.g   = (uint8_t)p[i+3];
-                term->cur_attrs.bg.rgb.b   = (uint8_t)p[i+4];
-                i += 4;
-            }
+            i = vt_sgr_extended_color(term, i, &term->cur_attrs.bg);
             break;
         case 49:
             term->cur_attrs.bg.mode = SOL_TERM_COLOR_DEFAULT;
+            break;
+        case 58:
+            i = vt_sgr_extended_color(term, i, &term->cur_attrs.ul);
+            break;
+        case 59:
+            term->cur_attrs.ul.mode = SOL_TERM_COLOR_DEFAULT;
             break;
         /* Bright fg: 90-97 */
         case 90: case 91: case 92: case 93:
@@ -1172,7 +1180,11 @@ static void vt_csi_dispatch(SolTerminal *term, uint8_t final)
 
     /* ---- SGR ---- */
     case 'm':
-        vt_sgr(term);
+        /* Only an unmarked CSI ... m is SGR. Marked forms are other
+           controls: CSI > Pp ; Pv m (XTMODKEYS, sent by Claude Code as
+           CSI > 4 m) and CSI ? Pp m (XTQMODKEYS); applying them as SGR
+           would turn on underline for all following text. */
+        if (term->vt_csi_marker == 0) vt_sgr(term);
         break;
 
     /* ---- Scroll region (DECSTBM) ---- */
@@ -1411,6 +1423,7 @@ static void vt_process_byte(SolTerminal *term, uint8_t byte)
             term->vt_n_intermediate = 0;
             term->vt_dcs_private = false;
             memset(term->vt_params, 0, sizeof(term->vt_params));
+            memset(term->vt_param_sub, 0, sizeof(term->vt_param_sub));
         } else if (byte == ']') {
             term->vt_state  = VT_OSC_STRING;
             term->osc_len   = 0;
@@ -1448,6 +1461,7 @@ static void vt_process_byte(SolTerminal *term, uint8_t byte)
     case VT_CSI_ENTRY:
         term->vt_n_params = 0;
         memset(term->vt_params, 0, sizeof(term->vt_params));
+        memset(term->vt_param_sub, 0, sizeof(term->vt_param_sub));
         term->vt_n_intermediate = 0;
         term->vt_dcs_private    = false;
         term->vt_csi_marker     = 0;
@@ -1461,9 +1475,14 @@ static void vt_process_byte(SolTerminal *term, uint8_t byte)
         } else if (byte >= '0' && byte <= '9') {
             if (term->vt_n_params == 0) term->vt_n_params = 1;
             int *last = &term->vt_params[term->vt_n_params - 1];
-            *last = *last * 10 + (byte - '0');
-        } else if (byte == ';') {
-            if (term->vt_n_params < SOL_TERM_MAX_PARAMS) term->vt_n_params++;
+            if (*last < SOL_TERM_MAX_PARAM_VALUE)
+                *last = *last * 10 + (byte - '0');
+        } else if (byte == ';' || byte == ':') {
+            if (term->vt_n_params == 0) term->vt_n_params = 1;
+            if (term->vt_n_params < SOL_TERM_MAX_PARAMS) {
+                term->vt_param_sub[term->vt_n_params] = (byte == ':');
+                term->vt_n_params++;
+            }
         } else if (byte >= 0x40 && byte <= 0x7E) {
             if (term->vt_n_params == 0) term->vt_n_params = 1;
             vt_csi_dispatch(term, byte);

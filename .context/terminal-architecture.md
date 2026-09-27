@@ -34,27 +34,22 @@ Handled sequences: cursor movement (A-H,f,G,d), erase (J,K,X), insert/delete (L,
 scroll (S,T), SGR (m), modes (h/l + DEC private ?), DECSTBM (r), save/restore (s/u, ESC 7/8),
 OSC title (0/1/2), C0 controls, alt screen (?1049h/l), DA, CPR.
 
-## Double-Width Characters
+## Cell Widths
 
-`term_codepoint_is_wide()` classifies East Asian Wide/Fullwidth ranges and the emoji
-blocks per Unicode TR11. Wide codepoints occupy two cells:
+`term_put_char` asks Causality's `ca_codepoint_cell_width()` (generated UCD
+tables; see `terminal-glyph-grid-and-dim-2026-09-27.md`). Width 2 codepoints
+occupy two cells:
 - Lead cell: the codepoint + `SOL_TERM_ATTR_WIDE`.
 - Trailing cell: `SOL_TERM_ATTR_WIDE_TAIL`, codepoint 0.
-
-Emoji width is split across two pieces: the contiguous SMP blocks
-(U+1F300+) plus `term_codepoint_is_bmp_wide_emoji()` for the sparse set of
-BMP legacy codepoints with `Emoji_Presentation=Yes` (U+23E9 fast-forward,
-U+2705 check mark, U+2B50 star, etc. — see [[causality-font-fallback]]'s
-"BMP legacy-emoji column desync" entry for why this had to be a precise
-codepoint list rather than whole-block ranges).
+Width 0 codepoints (combining marks, ZWJ, variation selectors) are dropped.
+The font renderer snaps fallback-face glyph advances to the same widths, so
+attribute runs stay column-aligned.
 
 `terminal_panel.c` skips WIDE_TAIL cells (unless the cursor is on one) so the run
 builder does not emit a spurious space and desync the row. A wide glyph never
 straddles the right margin: it wraps when autowrap is on, and is dropped otherwise.
 `blank_cell()` zeroes attrs, so all erase paths clear both flags.
-
-Note: the fonts embedded in Causality do not currently contain CJK glyphs, so those
-codepoints still rasterize as `?` — but the grid geometry is now correct.
+SGR 2 (dim) renders as the foreground at 3/5 alpha.
 
 ## Cell Grid Model
 
