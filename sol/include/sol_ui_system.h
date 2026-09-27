@@ -8,6 +8,7 @@
 
 #include "sol_buffer.h"
 #include "sol_input.h"
+#include "sol_layout.h"
 #include "sol_theme.h"
 
 typedef struct SolUISystem SolUISystem;
@@ -552,6 +553,34 @@ SolTerminalManager *sol_ui_system_terminal_manager(const SolUISystem *ui);
  * ui  The UI system.
  */
 void sol_ui_system_terminal_notify(SolUISystem *ui);
+
+/*
+ * Move the attached terminal panel to pos, redraw it, and publish
+ * SOL_EVENT_LAYOUT_CHANGED. No-op without a terminal manager.
+ *
+ * ui   The UI system.
+ * pos  New dock position.
+ */
+void sol_ui_system_set_terminal_position(SolUISystem *ui, SolTerminalPosition pos);
+
+/*
+ * Snapshot the current workspace arrangement.
+ *
+ * ui   The UI system to read.
+ * out  Receives the arrangement; defaults are used for absent parts
+ *      (e.g. no terminal manager attached).
+ */
+void sol_ui_system_get_layout(const SolUISystem *ui, SolLayout *out);
+
+/*
+ * Apply a saved workspace arrangement (sanitized first). Attach the
+ * terminal manager beforehand so its dock position and size are applied.
+ * Does not publish SOL_EVENT_LAYOUT_CHANGED.
+ *
+ * ui      The UI system to update.
+ * layout  Arrangement to apply.
+ */
+void sol_ui_system_apply_layout(SolUISystem *ui, const SolLayout *layout);
 
 /*
  * Set terminal keyboard focus, firing the focus-gain callback when gaining

@@ -453,6 +453,10 @@ struct SolUISystem {
        panel keeps its width across reactive rebuilds. Default 0.20. */
     float tree_panel_ratio;
 
+    /* Search-window results/preview split ratio, kept here so it survives
+       search-window rebuilds and reopen, and is part of the saved layout. */
+    float search_split_ratio;
+
     /* Background effect registry — NULL until sol_ui_system_set_bg_effects is called.
        The registry owns the active effect lifecycle and the Vulkan pipeline. */
     struct SolBgEffectRegistry *bg_effects;
@@ -500,6 +504,14 @@ struct SolUISystem {
  * sig  Causality signal to increment.
  */
 void sol_ui_bump_u32(Ca_Signal *sig);
+
+/*
+ * Publish SOL_EVENT_LAYOUT_CHANGED on the UI's project event bus after a
+ * user-driven arrangement change (splitter drag or terminal dock move).
+ *
+ * ui  The UI system whose layout changed.
+ */
+void sol_ui_publish_layout_changed(SolUISystem *ui);
 
 /*
  * Open the search window in file mode (search for files by name).

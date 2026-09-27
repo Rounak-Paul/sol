@@ -30,7 +30,7 @@ static void project_test_frame(SolProjectHost *host)
 int main(int argc, char **argv)
 {
     CHECK(argc == 3);
-    SolProjectHost host = { .argc = argc, .argv = argv };
+    SolProjectHost host = { .argc = argc, .argv = argv, .layout = sol_layout_defaults() };
     host.instance = ca_instance_create(&(Ca_InstanceDesc){ .app_name = "Sol project tests" });
     CHECK(host.instance);
     host.window = ca_window_create(host.instance, &(Ca_WindowDesc){
@@ -83,6 +83,17 @@ int main(int argc, char **argv)
     CHECK(strcmp(sol_ui_system_file_tree_root(a->ui), argv[1]) == 0);
     CHECK(strcmp(sol_ui_system_file_tree_root(b->ui), argv[2]) == 0);
 
+    /* Layout: a UI rearrangement reaches the host through the project event
+       bus, is persisted once flushed, and seeds projects created later. */
+    sol_ui_system_set_terminal_position(a->ui, SOL_TERMINAL_POSITION_RIGHT);
+    project_test_frame(&host);
+    CHECK(host.layout.terminal_position == SOL_TERMINAL_POSITION_RIGHT);
+    CHECK(host.layout_save_deadline_ns != 0u);
+    sol_layout_flush(&host, true);
+    CHECK(host.layout_save_deadline_ns == 0u);
+    SolLayout saved;
+    CHECK(sol_layout_load(&saved) && saved.terminal_position == SOL_TERMINAL_POSITION_RIGHT);
+
     /* Session switcher (L s s): opens once, lists both live projects,
        defaults selection to the active one, and jumping via the detail
        panel's action both activates the target and closes the window. */
@@ -117,6 +128,7 @@ int main(int argc, char **argv)
     CHECK(host.projects && host.projects != a && host.active == host.projects);
     CHECK(sol_buffer_count(host.active->buffers) == 0);
     CHECK(sol_terminal_manager_count(host.active->terminal_mgr) == 0);
+    CHECK(sol_terminal_manager_position(host.active->terminal_mgr) == SOL_TERMINAL_POSITION_RIGHT);
     sol_input_router_destroy(host.router);
     sol_crash_track_events(NULL);
     sol_project_destroy(host.projects);

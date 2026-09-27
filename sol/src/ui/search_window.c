@@ -415,6 +415,21 @@ static void search_on_row_click(Ca_Button *button, void *user_data)
 }
 
 /*
+ * Store the dragged results/preview split so it survives rebuilds and is
+ * saved with the workspace layout.
+ *
+ * ratio      Results list's new fraction of the split width.
+ * user_data  The SolSearchWindow owning the split.
+ */
+static void search_on_split_resize(float ratio, void *user_data)
+{
+    SolSearchWindow *w = (SolSearchWindow *)user_data;
+    if (!w || !w->ui || w->ui->search_split_ratio == ratio) return;
+    w->ui->search_split_ratio = ratio;
+    sol_ui_publish_layout_changed(w->ui);
+}
+
+/*
  * Handle query input changes.  For file-name mode, re-runs the synchronous
  * search immediately; for contents mode, cancels any running worker and
  * schedules a new search on the next frame tick.
@@ -610,11 +625,13 @@ static void search_content_builder(Ca_Div *div, void *user_data)
 
     ca_split_begin(&(Ca_SplitDesc){
         .direction = CA_HORIZONTAL,
-        .ratio = 0.36f,
-        .min_ratio = 0.24f,
-        .max_ratio = 0.62f,
+        .ratio = w->ui->search_split_ratio,
+        .min_ratio = SOL_LAYOUT_SEARCH_RATIO_MIN,
+        .max_ratio = SOL_LAYOUT_SEARCH_RATIO_MAX,
         .bar_size = 1.0f,
         .style = "search-split",
+        .on_resize = search_on_split_resize,
+        .user_data = w,
     });
     {
         ca_div_begin(&(Ca_DivDesc){

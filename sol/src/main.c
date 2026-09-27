@@ -42,6 +42,7 @@
 #include "sol_input.h"
 #include "sol_input_router.h"
 #include "sol_job.h"
+#include "sol_layout.h"
 #include "sol_platform.h"
 #include "sol_bg_effect.h"
 #include "sol_settings.h"
@@ -173,6 +174,7 @@ typedef struct SolAppContext {
     SolSettings           settings;
     SolSubscriptionToken  text_edited_token;
     SolSubscriptionToken  bindings_token;
+    SolSubscriptionToken  layout_token;
     /* Autosave debounce: bumped to (edit time + delay) on every text edit
        while autosave is enabled; the frame loop sweeps all dirty buffers
        once this deadline passes. 0 means no autosave is pending. A single
@@ -217,6 +219,11 @@ struct SolProjectHost {
     SolProjectSwitcher *switcher;
     char recent_sessions[SOL_UI_RECENT_SESSION_LIMIT][4096];
     size_t recent_session_count;
+    /* Last workspace arrangement any project reported; seeds every new
+       project and is written to disk once layout_save_deadline_ns passes
+       (0 = nothing pending), so a splitter drag saves once, not per frame. */
+    SolLayout layout;
+    uint64_t layout_save_deadline_ns;
     int argc;
     char **argv;
 };
@@ -1986,29 +1993,26 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
         }
 
         if (strcmp(p->action, "terminal.position.bottom") == 0) {
-            sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_BOTTOM);
+            sol_ui_system_set_terminal_position(app->ui, SOL_TERMINAL_POSITION_BOTTOM);
             if (sol_terminal_manager_visible(mgr)) {
                 sol_ui_system_terminal_set_focused(app->ui, true);
             }
-            sol_ui_system_terminal_notify(app->ui);
             return true;
         }
 
         if (strcmp(p->action, "terminal.position.right") == 0) {
-            sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_RIGHT);
+            sol_ui_system_set_terminal_position(app->ui, SOL_TERMINAL_POSITION_RIGHT);
             if (sol_terminal_manager_visible(mgr)) {
                 sol_ui_system_terminal_set_focused(app->ui, true);
             }
-            sol_ui_system_terminal_notify(app->ui);
             return true;
         }
 
         if (strcmp(p->action, "terminal.position.float") == 0) {
-            sol_terminal_manager_set_position(mgr, SOL_TERMINAL_POSITION_FLOAT);
+            sol_ui_system_set_terminal_position(app->ui, SOL_TERMINAL_POSITION_FLOAT);
             if (sol_terminal_manager_visible(mgr)) {
                 sol_ui_system_terminal_set_focused(app->ui, true);
             }
-            sol_ui_system_terminal_notify(app->ui);
             return true;
         }
 
@@ -2254,6 +2258,43 @@ static bool sol_on_bindings_changed(const SolEvent *event, void *user_data)
     return false;
 }
 
+/* Quiet period after the last layout change before it is written to disk. */
+#define SOL_LAYOUT_SAVE_DEBOUNCE_S 0.5
+
+/*
+ * Adopt a project's rearranged workspace as the host layout and schedule
+ * a debounced save.
+ *
+ * event      SOL_EVENT_LAYOUT_CHANGED (no payload).
+ * user_data  The SolAppContext whose UI changed.
+ * Returns    false so other subscribers still receive the event.
+ */
+static bool sol_on_layout_changed(const SolEvent *event, void *user_data)
+{
+    (void)event;
+    SolAppContext *app = (SolAppContext *)user_data;
+    if (!app || !app->host || !app->ui) return false;
+    sol_ui_system_get_layout(app->ui, &app->host->layout);
+    app->host->layout_save_deadline_ns = sol_platform_now_monotonic_ns() +
+        (uint64_t)(SOL_LAYOUT_SAVE_DEBOUNCE_S * 1e9);
+    ca_instance_request_frame_after(app->instance, SOL_LAYOUT_SAVE_DEBOUNCE_S);
+    return false;
+}
+
+/*
+ * Write the host layout once its debounce deadline has passed.
+ *
+ * host   Project host owning the layout.
+ * force  Save any pending change immediately (used at shutdown).
+ */
+static void sol_layout_flush(SolProjectHost *host, bool force)
+{
+    if (!host || host->layout_save_deadline_ns == 0u) return;
+    if (!force && sol_platform_now_monotonic_ns() < host->layout_save_deadline_ns) return;
+    host->layout_save_deadline_ns = 0u;
+    sol_layout_save(&host->layout);
+}
+
 /** Create an isolated project runtime for path; NULL creates an empty project. */
 static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
 {
@@ -2318,12 +2359,16 @@ static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
     app->bindings_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
         .event_name = SOL_EVENT_BINDINGS_CHANGED, .handler = sol_on_bindings_changed, .user_data = app,
     });
+    app->layout_token = sol_event_bus_subscribe(app->events, &(SolEventSubscriptionDesc){
+        .event_name = SOL_EVENT_LAYOUT_CHANGED, .handler = sol_on_layout_changed, .user_data = app,
+    });
     sol_register_default_command_flows(app->ui);
     sol_reload_bindings(app);
     sol_register_workspace_menu_items(app->ui);
     app->terminal_mgr = sol_terminal_manager_create(host->instance);
     if (!app->terminal_mgr) goto fail;
     sol_ui_system_set_terminal_manager(app->ui, app->terminal_mgr);
+    sol_ui_system_apply_layout(app->ui, &host->layout);
     sol_terminal_manager_set_clipboard_write(app->terminal_mgr, sol_on_terminal_clipboard_write, host->window);
     app->bg_effects = sol_bg_effect_registry_create(host->instance);
     if (app->bg_effects) {
@@ -2914,6 +2959,7 @@ int main(int argc, char **argv)
     char *cache = sol_config_path("shader_cache");
     SolProjectHost host = { .argc = argc, .argv = argv };
     sol_recent_load(&host);
+    sol_layout_load(&host.layout);
     host.instance = ca_instance_create(&(Ca_InstanceDesc){
         .app_name = "Sol", .prefer_dedicated_gpu = true,
         .default_ui_scale = settings.ui_scale, .shader_cache_dir = cache,
@@ -2950,7 +2996,9 @@ int main(int argc, char **argv)
         }
         sol_project_switcher_tick(&host);
         sol_project_apply_requests(&host);
+        sol_layout_flush(&host, false);
     }
+    sol_layout_flush(&host, true);
     sol_project_switcher_destroy(host.switcher);
     sol_file_picker_cancel_owner(&host);
     sol_input_router_destroy(host.router);

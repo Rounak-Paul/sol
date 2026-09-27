@@ -22,6 +22,7 @@
 
 #include "sol_config.h"
 #include "sol_platform.h"
+#include "sol_layout.h"
 #include "sol_settings.h"
 #include "sol_ui_internal.h"
 
@@ -333,6 +334,61 @@ static void test_preferences_tolerate_bad_values(SolTestCtx *T)
     SOL_CHECK_EQ_FLOAT(T, loaded.autosave_delay, SOL_SETTINGS_AUTOSAVE_DELAY_DEFAULT, 1e-6f);
 }
 
+static void test_layout_round_trip(SolTestCtx *T)
+{
+    SOL_CHECK(T, use_temp_home());
+    SolLayout loaded;
+    SOL_CHECK(T, !sol_layout_load(&loaded));
+    SOL_CHECK(T, loaded.terminal_position == SOL_TERMINAL_POSITION_BOTTOM);
+    SOL_CHECK_EQ_FLOAT(T, loaded.tree_ratio, SOL_LAYOUT_TREE_RATIO_DEFAULT, 1e-6f);
+
+    SolLayout layout = sol_layout_defaults();
+    layout.tree_ratio        = 0.33f;
+    layout.terminal_position = SOL_TERMINAL_POSITION_RIGHT;
+    layout.terminal_ratio    = 0.45f;
+    layout.search_ratio      = 0.5f;
+    SOL_CHECK(T, sol_layout_save(&layout));
+
+    SOL_CHECK(T, sol_layout_load(&loaded));
+    SOL_CHECK(T, loaded.terminal_position == SOL_TERMINAL_POSITION_RIGHT);
+    SOL_CHECK_EQ_FLOAT(T, loaded.tree_ratio, 0.33f, 1e-4f);
+    SOL_CHECK_EQ_FLOAT(T, loaded.terminal_ratio, 0.45f, 1e-4f);
+    SOL_CHECK_EQ_FLOAT(T, loaded.search_ratio, 0.5f, 1e-4f);
+}
+
+static void test_layout_tolerates_corruption(SolTestCtx *T)
+{
+    SOL_CHECK(T, use_temp_home());
+    SOL_CHECK(T, write_config_file("layout",
+        "# comment\n"
+        "tree_ratio 0.9\n"
+        "terminal_position sideways\n"
+        "terminal_ratio nan\n"
+        "search_ratio 0.4abc\n"
+        "unknown_key 1\n"
+        "tree_ratio\n"
+        "terminal_ratio 0.5 trailing\n"
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        " terminal_position float\n"
+        "search_ratio 0.3"));
+
+    SolLayout loaded;
+    SOL_CHECK(T, sol_layout_load(&loaded));
+    SOL_CHECK_EQ_FLOAT(T, loaded.tree_ratio, SOL_LAYOUT_TREE_RATIO_MAX, 1e-6f);
+    SOL_CHECK(T, loaded.terminal_position == SOL_TERMINAL_POSITION_BOTTOM);
+    SOL_CHECK_EQ_FLOAT(T, loaded.terminal_ratio, SOL_LAYOUT_TERMINAL_RATIO_DEFAULT, 1e-6f);
+    SOL_CHECK_EQ_FLOAT(T, loaded.search_ratio, 0.3f, 1e-6f);
+
+    SolLayout bogus = sol_layout_defaults();
+    bogus.terminal_position = (SolTerminalPosition)42;
+    bogus.search_ratio      = -3.0f;
+    SOL_CHECK(T, sol_layout_save(&bogus));
+    SOL_CHECK(T, sol_layout_load(&loaded));
+    SOL_CHECK(T, loaded.terminal_position == SOL_TERMINAL_POSITION_BOTTOM);
+    SOL_CHECK_EQ_FLOAT(T, loaded.search_ratio, SOL_LAYOUT_SEARCH_RATIO_MIN, 1e-6f);
+}
+
 int main(void)
 {
     SolTestSuite suite;
@@ -345,6 +401,8 @@ int main(void)
     SOL_RUN(suite, test_save_leader_rebases_literal_binds);
     SOL_RUN(suite, test_preferences_round_trip);
     SOL_RUN(suite, test_preferences_tolerate_bad_values);
+    SOL_RUN(suite, test_layout_round_trip);
+    SOL_RUN(suite, test_layout_tolerates_corruption);
     if (g_home[0] != '\0') (void)sol_platform_remove_path_recursive(g_home);
     return sol_suite_report(&suite);
 }

@@ -196,6 +196,12 @@ size_t sol_event_bus_drain  (SolEventBus *bus, size_t max_events);
    subscribers re-register the keymap from disk. */
 #define SOL_EVENT_BINDINGS_CHANGED   "sol.bindings.changed"
 
+/* -- Layout -------------------------------------------------------- */
+/* Published when the user rearranges the workspace (splitter drag or
+   terminal dock change; no payload). Subscribers read the current
+   arrangement with sol_ui_system_get_layout. */
+#define SOL_EVENT_LAYOUT_CHANGED     "sol.layout.changed"
+
 /*
  * Payload for SOL_EVENT_APP_STARTUP — fired exactly once after subsystems
  * are up but before the frame loop spins.

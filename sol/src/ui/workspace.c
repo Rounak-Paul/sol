@@ -179,8 +179,8 @@ static bool sol_ui_buffer_area_rect_internal(const SolUISystem *ui,
     if (term_visible &&
         sol_terminal_manager_position(ui->terminal_mgr) != SOL_TERMINAL_POSITION_FLOAT) {
         float term_ratio = sol_terminal_manager_ratio(ui->terminal_mgr);
-        if (term_ratio < 0.20f) term_ratio = 0.20f;
-        if (term_ratio > 0.80f) term_ratio = 0.80f;
+        if (term_ratio < SOL_LAYOUT_TERMINAL_RATIO_MIN) term_ratio = SOL_LAYOUT_TERMINAL_RATIO_MIN;
+        if (term_ratio > SOL_LAYOUT_TERMINAL_RATIO_MAX) term_ratio = SOL_LAYOUT_TERMINAL_RATIO_MAX;
         const float buffer_ratio = 1.0f - term_ratio;
         if (sol_terminal_manager_position(ui->terminal_mgr) == SOL_TERMINAL_POSITION_BOTTOM) {
             float available = root_h - panel_gap;
@@ -931,16 +931,70 @@ void sol_ui_render_workspace_tree(SolUISystem *ui)
 static void sol_ui_on_panel_resize(float ratio, void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
-    if (ui) {
-        ui->tree_panel_ratio = ratio;
-    }
+    if (!ui || ui->tree_panel_ratio == ratio) return;
+    ui->tree_panel_ratio = ratio;
+    sol_ui_publish_layout_changed(ui);
 }
 
+/*
+ * Handle buffer/terminal splitter drags and persist the terminal's share.
+ *
+ * ratio      The buffer pane's new fraction of the split axis.
+ * user_data  The SolUISystem owning the terminal panel.
+ */
 static void sol_ui_on_terminal_resize(float ratio, void *user_data)
 {
     SolUISystem *ui = (SolUISystem *)user_data;
-    if (ui && ui->terminal_mgr)
-        sol_terminal_manager_set_ratio(ui->terminal_mgr, 1.0f - ratio);
+    if (!ui || !ui->terminal_mgr) return;
+    const float before = sol_terminal_manager_ratio(ui->terminal_mgr);
+    sol_terminal_manager_set_ratio(ui->terminal_mgr, 1.0f - ratio);
+    if (sol_terminal_manager_ratio(ui->terminal_mgr) != before)
+        sol_ui_publish_layout_changed(ui);
+}
+
+void sol_ui_publish_layout_changed(SolUISystem *ui)
+{
+    if (!ui || !ui->buffers) return;
+    sol_event_publish(sol_buffer_event_bus(ui->buffers),
+                      SOL_EVENT_LAYOUT_CHANGED, NULL, 0u, ui);
+}
+
+void sol_ui_system_set_terminal_position(SolUISystem *ui, SolTerminalPosition pos)
+{
+    if (!ui || !ui->terminal_mgr) return;
+    const bool changed = sol_terminal_manager_position(ui->terminal_mgr) != pos;
+    sol_terminal_manager_set_position(ui->terminal_mgr, pos);
+    sol_ui_system_terminal_notify(ui);
+    if (changed) sol_ui_publish_layout_changed(ui);
+}
+
+void sol_ui_system_get_layout(const SolUISystem *ui, SolLayout *out)
+{
+    if (!out) return;
+    *out = sol_layout_defaults();
+    if (!ui) return;
+    out->tree_ratio   = ui->tree_panel_ratio;
+    out->search_ratio = ui->search_split_ratio;
+    if (ui->terminal_mgr) {
+        out->terminal_position = sol_terminal_manager_position(ui->terminal_mgr);
+        out->terminal_ratio    = sol_terminal_manager_ratio(ui->terminal_mgr);
+    }
+    sol_layout_sanitize(out);
+}
+
+void sol_ui_system_apply_layout(SolUISystem *ui, const SolLayout *layout)
+{
+    if (!ui || !layout) return;
+    SolLayout clean = *layout;
+    sol_layout_sanitize(&clean);
+    ui->tree_panel_ratio   = clean.tree_ratio;
+    ui->search_split_ratio = clean.search_ratio;
+    if (ui->terminal_mgr) {
+        sol_terminal_manager_set_position(ui->terminal_mgr, clean.terminal_position);
+        sol_terminal_manager_set_ratio(ui->terminal_mgr, clean.terminal_ratio);
+        sol_ui_system_terminal_notify(ui);
+    }
+    sol_ui_bump_u32(ui->sig_window_rev);
 }
 
 /* ------------------------------------------------------------------ */
@@ -998,8 +1052,8 @@ static void sol_ui_render_buffer_and_terminal(SolUISystem *ui, bool term_visible
     ca_split_begin(&(Ca_SplitDesc){
         .direction       = dir,
         .ratio           = buf_ratio,
-        .min_ratio       = 0.20f,
-        .max_ratio       = 0.80f,
+        .min_ratio       = SOL_LAYOUT_TERMINAL_RATIO_MIN,
+        .max_ratio       = SOL_LAYOUT_TERMINAL_RATIO_MAX,
         .bar_size        = SOL_UI_SPLIT_BAR_SIZE,
         .on_resize       = sol_ui_on_terminal_resize,
         .user_data       = ui,
@@ -1087,8 +1141,8 @@ static void sol_ui_workspace_content_builder(Ca_Div *div, void *user_data)
         ca_split_begin(&(Ca_SplitDesc){
             .direction      = CA_HORIZONTAL,
             .ratio          = ui->tree_panel_ratio,
-            .min_ratio      = 0.10f,
-            .max_ratio      = 0.50f,
+            .min_ratio      = SOL_LAYOUT_TREE_RATIO_MIN,
+            .max_ratio      = SOL_LAYOUT_TREE_RATIO_MAX,
             .bar_size       = SOL_UI_SPLIT_BAR_SIZE,
             .on_resize      = sol_ui_on_panel_resize,
             .user_data      = ui,
@@ -1783,7 +1837,8 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
     ui->buffers              = buffers;
     ui->leader_modifier      = SOL_MOD_CTRL;
     ui->status_bar_kind      = SOL_UI_STATUS_KIND_KEY;
-    ui->tree_panel_ratio     = 0.20f;
+    ui->tree_panel_ratio     = SOL_LAYOUT_TREE_RATIO_DEFAULT;
+    ui->search_split_ratio   = SOL_LAYOUT_SEARCH_RATIO_DEFAULT;
     ui->file_tree_visible    = false;
     ui->term_cursor_blink_on = true;
 

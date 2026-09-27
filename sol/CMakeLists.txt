@@ -309,6 +309,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
         src/ui/command_flow.c
         src/core/sol_config.c
         src/core/sol_settings.c
+        src/core/sol_layout.c
         src/core/sol_theme.c
         ${SOL_CORE_TEST_SRC}
     )
