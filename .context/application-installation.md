@@ -158,3 +158,8 @@
 - Reinstalled again: command overlay (.cf-panel) now content-sized (was
   clipping its last row); sha256 prefix recorded at install time below.
   `f26e7f25889054a5`
+
+## 2026-09-27 scrollbar paint-order install
+
+- `cmake --build build-release -j 8` then `cmake --install build-release --prefix /Applications --component Sol`.
+- Installed executable byte-matches `bin/Sol.app` (`b3a1300b4ae590dc947bee3a11ba6896e3cd02adc8838225641e8302862e9fab`), 13 plugins, and is newer than the Causality scrollbar paint_barrier fix.

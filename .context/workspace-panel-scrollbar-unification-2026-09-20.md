@@ -124,3 +124,14 @@ The rebuilt bundle is `bin/Sol.app`; it is separate from `/Applications/Sol.app`
 On 2026-09-20 the local executable modification time was 21:31 while the
 installed executable was 12:33. Do not use the installed app as acceptance for
 uninstalled workspace styling changes.
+
+## Paint order fix (2026-09-27)
+
+Native scrollbars were marked `overlay = true`, which puts them in renderer
+band 3 (reserved for menus/tooltips/modals), so they painted over everything,
+including the floating terminal. They now stay in their node's own z band.
+Instead, the first scrollbar command gets `Ca_DrawCmd.paint_barrier`, and
+`record_band` in `swapchain.c` starts a new type-batched range there. As a
+result, child glyphs paint beneath the bar and later or higher-z content paints
+over it. Regression: `test_scrollbar_paint_order` in `ca_splitter_tests.c`.
+Not yet visually verified.
