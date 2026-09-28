@@ -34,6 +34,7 @@
 
 /* Maximum number of undoable records kept per buffer. */
 #define TB_UNDO_MAX 512
+#define TB_FIND_WINDOW_BYTES (64u * 1024u)
 
 /*
  * One atomic change on the undo/redo stack.
@@ -1846,6 +1847,109 @@ void sol_text_buffer_clear_selection(SolTextBuffer *tb)
 {
     if (!tb) return;
     tb->has_selection = false;
+}
+
+/*
+ * Select the byte range between anchor and cursor, placing the caret at
+ * cursor. Both ends are clamped to the buffer and snapped back onto a
+ * codepoint boundary; equal ends leave no visible selection.
+ *
+ * tb      The text buffer.
+ * anchor  Non-moving end of the selection (byte offset).
+ * cursor  Caret end of the selection (byte offset).
+ */
+void sol_text_buffer_select_range(SolTextBuffer *tb, size_t anchor, size_t cursor)
+{
+    if (!tb || !tb->rope) return;
+    tb_set_cursor_byte(tb, anchor);
+    const size_t snapped_anchor = tb->cursor_byte;
+    tb_set_cursor_byte(tb, cursor);
+    tb_update_preferred_col(tb);
+    tb->sel_anchor_byte = snapped_anchor;
+    tb->has_selection = snapped_anchor != tb->cursor_byte;
+}
+
+/*
+ * Report whether the window bytes at text match needle, folding ASCII case.
+ *
+ * text    Candidate bytes (at least needle_len long).
+ * folded  Needle already lowered with tolower-equivalent ASCII folding.
+ * len     Needle length in bytes.
+ * Returns true on a match.
+ */
+static bool tb_find_matches_at(const uint8_t *text, const uint8_t *folded, size_t len)
+{
+    for (size_t i = 0u; i < len; ++i) {
+        uint8_t c = text[i];
+        if (c >= 'A' && c <= 'Z') c = (uint8_t)(c + ('a' - 'A'));
+        if (c != folded[i]) return false;
+    }
+    return true;
+}
+
+/*
+ * Find every non-overlapping occurrence of needle, ignoring ASCII case.
+ *
+ * The rope is streamed through a fixed window that overlaps by
+ * needle_len - 1 bytes, so matches spanning rope chunks are found without
+ * copying the whole document.
+ *
+ * tb           The text buffer to search.
+ * needle       Bytes to find (UTF-8; non-ASCII bytes compare exactly).
+ * needle_len   Needle length; 0 or above SOL_TEXT_BUFFER_FIND_MAX_NEEDLE
+ *              yields no matches.
+ * out_offsets  Receives match start offsets in ascending order (may be
+ *              NULL when max_offsets is 0).
+ * max_offsets  Capacity of out_offsets.
+ * Returns the total number of occurrences, which may exceed max_offsets;
+ * only the first max_offsets are stored.
+ */
+size_t sol_text_buffer_find_all(const SolTextBuffer *tb,
+                                const uint8_t *needle, size_t needle_len,
+                                size_t *out_offsets, size_t max_offsets)
+{
+    if (!tb || !tb->rope || !needle || needle_len == 0u ||
+        needle_len > SOL_TEXT_BUFFER_FIND_MAX_NEEDLE) {
+        return 0u;
+    }
+    if (!out_offsets) max_offsets = 0u;
+
+    uint8_t folded[SOL_TEXT_BUFFER_FIND_MAX_NEEDLE];
+    for (size_t i = 0u; i < needle_len; ++i) {
+        uint8_t c = needle[i];
+        if (c >= 'A' && c <= 'Z') c = (uint8_t)(c + ('a' - 'A'));
+        folded[i] = c;
+    }
+    const uint8_t first_lower = folded[0];
+    const uint8_t first_upper = (first_lower >= 'a' && first_lower <= 'z')
+        ? (uint8_t)(first_lower - ('a' - 'A')) : first_lower;
+
+    uint8_t *window = (uint8_t *)malloc(TB_FIND_WINDOW_BYTES);
+    if (!window) return 0u;
+
+    const size_t total_bytes = sol_rope_byte_len(tb->rope);
+    size_t count = 0u;
+    size_t scan = 0u;
+    while (scan + needle_len <= total_bytes) {
+        const size_t got = sol_rope_read(tb->rope, scan, window, TB_FIND_WINDOW_BYTES);
+        if (got < needle_len) break;
+        size_t i = 0u;
+        while (i + needle_len <= got) {
+            const uint8_t c = window[i];
+            if ((c == first_lower || c == first_upper) &&
+                tb_find_matches_at(window + i, folded, needle_len)) {
+                if (count < max_offsets) out_offsets[count] = scan + i;
+                ++count;
+                i += needle_len;
+            } else {
+                ++i;
+            }
+        }
+        if (got < TB_FIND_WINDOW_BYTES) break;
+        scan += i;
+    }
+    free(window);
+    return count;
 }
 
 /*

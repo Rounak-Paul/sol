@@ -538,6 +538,64 @@ void sol_ui_system_open_file_search(SolUISystem *ui);
 void sol_ui_system_open_content_search(SolUISystem *ui);
 
 /* ================================================================== */
+/* In-buffer find                                                      */
+/* ================================================================== */
+
+typedef struct SolTextBuffer SolTextBuffer;
+
+/* Outcome of routing one input event to the find session. */
+typedef enum SolUIFindInput {
+    SOL_UI_FIND_INPUT_IGNORED = 0, /* not for find; route normally          */
+    SOL_UI_FIND_INPUT_CONSUMED,    /* handled; caret unchanged               */
+    SOL_UI_FIND_INPUT_MOVED,       /* handled; scroll the caret into view    */
+} SolUIFindInput;
+
+/* How a find session ends. */
+typedef enum SolUIFindClose {
+    SOL_UI_FIND_CLOSE_LAND = 0,    /* caret onto the current match           */
+    SOL_UI_FIND_CLOSE_CANCEL,      /* restore caret, selection and scroll    */
+    SOL_UI_FIND_CLOSE_RELEASE,     /* leave the buffer exactly as it is      */
+} SolUIFindClose;
+
+/*
+ * Start finding in the active text buffer; the query is typed into the
+ * status bar. Returns true when a session is active afterwards.
+ */
+bool sol_ui_system_buffer_find_open(SolUISystem *ui);
+
+/* End the find session (no-op when none is active). */
+void sol_ui_system_buffer_find_close(SolUISystem *ui, SolUIFindClose mode);
+
+/* Return true while a find session owns buffer keyboard input. */
+bool sol_ui_system_buffer_find_active(const SolUISystem *ui);
+
+/*
+ * Route a key press to the find session: Up/Down cycle matches, Enter
+ * lands, Esc cancels, Backspace edits the query. Ctrl/Alt/Super chords
+ * are IGNORED so commands keep working.
+ */
+SolUIFindInput sol_ui_system_buffer_find_key(SolUISystem *ui, SolKeyCode key,
+                                             SolModifierMask mods);
+
+/* Append a typed codepoint to the query and re-run it. */
+SolUIFindInput sol_ui_system_buffer_find_char(SolUISystem *ui, uint32_t cp);
+
+/*
+ * Expose the find matches for highlighting when tb is the session's target.
+ *
+ * ui           The UI system.
+ * tb           Text buffer being rendered.
+ * out_offsets  Receives ascending match start offsets.
+ * out_count    Receives the number of matches.
+ * out_len      Receives the byte length of every match.
+ * out_current  Receives the index of the current match.
+ * Returns true when matches exist for tb.
+ */
+bool sol_ui_system_buffer_find_matches(const SolUISystem *ui, const SolTextBuffer *tb,
+                                       const size_t **out_offsets, size_t *out_count,
+                                       size_t *out_len, size_t *out_current);
+
+/* ================================================================== */
 /* Terminal manager integration                                        */
 /* ================================================================== */
 

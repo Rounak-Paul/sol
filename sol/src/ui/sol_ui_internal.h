@@ -20,6 +20,7 @@
 #include <causality.h>
 
 #include "sol_bg_effect.h"
+#include "sol_event.h"
 #include "sol_file_tree.h"
 #include "sol_settings.h"
 #include "sol_ssh_window.h"
@@ -45,6 +46,8 @@
 #define SOL_UI_MAX_CONTEXT_ACTIONS    16u
 #define SOL_UI_CONTEXT_PATH_MAX       4096u
 #define SOL_UI_MAX_GLASS_PANELS       64u
+#define SOL_UI_BUFFER_FIND_QUERY_MAX  256u
+#define SOL_UI_BUFFER_FIND_MAX_MATCHES 262144u
 
 /* Project tab strip height — kept in sync with .project-tabs in style.h
    so layout math (buffer-area rect, tree-sticky-host offset) doesn't
@@ -95,6 +98,7 @@
 #define SOL_UI_STATUS_KIND_KEY        'K'
 #define SOL_UI_STATUS_KIND_COMMAND    'C'
 #define SOL_UI_STATUS_KIND_LEADER     'L'
+#define SOL_UI_STATUS_KIND_FIND       'F'
 
 /* ------------------------------------------------------------------ */
 /* Types                                                               */
@@ -227,6 +231,34 @@ typedef struct SolContextMenuCtx {
     int                          action_count;
     char                         path[SOL_UI_CONTEXT_PATH_MAX];
 } SolContextMenuCtx;
+
+/* In-buffer find session (buffer_find.c). The query is typed into the
+   status bar; matches are ascending byte offsets into the target buffer.
+   Observers on the buffer event bus exist only while `active`. */
+typedef struct SolUIBufferFind {
+    bool                 active;
+    SolBufferId          buffer_id;
+    SolEventBus         *bus;
+    SolSubscriptionToken edit_token;
+    SolSubscriptionToken focus_token;
+    SolSubscriptionToken close_token;
+    char                 query[SOL_UI_BUFFER_FIND_QUERY_MAX + 1u];
+    size_t               query_len;
+    size_t              *matches;         /* owned; kept across sessions */
+    size_t               match_capacity;
+    size_t               match_count;     /* stored matches (<= capacity) */
+    size_t               match_total;     /* all occurrences in the buffer */
+    size_t               current;
+    size_t               origin_cursor;
+    size_t               origin_anchor;
+    size_t               origin_start;    /* selection start, or the caret */
+    bool                 origin_has_selection;
+    SolBufferNodeId      origin_leaf;
+    int                  origin_scroll_top;
+    int                  origin_scroll_left;
+    char                 prompt_text[SOL_UI_BUFFER_FIND_QUERY_MAX + 8u];
+    char                 position_text[48];
+} SolUIBufferFind;
 
 struct SolUISystem {
     Ca_Instance      *instance;
@@ -392,6 +424,9 @@ struct SolUISystem {
     /* Status bar single-line text + kind for badge styling. */
     char   status_bar_kind;
     char   status_bar_text[SOL_UI_STATUS_TEXT_MAX_LEN + 1u];
+
+    /* In-buffer find; while active it replaces the status-bar message. */
+    SolUIBufferFind buffer_find;
 
     /* Pool of per-split callback contexts handed to causality. Reset
        at the start of each workspace visit; entries persist between
@@ -621,6 +656,20 @@ void sol_ui_set_status_sequence(SolUISystem *ui, const SolKeyCode *sequence,
  * ui  UI system.
  */
 void sol_ui_render_status_bar(SolUISystem *ui);
+
+/*
+ * Emit the in-buffer find prompt into the status bar's left section.
+ *
+ * ui  UI system with an active find session.
+ */
+void sol_ui_buffer_find_render_status(SolUISystem *ui);
+
+/*
+ * End any find session and free its match storage (UI teardown).
+ *
+ * ui  UI system.
+ */
+void sol_ui_buffer_find_shutdown(SolUISystem *ui);
 
 /*
  * Open the leader (which-key) popup overlay.

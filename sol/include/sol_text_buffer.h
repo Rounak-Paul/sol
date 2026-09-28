@@ -430,6 +430,30 @@ void sol_text_buffer_set_selection_anchor(SolTextBuffer *tb);
 void sol_text_buffer_clear_selection(SolTextBuffer *tb);
 
 /*
+ * Select [anchor, cursor] with the caret at cursor. Offsets are clamped
+ * and snapped to codepoint boundaries; equal ends clear the selection.
+ */
+void sol_text_buffer_select_range(SolTextBuffer *tb, size_t anchor, size_t cursor);
+
+/* Longest needle sol_text_buffer_find_all accepts, in bytes. */
+#define SOL_TEXT_BUFFER_FIND_MAX_NEEDLE 1024u
+
+/*
+ * Find every non-overlapping, ASCII case-insensitive occurrence of needle.
+ *
+ * tb           The text buffer to search.
+ * needle       UTF-8 bytes to find (non-ASCII bytes compare exactly).
+ * needle_len   Needle length in bytes (0 or above the max finds nothing).
+ * out_offsets  Receives ascending match start offsets (NULL allowed when
+ *              max_offsets is 0).
+ * max_offsets  Capacity of out_offsets.
+ * Returns the total occurrence count, which may exceed max_offsets.
+ */
+size_t sol_text_buffer_find_all(const SolTextBuffer *tb,
+                                const uint8_t *needle, size_t needle_len,
+                                size_t *out_offsets, size_t max_offsets);
+
+/*
  * Delete the selected region and place the cursor at the region start.
  *
  * Returns false when no selection is active or deletion fails.

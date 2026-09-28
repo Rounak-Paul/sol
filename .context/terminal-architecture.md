@@ -125,25 +125,15 @@ than the split-based approach and could replace it for BOTTOM/RIGHT too as a
 future simplification, but that wasn't done — out of scope for the FLOAT
 addition.)
 
-**FLOAT-only input behavior** (`input_router.c`), both scoped strictly to
-`position == SOL_TERMINAL_POSITION_FLOAT` so BOTTOM/RIGHT are unchanged:
-- ESC (`on_key`, checked before the paste intercept): calls
-  `sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_BUFFER)` instead
-  of forwarding to the PTY. This is the one exception to "ESC always
-  forwards to the PTY" noted below in Input Routing.
+**FLOAT-only input behavior** (`input_router.c`), scoped strictly to
+`position == SOL_TERMINAL_POSITION_FLOAT`:
+- ESC is forwarded to the PTY exactly like BOTTOM/RIGHT (2026-09-28: the
+  original quake-style "ESC defocuses the float" intercept was removed — it
+  broke vim/Claude Code/readline inside the floating terminal).
 - Click-outside the floating panel (`on_mouse_button`, checked on
-  `MOUSE_DOWN` before the terminal-mouse-passthrough check): same defocus
-  call, consumes the click. Click *inside* the panel falls through to
-  existing click-to-focus/mouse-report logic unchanged.
-- Both just defocus (`SOL_UI_FOCUSED_PANEL_BUFFER`) — they do NOT hide the
-  panel via `sol_terminal_manager_set_visible(false)`. The float panel stays
-  visible-but-unfocused after dismissal, consistent with how
-  visible/focused are already independent flags for BOTTOM/RIGHT. This
-  choice avoided reaching into `main.c`'s `App.focus_before_terminal`
-  restore state (owned by `terminal.toggle`'s dispatch handler, not visible
-  to input_router.c) — `sol_ui_system_set_focused_panel` already clears
-  terminal focus as a side effect (see its doc comment in workspace.c), so
-  no new cross-module plumbing was needed.
+  `MOUSE_DOWN` before the terminal-mouse-passthrough check) defocuses via
+  `sol_ui_system_set_focused_panel(ui, SOL_UI_FOCUSED_PANEL_BUFFER)` and
+  consumes the click. It does NOT hide the panel; `L t` toggle hides it.
 
 **Command flow**: `terminal.position.float` registered in
 `sol_register_terminal_command_defaults` (main.c), bound to `L t f`
@@ -152,14 +142,10 @@ Also mirrored as literal text in `sol_config.c`'s `SOL_DEFAULT_BINDINGS_CONF`
 (comment + `bind L t f` line) since that template is written verbatim to
 `~/.sol/bindings.conf` on first launch.
 
-**Size**: fixed viewport percentage — 82% width (of window), 78% height (of
-the *workspace* vertical extent, not the raw window — see Centering below).
-Computed at render time in `sol_ui_term_float_builder`, NOT tied to the
-`ratio` field BOTTOM/RIGHT use for split sizing. Tune the two literals if
-the size needs adjusting; no stored state. (Originally shipped at 70%/60%
-of the raw window; user reported "can be bigger" — bumped to 82%/78% and
-switched the height basis to workspace-relative in the same fix pass, see
-Bugfixes below.)
+**Size**: pure CSS in `style.h` `.term-float-panel` — 94% width × 92%
+height of the backdrop (which spans the workspace between title and status
+bars). History: 70/60 → 82/78 (2026-09-09) → 94/92 (2026-09-28, "can take
+more space"). Not tied to the docked `ratio` field.
 
 **Centering** (fixed 2026-09-09, see Bugfixes): the overlay host
 (`term_float_host`) and backdrop both span the *raw window*

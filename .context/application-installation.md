@@ -202,3 +202,14 @@
   the Explorer sticky overlay was visually transparent over the Git sidebar but
   still won wheel dispatch. Scrollbar dragging used a separate visibility-aware
   path and therefore continued to work.
+
+## 2026-09-28 float-terminal ESC/size install
+
+- `cmake --build build-release -j` + `cmake --install build-release --prefix /Applications --component Sol`.
+- Installed executable `c5e81062…81750` byte-matches `bin/Sol.app`; contains the 94%/92% float CSS.
+
+## Buffer find (L b f) install — 2026-09-28
+- `cmake --build build-release -j 8` then `cmake --install build-release
+  --prefix /Applications --component Sol`. Verified installed `Sol` and
+  `sol-plugin-themes.dylib` both contain the `buffer-find-match` CSS rules and
+  the "Find in buffer" label. No Sol instance was running during install.

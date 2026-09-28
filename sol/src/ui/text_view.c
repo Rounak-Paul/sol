@@ -148,6 +148,39 @@ static size_t tv_visual_col_count(const char *buf, size_t byte_len)
     return col;
 }
 
+/*
+ * Emit one find-match highlight rectangle, clipped to the line's content.
+ *
+ * line_buf     The line's bytes as rendered.
+ * line_start   Byte offset of the line in the buffer.
+ * line_bytes   Byte length of the line (excluding the newline).
+ * match_start  Byte offset of the match in the buffer.
+ * match_len    Byte length of the match.
+ * adv          Glyph advance in CSS px.
+ * style        Highlight style class.
+ */
+static void tv_emit_find_highlight(const char *line_buf, size_t line_start,
+                                   size_t line_bytes, size_t match_start,
+                                   size_t match_len, float adv, const char *style)
+{
+    const size_t match_end = match_start + match_len;
+    const size_t col_b_start = match_start > line_start ? match_start - line_start : 0u;
+    const size_t col_b_end = match_end < line_start + line_bytes
+        ? match_end - line_start : line_bytes;
+    const float x1 = (float)tv_visual_col_count(line_buf, col_b_start) * adv;
+    float x2 = (float)tv_visual_col_count(line_buf, col_b_end) * adv;
+    if (x2 <= x1) x2 = x1 + 2.0f;
+    ca_div_begin(&(Ca_DivDesc){
+        .position = CA_POSITION_ABSOLUTE,
+        .pos_x    = x1,
+        .pos_y    = 0.0f,
+        .width    = x2 - x1,
+        .height   = (float)SOL_TEXT_LINE_HEIGHT_PX,
+        .style    = style,
+    });
+    ca_div_end();
+}
+
 /* Convert a rounded visual monospace column back to the buffer's codepoint
    column. Tabs are rendered as one wide glyph, so clicks inside a tab choose
    the nearest editable boundary: before it in the first half, after it in
@@ -1321,6 +1354,15 @@ void sol_text_view_render(const SolBuffer *buffer,
     const float sel_adv = adv_css;
     /* Rope reference for per-line byte offset queries. */
     const SolRope *rope_ref = sol_text_buffer_rope((SolBuffer *)buffer);
+
+    /* In-buffer find matches (ascending, non-overlapping) for this buffer. */
+    const size_t *find_offsets = NULL;
+    size_t find_count = 0u;
+    size_t find_len = 0u;
+    size_t find_current = 0u;
+    const bool find_active = rope_ref && ui &&
+        sol_ui_system_buffer_find_matches(ui, tb, &find_offsets, &find_count,
+                                          &find_len, &find_current);
     const bool markdown_document = sol_text_buffer_is_markdown_document(tb);
     SolMarkdownParserState markdown_state;
     sol_markdown_parser_init(&markdown_state);
@@ -1365,6 +1407,27 @@ void sol_text_view_render(const SolBuffer *buffer,
             .style     = "buffer-line-content",
         });
 
+        /* ---- Find matches other than the current one (behind selection) ---- */
+        size_t find_line_start = 0u;
+        size_t find_first = find_count;
+        if (find_active) {
+            find_line_start = sol_rope_byte_of_line(rope_ref, (size_t)line_idx);
+            size_t lo = 0u, hi = find_count;
+            while (lo < hi) {
+                const size_t mid = lo + (hi - lo) / 2u;
+                if (find_offsets[mid] + find_len <= find_line_start) lo = mid + 1u;
+                else hi = mid;
+            }
+            find_first = lo;
+            for (size_t m = find_first;
+                 m < find_count && find_offsets[m] < find_line_start + line_bytes; ++m) {
+                if (m == find_current) continue;
+                tv_emit_find_highlight(line_buf, find_line_start, line_bytes,
+                                       find_offsets[m], find_len, sel_adv,
+                                       "buffer-find-match");
+            }
+        }
+
         /* ---- Selection highlight (behind text, z_index = -1) ---- */
         if (sel_active && rope_ref) {
             const size_t lb_start = sol_rope_byte_of_line(rope_ref, (size_t)line_idx);
@@ -1397,6 +1460,14 @@ void sol_text_view_render(const SolBuffer *buffer,
                 });
                 ca_div_end();
             }
+        }
+
+        /* ---- Current find match, above the selection it coincides with ---- */
+        if (find_current >= find_first && find_current < find_count &&
+            find_offsets[find_current] < find_line_start + line_bytes) {
+            tv_emit_find_highlight(line_buf, find_line_start, line_bytes,
+                                   find_offsets[find_current], find_len, sel_adv,
+                                   "buffer-find-match-current");
         }
 
         /* Markdown keeps the normal editor's row geometry and input path.

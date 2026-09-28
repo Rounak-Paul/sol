@@ -150,7 +150,9 @@ void sol_ui_render_status_bar(SolUISystem *ui)
         .style     = "status-bar-left",
     });
 
-    if (ui->status_bar_text[0] != '\0') {
+    if (ui->buffer_find.active) {
+        sol_ui_buffer_find_render_status(ui);
+    } else if (ui->status_bar_text[0] != '\0') {
         const char badge_text[2] = { ui->status_bar_kind, '\0' };
 
         ca_div_begin(&(Ca_DivDesc){

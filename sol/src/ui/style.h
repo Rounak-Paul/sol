@@ -585,6 +585,14 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  height: 20px;"
     "  background: #182e50;"
     "}"
+    ".buffer-find-match {"
+    "  height: 20px;"
+    "  background: rgba(250, 204, 21, 0.26);"
+    "}"
+    ".buffer-find-match-current {"
+    "  height: 20px;"
+    "  background: rgba(250, 204, 21, 0.55);"
+    "}"
     ".buffer-column-ruler { background: rgba(150, 165, 185, 0.22); }"
     ".buffer-caret { background: #ffffff; }"
     ".buffer-caret-hidden { opacity: 0; }"
@@ -2659,7 +2667,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
        overrides base .term-panel's flex-grow:1 so the card keeps its
        percentage height instead of stretching to fill the backdrop. */
     ".term-float-panel {"
-    "  width: 82%; height: 78%;"
+    "  width: 94%; height: 82%;"
     "  flex-grow: 0; flex-shrink: 0;"
     "  shadow-offset-y: 10px; shadow-blur: 28px;"
     "  shadow-color: rgba(0, 0, 0, 0.55);"

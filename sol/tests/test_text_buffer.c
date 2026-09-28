@@ -34,6 +34,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(_WIN32)
@@ -145,6 +146,118 @@ static void test_open_string(SolTestCtx *T)
     sol_text_buffer_copy_line(tb, 1, line1, sizeof(line1));
     SOL_CHECK_STR(T, line0, "hello");
     SOL_CHECK_STR(T, line1, "world");
+
+    sol_buffer_system_destroy(sys);
+}
+
+/* Open a text buffer holding text in sys and return its state. */
+static SolTextBuffer *open_text_tb(SolBufferSystem *sys, const char *text, size_t len)
+{
+    SolBufferId id = sol_text_buffer_open_string(sys, "find", text, len, NULL, NULL);
+    return id ? sol_text_buffer_state(sol_buffer_get(sys, id)) : NULL;
+}
+
+static void test_find_all_case_insensitive(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    const char *text = "ab AB aB\nxab 92% 92%";
+    SolTextBuffer *tb = open_text_tb(sys, text, strlen(text));
+    SOL_CHECK_NOT_NULL(T, tb);
+
+    size_t offsets[8];
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"ab", 2u, offsets, 8u), 4);
+    SOL_CHECK_EQ_SZ(T, offsets[0], 0);
+    SOL_CHECK_EQ_SZ(T, offsets[1], 3);
+    SOL_CHECK_EQ_SZ(T, offsets[2], 6);
+    SOL_CHECK_EQ_SZ(T, offsets[3], 10);
+
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"92%", 3u, offsets, 8u), 2);
+    SOL_CHECK_EQ_SZ(T, offsets[0], 13);
+    SOL_CHECK_EQ_SZ(T, offsets[1], 17);
+
+    /* Capacity smaller than the total still reports every occurrence. */
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"AB", 2u, offsets, 1u), 4);
+    SOL_CHECK_EQ_SZ(T, offsets[0], 0);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"ab", 2u, NULL, 0u), 4);
+
+    sol_buffer_system_destroy(sys);
+}
+
+static void test_find_all_edges(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolTextBuffer *tb = open_text_tb(sys, "aaaa", 4u);
+    SOL_CHECK_NOT_NULL(T, tb);
+
+    size_t offsets[4];
+    /* Non-overlapping: "aa" in "aaaa" is found twice, not three times. */
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"aa", 2u, offsets, 4u), 2);
+    SOL_CHECK_EQ_SZ(T, offsets[1], 2);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"aaaaa", 5u, offsets, 4u), 0);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"a", 0u, offsets, 4u), 0);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, NULL, 1u, offsets, 4u), 0);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(NULL, (const uint8_t *)"a", 1u, offsets, 4u), 0);
+
+    SolTextBuffer *empty = open_empty_tb(sys);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(empty, (const uint8_t *)"a", 1u, offsets, 4u), 0);
+
+    /* Non-ASCII bytes compare exactly. */
+    const char *utf8 = "caf\xc3\xa9 CAF\xc3\xa9";
+    SolTextBuffer *accent = open_text_tb(sys, utf8, strlen(utf8));
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(accent, (const uint8_t *)"caf\xc3\xa9", 5u, offsets, 4u), 2);
+
+    sol_buffer_system_destroy(sys);
+}
+
+static void test_find_all_across_scan_windows(SolTestCtx *T)
+{
+    const size_t len = 200u * 1024u;
+    char *text = (char *)malloc(len);
+    SOL_CHECK_NOT_NULL(T, text);
+    if (!text) return;
+    memset(text, 'x', len);
+    /* Straddle the 64 KiB scan window and sit at both ends of the text. */
+    const size_t positions[] = { 0u, 65534u, 131071u, len - 3u };
+    for (size_t i = 0u; i < 4u; ++i) memcpy(text + positions[i], "92%", 3u);
+
+    SolBufferSystem *sys = make_system();
+    SolTextBuffer *tb = open_text_tb(sys, text, len);
+    SOL_CHECK_NOT_NULL(T, tb);
+    size_t offsets[8];
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_find_all(tb, (const uint8_t *)"92%", 3u, offsets, 8u), 4);
+    for (size_t i = 0u; i < 4u; ++i) SOL_CHECK_EQ_SZ(T, offsets[i], positions[i]);
+
+    sol_buffer_system_destroy(sys);
+    free(text);
+}
+
+static void test_select_range(SolTestCtx *T)
+{
+    SolBufferSystem *sys = make_system();
+    SolTextBuffer *tb = open_text_tb(sys, "hello world", 11u);
+    SOL_CHECK_NOT_NULL(T, tb);
+
+    size_t start = 0u, end = 0u;
+    sol_text_buffer_select_range(tb, 6u, 11u);
+    SOL_CHECK(T, sol_text_buffer_has_selection(tb));
+    sol_text_buffer_selection_range(tb, &start, &end);
+    SOL_CHECK_EQ_SZ(T, start, 6);
+    SOL_CHECK_EQ_SZ(T, end, 11);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_byte(tb), 11);
+
+    /* Reversed: caret at the start, same range. */
+    sol_text_buffer_select_range(tb, 5u, 0u);
+    sol_text_buffer_selection_range(tb, &start, &end);
+    SOL_CHECK_EQ_SZ(T, start, 0);
+    SOL_CHECK_EQ_SZ(T, end, 5);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_byte(tb), 0);
+
+    /* Out of range clamps; equal ends clear the selection. */
+    sol_text_buffer_select_range(tb, 3u, 999u);
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_byte(tb), 11);
+    sol_text_buffer_select_range(tb, 4u, 4u);
+    SOL_CHECK(T, !sol_text_buffer_has_selection(tb));
+    SOL_CHECK_EQ_SZ(T, sol_text_buffer_cursor_byte(tb), 4);
 
     sol_buffer_system_destroy(sys);
 }
@@ -895,6 +1008,10 @@ int main(void)
     SOL_RUN(s, test_empty_buffer);
     SOL_RUN(s, test_open_string);
     SOL_RUN(s, test_read_only_document);
+    SOL_RUN(s, test_find_all_case_insensitive);
+    SOL_RUN(s, test_find_all_edges);
+    SOL_RUN(s, test_find_all_across_scan_windows);
+    SOL_RUN(s, test_select_range);
     SOL_RUN(s, test_line_count_edge_cases);
     SOL_RUN(s, test_insert_ascii);
     SOL_RUN(s, test_insert_multibyte);

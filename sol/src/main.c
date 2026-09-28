@@ -422,6 +422,13 @@ static void sol_register_search_command_defaults(SolUISystem *ui)
         .sequence = content_sequence,
         .sequence_length = 2u,
     });
+    const SolKeyCode buffer_sequence[] = { 'B', 'F' };
+    (void)sol_ui_system_register_command_flow(ui, &(SolCommandFlowDesc){
+        .action = "buffer.find",
+        .label = "Find in buffer",
+        .sequence = buffer_sequence,
+        .sequence_length = 2u,
+    });
 }
 
 /*
@@ -527,6 +534,11 @@ static void sol_register_workspace_menu_items(SolUISystem *ui)
             .menu_id = "edit", .menu_label = "Edit",
             .item_id = "redo", .label = "Redo",
             .action = "edit.redo", .menu_order = 300, .item_order = 20,
+        },
+        {
+            .menu_id = "edit", .menu_label = "Edit",
+            .item_id = "find-buffer", .label = "Find in Buffer",
+            .action = "buffer.find", .menu_order = 300, .item_order = 30,
         },
         {
             .menu_id = "edit", .menu_label = "Edit",
@@ -1835,6 +1847,14 @@ static bool sol_on_command_invoked(const SolEvent *event, void *user_data)
     }
     if (strcmp(p->action, "find.grep") == 0) {
         sol_ui_system_open_content_search(app->ui);
+        return true;
+    }
+
+    /* ---- buffer.find : incremental find typed into the status bar. */
+    if (strcmp(p->action, "buffer.find") == 0) {
+        if (!sol_ui_system_buffer_find_open(app->ui)) return false;
+        sol_ui_system_set_focused_panel(app->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
+        sol_input_router_set_buffer_input_active(app->router, true);
         return true;
     }
 

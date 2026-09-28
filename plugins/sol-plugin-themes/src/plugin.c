@@ -217,6 +217,7 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
     css->valid = true;
     char chrome[32], panel[32], editor[32], raised[32], popup_bg[32], hover[32], selected[32];
     char table_header[32], table_row[32], table_row_alt[32], table_divider[32];
+    char find_match[32], find_current[32];
     if (!color_with_alpha(theme->background, 1.0f, chrome) ||
         !color_with_alpha(theme->panel_background, 1.0f, panel) ||
         !color_with_alpha(theme->panel_background, 1.0f, editor) ||
@@ -227,7 +228,9 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
         !color_with_alpha(theme->primary, theme->light ? 0.24f : 0.30f, table_header) ||
         !color_with_alpha(theme->panel_background, theme->light ? 0.32f : 0.20f, table_row) ||
         !color_with_alpha(theme->elevated, theme->light ? 0.44f : 0.30f, table_row_alt) ||
-        !color_with_alpha(theme->primary, theme->light ? 0.50f : 0.58f, table_divider))
+        !color_with_alpha(theme->primary, theme->light ? 0.50f : 0.58f, table_divider) ||
+        !color_with_alpha(theme->warning, theme->light ? 0.30f : 0.26f, find_match) ||
+        !color_with_alpha(theme->warning, theme->light ? 0.60f : 0.55f, find_current))
         return false;
 
     css_append(css,
@@ -283,12 +286,13 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
         ".buffer-gutter-line{color:%s;}"
         ".buffer-line,.buffer-body-text,.hl-plain{color:%s;}"
         ".buffer-selection{background:%s;}.buffer-caret{background:%s;}"
+        ".buffer-find-match{background:%s;}.buffer-find-match-current{background:%s;}"
         ".buffer-scrollbar-thumb,.buffer-hscrollbar-thumb{background:%s;}"
         ".buffer-scrollbar-thumb-active,.buffer-hscrollbar-thumb-active,.buffer-scrollbar-thumb:hover,.buffer-hscrollbar-thumb:hover{background:%s;}",
         panel, theme->muted, hover, raised, theme->primary, theme->secondary,
         theme->text, panel, hover, selected, theme->muted, theme->text, editor,
-        theme->muted, theme->text, selected, theme->primary, selected,
-        theme->primary);
+        theme->muted, theme->text, selected, theme->primary, find_match,
+        find_current, selected, theme->primary);
 
     css_append(css,
         ".hl-keyword,.hl-macro{color:%s;}.hl-comment{color:%s;}"

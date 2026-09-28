@@ -1917,6 +1917,7 @@ void sol_ui_system_destroy(SolUISystem *ui)
     }
 
     sol_ui_system_set_active(ui, false);
+    sol_ui_buffer_find_shutdown(ui);
     sol_buffer_attach_revision_signal(ui->buffers, NULL);
     if (ui->file_tree) {
         sol_file_tree_destroy(ui->file_tree);
@@ -2014,6 +2015,7 @@ bool sol_ui_system_set_active(SolUISystem *ui, bool active)
 {
     if (!ui || ui->active == active) return ui != NULL;
     if (!active) {
+        sol_ui_system_buffer_find_close(ui, SOL_UI_FIND_CLOSE_RELEASE);
         ui->saved_tree_scroll = ca_get_scroll_y(ui->primary_window, "tree-list");
         sol_ui_close_leader_popup(ui);
         ca_window_set_on_frame(ui->primary_window, NULL, NULL);
@@ -3534,6 +3536,9 @@ bool sol_ui_system_focus_leaf(SolUISystem *ui, SolBufferNodeId leaf_id)
 void sol_ui_system_set_focused_panel(SolUISystem *ui, SolUIFocusedPanel panel)
 {
     if (!ui) return;
+    if (panel != SOL_UI_FOCUSED_PANEL_BUFFER) {
+        sol_ui_system_buffer_find_close(ui, SOL_UI_FIND_CLOSE_RELEASE);
+    }
     if (panel != SOL_UI_FOCUSED_PANEL_TERMINAL && ui->terminal_mgr &&
         sol_terminal_manager_focused(ui->terminal_mgr)) {
         sol_terminal_manager_set_focused(ui->terminal_mgr, false);

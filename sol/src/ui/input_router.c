@@ -293,16 +293,33 @@ static bool key_is_printable_alpha(SolKeyCode key)
     return (key >= 32 && key <= 126);
 }
 
-/* Settle the cursor into view + ask the UI to rebuild the buffer area. */
+/*
+ * Recenter scroll_top on the cursor line when that line lies outside the
+ * viewport, so a jump lands mid-pane instead of on its edge.
+ *
+ * tb          The text buffer whose cursor is read.
+ * viewport    Visible height in lines.
+ * scroll_top  In/out: first visible line.
+ */
+static void center_offscreen_cursor(const SolTextBuffer *tb, int viewport, int *scroll_top)
+{
+    const int line = (int)sol_text_buffer_cursor_line(tb);
+    if (line >= *scroll_top && line < *scroll_top + viewport) return;
+    const int centered = line - viewport / 2;
+    *scroll_top = centered > 0 ? centered : 0;
+}
+
 /*
  * After a buffer edit, scroll the cursor into the visible viewport and
  * request a buffer-area UI rebuild.  Uses the active leaf's geometry when
  * available, falling back to the full window dimensions.
  *
- * r   The input router providing geometry and UI references.
- * tb  The text buffer that was edited.
+ * r       The input router providing geometry and UI references.
+ * tb      The text buffer that was edited.
+ * center  Center the cursor line when it is off-screen (jumps) instead of
+ *         scrolling it just into view (editing and caret motion).
  */
-static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
+static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb, bool center)
 {
     if (!r || !tb) return;
     Ca_Window *win = sol_ui_system_primary_window(r->ui);
@@ -324,6 +341,7 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
             leaf_rect.w, ui_scale, router_glyph_advance_px(win));
         int scroll_top  = sol_buffer_leaf_scroll_top(r->buffers, leaf_id);
         int scroll_left = sol_buffer_leaf_scroll_left(r->buffers, leaf_id);
+        if (center) center_offscreen_cursor(tb, viewport, &scroll_top);
         sol_text_buffer_ensure_cursor_visible_2d_ex(
             tb, viewport, viewport_cols, &scroll_top, &scroll_left);
         sol_buffer_set_leaf_scroll_top(r->buffers, leaf_id, scroll_top);
@@ -345,11 +363,17 @@ static void post_edit_settle(SolInputRouter *r, SolTextBuffer *tb)
     if (leaf_id != 0u) {
         int scroll_top  = sol_buffer_leaf_scroll_top(r->buffers, leaf_id);
         int scroll_left = sol_buffer_leaf_scroll_left(r->buffers, leaf_id);
+        if (center) center_offscreen_cursor(tb, viewport, &scroll_top);
         sol_text_buffer_ensure_cursor_visible_2d_ex(
             tb, viewport, viewport_cols, &scroll_top, &scroll_left);
         sol_buffer_set_leaf_scroll_top(r->buffers, leaf_id, scroll_top);
         sol_buffer_set_leaf_scroll_left(r->buffers, leaf_id, scroll_left);
     } else {
+        if (center) {
+            int scroll_top = sol_text_buffer_scroll_top(tb);
+            center_offscreen_cursor(tb, viewport, &scroll_top);
+            sol_text_buffer_set_scroll_top(tb, scroll_top);
+        }
         sol_text_buffer_ensure_cursor_visible_2d(tb, viewport, viewport_cols);
     }
     sol_ui_system_invalidate_buffer_area(r->ui);
@@ -406,7 +430,7 @@ static bool handle_text_buffer_key(SolInputRouter *r,
     default: break;
     }
 
-    if (handled) post_edit_settle(r, tb);
+    if (handled) post_edit_settle(r, tb, false);
     return handled;
 }
 
@@ -479,17 +503,6 @@ static void on_key(const Ca_Event *ev, void *user_data)
                 return;
             }
 
-            /* ESC closes the floating terminal (quake-console convention)
-               instead of forwarding to the PTY. Scoped strictly to FLOAT —
-               docked BOTTOM/RIGHT keep forwarding ESC to the shell
-               unconditionally, unchanged. */
-            if (ie.data.key.key == SOL_KEY_ESCAPE &&
-                sol_terminal_manager_position(tmgr) == SOL_TERMINAL_POSITION_FLOAT) {
-                sol_ui_system_set_focused_panel(r->ui, SOL_UI_FOCUSED_PANEL_BUFFER);
-                sol_ui_system_terminal_notify(r->ui);
-                return;
-            }
-
             /* Paste intercept: Cmd+V (macOS Super+V) or Ctrl+Shift+V (Linux/Win).
                Both paste the system clipboard into the PTY with bracketed-paste
                framing when the application has enabled XTerm ?2004 mode.
@@ -538,6 +551,23 @@ static void on_key(const Ca_Event *ev, void *user_data)
             return;
         }
         return;
+    }
+
+    /* In-buffer find owns plain keys typed into its status-bar prompt.
+       Leader chords and modifier chords still reach the command system. */
+    if (ie.type == SOL_INPUT_EVENT_KEY_DOWN && !native_owns &&
+        sol_ui_system_buffer_find_active(r->ui) &&
+        !sol_ui_system_is_leader_active(r->ui) &&
+        !sol_ui_is_leader_key(r->ui, ie.data.key.key)) {
+        const SolUIFindInput outcome = sol_ui_system_buffer_find_key(
+            r->ui, ie.data.key.key, ie.data.key.modifiers);
+        if (outcome != SOL_UI_FIND_INPUT_IGNORED) {
+            sol_input_system_process_event(r->input, &ie);
+            if (outcome == SOL_UI_FIND_INPUT_MOVED) {
+                post_edit_settle(r, sol_text_buffer_active(r->buffers), true);
+            }
+            return;
+        }
     }
 
     /* Buffer / non-terminal path: full UI event routing. */
@@ -591,6 +621,14 @@ static void on_char(const Ca_Event *ev, void *user_data)
 
     if (native_ui_owns_keyboard(ev)) return;
 
+    if (sol_ui_system_buffer_find_active(r->ui)) {
+        if (sol_ui_system_buffer_find_char(r->ui, ev->character.codepoint) ==
+            SOL_UI_FIND_INPUT_MOVED) {
+            post_edit_settle(r, sol_text_buffer_active(r->buffers), true);
+        }
+        return;
+    }
+
     /* Terminal-focused path: send codepoint to PTY as UTF-8. */
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
     if (tmgr && sol_terminal_manager_focused(tmgr)) {
@@ -633,7 +671,7 @@ static void on_char(const Ca_Event *ev, void *user_data)
     SolTextBuffer *tb = sol_text_buffer_active(r->buffers);
     if (!tb) return;
     if (sol_text_buffer_insert_codepoint(tb, cp)) {
-        post_edit_settle(r, tb);
+        post_edit_settle(r, tb, false);
     }
 }
 
@@ -663,6 +701,12 @@ static void on_mouse_button(const Ca_Event *ev, void *user_data)
     ie.data.mouse_button.button    = (SolMouseButton)ev->mouse_button.button;
     ie.data.mouse_button.modifiers = modifiers_from_ca(ev->mouse_button.mods);
     ie.data.mouse_button.repeated  = (ev->mouse_button.action == CA_REPEAT);
+
+    /* A click anywhere ends an in-buffer find, leaving the previewed match
+       selected; the click itself then routes normally. */
+    if (ie.type == SOL_INPUT_EVENT_MOUSE_DOWN) {
+        sol_ui_system_buffer_find_close(r->ui, SOL_UI_FIND_CLOSE_RELEASE);
+    }
 
     SolTerminalManager *tmgr = sol_ui_system_terminal_manager(r->ui);
 

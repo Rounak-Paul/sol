@@ -179,3 +179,10 @@ void sol_ui_system_set_leader_modifier(SolUISystem *ui, SolModifierMask mod)
 {
     if (ui) ui->leader_modifier = mod;
 }
+
+/* buffer_find.c owns the real version; a find session is never active in
+   these tests because the stub UI never opens one. */
+void sol_ui_buffer_find_render_status(SolUISystem *ui)
+{
+    (void)ui;
+}
