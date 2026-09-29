@@ -146,3 +146,15 @@ its descendants, preserving sticky-row forwarding while making an empty overlay
 transparent. Hidden nodes and nodes under hidden ancestors are rejected. The
 `test_transparent_overlay_wheel_routing` regression covers pass-through over the
 empty overlay, descendant bubbling, and hidden-overlay exclusion.
+
+### Splitter handle occlusion (2026-09-29)
+
+User-reported: with the floating terminal open, the splitter handles of panels *beneath* it still
+highlighted on hover and could be dragged through the terminal. The 2026-09-27 pass gated every
+widget site on `point_reaches_node` except the splitter block: drag-start and `Ca_Splitter.bar_hovered`
+called `point_in_splitter_handle` purely geometrically (the handle bypasses `hovered_node` by design,
+see `splitter-handle.md`). Fix: both now also require `node_effective_z(n) >= top_z`, and `top_z` is
+computed every pass while the window has splitters (hover needs it without a click). An in-progress
+drag is not interrupted. Regression: `ca_splitter_tests.c` asserts `bar_hovered` is false once a
+z=5 pane covers the gutter (verified failing without the gate). Drag-start shares the same gate but
+can't be driven headlessly (`ca_window_left_button_held` queries the OS).
