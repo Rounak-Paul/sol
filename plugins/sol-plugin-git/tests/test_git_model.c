@@ -1,4 +1,5 @@
 #include "git_plugin.h"
+#include "git_list.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -520,8 +521,39 @@ static void test_read_submodule_head(void)
     CHECK(system(command) == 0);
 }
 
+/* Verify large groups retain coverage and bounded work across scroll and scale. */
+static void test_visible_file_ranges(void)
+{
+    const float scales[] = {0.75f, 1.0f, 1.5f, 2.0f};
+    for (size_t s = 0u; s < sizeof(scales) / sizeof(scales[0]); ++s) {
+        float height = GIT_LIST_ROW_HEIGHT * scales[s];
+        float viewport = 560.0f * scales[s];
+        for (size_t row = 0u; row < 512u; ++row) {
+            GitListRange range = git_list_visible_range(512u, -(float)row * height,
+                                                        viewport, height);
+            CHECK(range.first <= row);
+            CHECK(range.last > row);
+            CHECK(range.last <= 512u);
+            CHECK(range.last - range.first <= 37u);
+        }
+    }
+    GitListRange range = git_list_visible_range(512u, 20000.0f, 560.0f, 28.0f);
+    CHECK(range.first == 0u && range.last == 0u);
+    range = git_list_visible_range(512u, -20000.0f, 560.0f, 28.0f);
+    CHECK(range.first == 512u && range.last == 512u);
+    range = git_list_visible_range(0u, 0.0f, 560.0f, 28.0f);
+    CHECK(range.first == 0u && range.last == 0u);
+    range = git_list_visible_range(512u, 0.0f, 0.0f, 28.0f);
+    CHECK(range.first == 0u && range.last == 96u);
+    range = git_list_visible_range(512u, NAN, 560.0f, 28.0f);
+    CHECK(range.first == 0u && range.last == 96u);
+    range = git_list_visible_range(512u, -800.5f, 560.5f, 28.0f);
+    CHECK(range.first == 20u && range.last == 57u);
+}
+
 int main(void)
 {
+    test_visible_file_ranges();
     test_status_core_records();
     test_status_rename_record();
     test_status_detached_and_unmerged();

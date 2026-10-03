@@ -1,4 +1,5 @@
 #include "git_plugin.h"
+#include "git_list.h"
 
 #include <causality.h>
 
@@ -1464,6 +1465,7 @@ static void git_render_file_row(GitPlugin *plugin,
         .on_click = row_ctx ? git_on_action : NULL,
         .click_data = row_ctx,
         .style = "scm-file-row",
+        .inline_style = "height: 28px; min-height: 28px; max-height: 28px; flex-shrink: 0;",
         .disabled = row_disabled || !row_ctx,
     });
 
@@ -1523,15 +1525,23 @@ static void git_render_file_row(GitPlugin *plugin,
     ca_btn_end();   /* scm-file-row */
 }
 
-/* Render a staged or unstaged file group. Omitted entirely when empty so a
- * partially-clean tree (e.g. everything staged) doesn't show a dangling
- * zero-count section with nothing underneath it. */
+/* Render a file group with viewport-sized widget work and full scroll extent.
+ * plugin: snapshot and actions; title: heading; staged: index/worktree side;
+ * offset: running content position, advanced by this group;
+ * scroll_y, viewport_height, scale: current resolved scroll geometry. */
 static void git_render_file_group(GitPlugin *plugin,
                                   const char *title,
-                                  bool staged)
+                                  bool staged,
+                                  float *offset,
+                                  float scroll_y,
+                                  float viewport_height,
+                                  float scale)
 {
-    const size_t count = staged ? plugin->snapshot.staged_count
-                                : plugin->snapshot.unstaged_count;
+    size_t count = 0u;
+    for (size_t i = 0u; i < plugin->snapshot.file_count; ++i) {
+        const GitFileStatus *file = &plugin->snapshot.files[i];
+        if (staged ? git_file_is_staged(file) : git_file_is_unstaged(file)) ++count;
+    }
     if (count == 0u) return;
 
     char heading[128];
@@ -1539,6 +1549,7 @@ static void git_render_file_group(GitPlugin *plugin,
     ca_div_begin(&(Ca_DivDesc){
         .direction = CA_HORIZONTAL,
         .style = "scm-section-header workspace-panel-chrome",
+        .inline_style = "height: 27px; min-height: 27px; max-height: 27px; flex-shrink: 0;",
     });
     ca_text(&(Ca_TextDesc){ .text = heading, .style = "scm-section-title" });
     git_render_button(plugin, staged ? "Unstage All" : "Stage All",
@@ -1546,13 +1557,42 @@ static void git_render_file_group(GitPlugin *plugin,
                       NULL, false, plugin->busy, "scm-section-action");
     ca_div_end();
 
+    *offset += 27.0f * scale;
+    GitListRange range = git_list_visible_range(
+        count, *offset - scroll_y, viewport_height, GIT_LIST_ROW_HEIGHT * scale);
+    ca_div_begin(&(Ca_DivDesc){
+        .direction = CA_VERTICAL,
+        .id = staged ? "scm-staged-files" : "scm-unstaged-files",
+        .inline_style = "width: 100%; gap: 0px; flex-shrink: 0;",
+    });
+    if (range.first > 0u) {
+        ca_spacer(&(Ca_SpacerDesc){
+            .height = (float)range.first * GIT_LIST_ROW_HEIGHT,
+            .id = staged ? "scm-staged-before" : "scm-unstaged-before",
+        });
+    }
+    size_t row = 0u;
     for (size_t i = 0u; i < plugin->snapshot.file_count; ++i) {
         const GitFileStatus *file = &plugin->snapshot.files[i];
         if ((staged && git_file_is_staged(file)) ||
             (!staged && git_file_is_unstaged(file))) {
-            git_render_file_row(plugin, file, staged);
+            if (row >= range.first && row < range.last) {
+                char key[32];
+                snprintf(key, sizeof(key), "scm-file-%zu", i);
+                ca_reconcile_key(key);
+                git_render_file_row(plugin, file, staged);
+            }
+            ++row;
         }
     }
+    if (range.last < count) {
+        ca_spacer(&(Ca_SpacerDesc){
+            .height = (float)(count - range.last) * GIT_LIST_ROW_HEIGHT,
+            .id = staged ? "scm-staged-after" : "scm-unstaged-after",
+        });
+    }
+    ca_div_end();
+    *offset += (float)count * GIT_LIST_ROW_HEIGHT * scale;
 }
 
 /* Attention rank of a submodule; higher sorts first in the Changes tab. */
@@ -1693,10 +1733,18 @@ static void git_render_submodule_card(GitPlugin *plugin,
     ca_tooltip(&(Ca_TooltipDesc){ .text = tooltip });
 }
 
-/* Render the changes tab, including commit input and file groups. */
-static void git_render_changes(GitPlugin *plugin)
+/* Render plugin changes within content, the owning scroll viewport. */
+static void git_render_changes(GitPlugin *plugin, Ca_Div *content)
 {
-    ca_div_begin(&(Ca_DivDesc){
+    SolUISystem *ui = sol_plugin_ui(plugin->ctx);
+    float scale = sol_ui_system_scale(ui);
+    if (!isfinite(scale) || scale <= 0.0f) scale = 1.0f;
+    Ca_Signal *scroll = ca_get_scroll_y_signal(
+        sol_ui_system_primary_window(ui), "scm-content-scroll");
+    float scroll_y = scroll ? ca_signal_get_float(scroll) : 0.0f;
+    float viewport_height = 0.0f;
+    ca_div_content_screen_rect(content, NULL, NULL, NULL, &viewport_height);
+    Ca_Div *commit_box = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style = "scm-commit-box",
     });
@@ -1725,6 +1773,7 @@ static void git_render_changes(GitPlugin *plugin)
     }
     ca_div_end();
 
+    float offset = ca_div_get_layout_height(commit_box);
     if (plugin->pending_discard[0]) {
         char message[GIT_PATH_CAP + 96u];
         snprintf(message, sizeof(message), "Discard changes to \"%s\"?%s",
@@ -1732,7 +1781,7 @@ static void git_render_changes(GitPlugin *plugin)
                  plugin->pending_discard_untracked
                      ? " This will permanently delete the untracked file."
                      : " This cannot be undone.");
-        ca_div_begin(&(Ca_DivDesc){
+        Ca_Div *confirm = ca_div_begin(&(Ca_DivDesc){
             .direction = CA_VERTICAL,
             .style = "scm-confirm",
         });
@@ -1744,6 +1793,7 @@ static void git_render_changes(GitPlugin *plugin)
                           false, "scm-danger-action");
         ca_div_end();
         ca_div_end();
+        offset += ca_div_get_layout_height(confirm);
     }
 
     if (plugin->snapshot.file_count == 0u &&
@@ -1754,8 +1804,10 @@ static void git_render_changes(GitPlugin *plugin)
         ca_div_end();
         return;
     }
-    git_render_file_group(plugin, "Staged Changes", true);
-    git_render_file_group(plugin, "Changes", false);
+    git_render_file_group(plugin, "Staged Changes", true,
+                          &offset, scroll_y, viewport_height, scale);
+    git_render_file_group(plugin, "Changes", false,
+                          &offset, scroll_y, viewport_height, scale);
     if (plugin->snapshot.submodule_count > 0u) {
         char heading[128];
         snprintf(heading, sizeof(heading), "Submodules (%zu)",
@@ -2158,13 +2210,13 @@ static void git_panel_render(void *user_data)
                       plugin->tab == GIT_PANEL_BRANCHES ? "scm-tab-active" : "scm-tab");
     ca_div_end();
 
-    ca_div_begin(&(Ca_DivDesc){
+    Ca_Div *content = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style = "scm-content workspace-panel-well native-scrollbar",
         .id = "scm-content-scroll",
     });
     switch (plugin->tab) {
-        case GIT_PANEL_CHANGES: git_render_changes(plugin); break;
+        case GIT_PANEL_CHANGES: git_render_changes(plugin, content); break;
         case GIT_PANEL_HISTORY: git_render_history(plugin); break;
         case GIT_PANEL_BRANCHES: git_render_branches(plugin); break;
     }
