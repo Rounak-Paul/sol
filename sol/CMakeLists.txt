@@ -349,6 +349,7 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Release" AND (BUILD_TESTING OR PROJECT_IS_TOP_
     add_executable(sol_plugin_tests
         tests/test_plugin.c
         tests/stubs/sol_ui_bump_stub.c
+        tests/stubs/sol_plugin_workflow_stub.c
         tests/stubs/sol_syntax_stub.c
         tests/stubs/sol_syntax_highlight_stub.c
         src/core/sol_plugin.c

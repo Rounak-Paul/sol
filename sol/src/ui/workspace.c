@@ -1684,6 +1684,17 @@ static bool sol_ui_build_layout(SolUISystem *ui)
         ca_div_end();
     }
 
+    if (ui->project_tabs_overlay_builder) {
+        ui->project_tabs_overlay_host = ca_div_begin(&(Ca_DivDesc){
+            .position = CA_POSITION_ABSOLUTE, .pos_x = 0.0f, .pos_y = 0.0f,
+            .z_index = 25, .no_hover = true, .style = "toolbar-overlay-host",
+        });
+        ca_div_set_builder(ui->project_tabs_overlay_host,
+                           ui->project_tabs_overlay_builder,
+                           ui->project_tabs_overlay_data);
+        ca_div_end();
+    }
+
     ui->workspace_content_host = ca_div_begin(&(Ca_DivDesc){
         .direction = CA_VERTICAL,
         .style     = "workspace-main-full",
@@ -1996,11 +2007,76 @@ void sol_ui_system_set_project_tabs(SolUISystem *ui, void (*build)(Ca_Div *, voi
     ui->project_tabs_data = data;
 }
 
+void sol_ui_system_set_project_tabs_overlay(SolUISystem *ui,
+                                            void (*build)(Ca_Div *, void *), void *data)
+{
+    if (!ui) return;
+    ui->project_tabs_overlay_builder = build;
+    ui->project_tabs_overlay_data = data;
+}
+
 /** Reconcile the mounted tab strip with the host's current project list. */
 void sol_ui_system_refresh_project_tabs(SolUISystem *ui)
 {
     if (ui && ui->project_tabs_host)
-        ca_div_set_builder(ui->project_tabs_host, ui->project_tabs_builder, ui->project_tabs_data);
+        ca_div_invalidate(ui->project_tabs_host);
+    if (ui && ui->project_tabs_overlay_host)
+        ca_div_invalidate(ui->project_tabs_overlay_host);
+}
+
+SolUIToolbarToken sol_ui_system_register_toolbar(SolUISystem *ui, const SolUIToolbarDesc *desc)
+{
+    if (!ui || !desc || !desc->id || !desc->id[0] || !desc->render ||
+        strlen(desc->id) >= sizeof(ui->toolbar_items[0].id)) return SOL_UI_TOOLBAR_TOKEN_INVALID;
+    for (size_t i = 0; i < SOL_UI_MAX_TOOLBAR_ITEMS; ++i)
+        if (ui->toolbar_items[i].in_use && strcmp(ui->toolbar_items[i].id, desc->id) == 0)
+            return SOL_UI_TOOLBAR_TOKEN_INVALID;
+    for (size_t i = 0; i < SOL_UI_MAX_TOOLBAR_ITEMS; ++i) {
+        SolUIToolbarItem *item = &ui->toolbar_items[i];
+        if (item->in_use) continue;
+        snprintf(item->id, sizeof(item->id), "%s", desc->id);
+        item->token = ++ui->toolbar_next_token;
+        if (!item->token) item->token = ++ui->toolbar_next_token;
+        item->render = desc->render;
+        item->user_data = desc->user_data;
+        item->order = desc->order;
+        item->in_use = true;
+        sol_ui_system_refresh_project_tabs(ui);
+        return item->token;
+    }
+    return SOL_UI_TOOLBAR_TOKEN_INVALID;
+}
+
+void sol_ui_system_unregister_toolbar(SolUISystem *ui, SolUIToolbarToken token)
+{
+    if (!ui || !token) return;
+    for (size_t i = 0; i < SOL_UI_MAX_TOOLBAR_ITEMS; ++i) {
+        SolUIToolbarItem *item = &ui->toolbar_items[i];
+        if (!item->in_use || item->token != token) continue;
+        memset(item, 0, sizeof(*item));
+        sol_ui_system_refresh_project_tabs(ui);
+        return;
+    }
+}
+
+void sol_ui_system_render_toolbar(SolUISystem *ui)
+{
+    if (!ui) return;
+    /* Stable insertion order for independent plugin contributions. */
+    SolUIToolbarItem *sorted[SOL_UI_MAX_TOOLBAR_ITEMS];
+    size_t count = 0;
+    for (size_t i = 0; i < SOL_UI_MAX_TOOLBAR_ITEMS; ++i) {
+        SolUIToolbarItem *item = &ui->toolbar_items[i];
+        if (!item->in_use) continue;
+        size_t at = count;
+        while (at && sorted[at - 1]->order > item->order) {
+            sorted[at] = sorted[at - 1];
+            --at;
+        }
+        sorted[at] = item;
+        ++count;
+    }
+    for (size_t i = 0; i < count; ++i) sorted[i]->render(sorted[i]->user_data);
 }
 
 /** Return whether ui currently presents the host window. */
@@ -2024,7 +2100,8 @@ bool sol_ui_system_set_active(SolUISystem *ui, bool active)
         ca_instance_set_stylesheet(ui->instance, NULL);
         ca_div_destroy(ui->workspace_host);
         ui->workspace_host = ui->workspace_content_host = NULL;
-        ui->project_tabs_host = ui->tree_panel_host = ui->buffer_area_host = NULL;
+        ui->project_tabs_host = ui->project_tabs_overlay_host =
+            ui->tree_panel_host = ui->buffer_area_host = NULL;
         ui->term_panel_host = ui->term_float_host = ui->popup_host = NULL;
         ui->tree_sticky_host = ui->status_bar_host = NULL;
         ui->term_viewport_host = NULL;

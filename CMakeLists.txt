@@ -227,6 +227,12 @@ set(BUILD_SHARED_LIBS ${_SOL_SAVED_BUILD_SHARED_LIBS} CACHE BOOL "" FORCE)
 
 add_subdirectory(vendors/causality)
 
+# Causality's style test uses GLFW for window types but does not use OpenGL.
+# Avoid pulling in GL/gl.h, which is absent on systems configured for Vulkan.
+if(TARGET causality_style_tests)
+    target_compile_definitions(causality_style_tests PRIVATE GLFW_INCLUDE_NONE)
+endif()
+
 # causality is a static library — its PRIVATE dependencies don't propagate
 # through CMake's dependency graph, so the final executable must link
 # shaderc and its deps directly on Linux.

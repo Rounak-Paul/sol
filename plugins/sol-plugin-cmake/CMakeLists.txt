@@ -12,6 +12,7 @@ endif()
 
 add_library(sol_plugin_cmake MODULE
     src/plugin.c
+    src/workflow.c
     ${GRAMMAR_SOURCES}
 )
 
@@ -24,6 +25,7 @@ sol_configure_plugin_output(sol_plugin_cmake)
 target_include_directories(sol_plugin_cmake PRIVATE
     ${GRAMMAR_DIR}
     ${CMAKE_SOURCE_DIR}/sol/include
+    ${CMAKE_SOURCE_DIR}/vendors/causality/causality/include
 )
 
 sol_embed_highlights_scm(sol_plugin_cmake

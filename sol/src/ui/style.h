@@ -418,19 +418,58 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".buffer-tab-close-icon-active {"
     "  color: #686878;"
     "}"
-    /* ===== Project tab strip (mirrors .buffer-tabs-row / .buffer-tab) ===== */
+    /* ===== Workspace toolbar ===== */
     ".project-tabs {"
     "  width: 100%;"
-    "  height: 19px;"
+    "  height: 28px;"
     "  background: rgba(30, 30, 38, 0.82);"
-    "  padding: 1px 3px;"
-    "  gap: 1px;"
+    "  padding: 2px 8px;"
+    "  gap: 5px;"
     "  flex-grow: 0;"
     "  flex-shrink: 0;"
     "  align-items: center;"
     "  justify-content: flex-start;"
-    "  overflow: hidden;"
+    "  overflow: visible;"
     "}"
+    ".toolbar-session-trigger { width: 188px; min-width: 100px; flex-shrink: 1;"
+    "  height: 24px; padding: 0px 7px; gap: 5px; background: rgba(118, 151, 192, 0.10);"
+    "  border-radius: 4px; align-items: center; }"
+    ".toolbar-session-trigger:hover, .toolbar-session-trigger-open {"
+    "  background: rgba(118, 151, 192, 0.22); }"
+    ".toolbar-session-name { flex-grow: 1; min-width: 0px; height: 20px; line-height: 20px;"
+    "  color: #c8d1dc; text-wrap: nowrap; overflow: hidden; font-size: 13px; }"
+    ".toolbar-session-caret { color: #8799ad; font-size: 13px; flex-shrink: 0;"
+    "  height: 20px; line-height: 20px; }"
+    ".toolbar-overlay-host { width: 100%; height: 100%; overflow: visible; }"
+    ".toolbar-session-backdrop { width: 100%; height: 100%; background: transparent; }"
+    ".toolbar-session-dismiss { width: 100%; height: 100%; background: transparent; }"
+    ".toolbar-session-menu { width: 264px; max-height: 292px; padding: 2px;"
+    "  background: rgba(13, 22, 34, 0.98); border: 1px solid rgba(122, 152, 186, 0.30);"
+    "  border-radius: 6px; box-shadow: 0px 6px 20px rgba(0, 0, 0, 0.35);"
+    "  overflow-y: scroll; overflow-x: hidden; align-items: stretch; gap: 1px; }"
+    ".toolbar-session-row { width: 100%; height: 28px; flex-shrink: 0;"
+    "  align-items: center; gap: 1px; border-radius: 3px; }"
+    ".toolbar-session-row:hover { background: rgba(118, 151, 192, 0.15); }"
+    ".toolbar-session-row-active { background: rgba(112, 157, 207, 0.38); }"
+    ".toolbar-session-item { background: transparent; height: 26px; min-width: 0px;"
+    "  flex-grow: 1; padding: 0px 4px 0px 8px; align-items: center; }"
+    ".toolbar-session-item-name { color: #c7d1df; font-size: 13px;"
+    "  height: 20px; line-height: 20px; text-wrap: nowrap; overflow: hidden; }"
+    ".toolbar-session-close { background: transparent; width: 24px; height: 24px;"
+    "  flex-shrink: 0; align-items: center; justify-content: center; border-radius: 4px; }"
+    ".toolbar-session-close:hover { background: rgba(220, 92, 106, 0.25); }"
+    ".toolbar-session-close-icon { color: #8799ad; font-size: 12px; }"
+    ".toolbar-spacer { flex-grow: 1; min-width: 0px; }"
+    ".toolbar-icon { width: 24px; height: 24px; background: transparent;"
+    "  align-items: center; justify-content: center; border-radius: 4px; }"
+    ".toolbar-icon:hover { background: rgba(118, 151, 192, 0.20); }"
+    ".toolbar-icon-glyph { color: #a9bacd; font-size: 14px; height: 20px; line-height: 20px; }"
+    ".toolbar-cmake-group { height: 24px; padding: 0px 2px 0px 5px; gap: 3px;"
+    "  align-items: center; flex-shrink: 1; min-width: 0px; border-radius: 4px;"
+    "  background: rgba(118, 151, 192, 0.08); }"
+    ".toolbar-target-select { width: 160px; min-width: 90px; flex-shrink: 1;"
+    "  height: 24px; padding: 0px 8px; font-size: 12px; overflow: hidden; }"
+    ".toolbar-label { color: #8d99a9; font-size: 12px; height: 20px; line-height: 20px; }"
     ".project-tab {"
     "  background: rgba(40, 40, 50, 0.82);"
     "  width: 140px;"
@@ -1141,7 +1180,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  padding-right: 4px;"
     "}"
     /* ===== Status bar =====
-       Height matches .project-tabs (19px) and SOL_UI_STATUS_BAR_BAR_HEIGHT
+       Height matches SOL_UI_STATUS_BAR_BAR_HEIGHT
        (sol_ui_internal.h), which is what the workspace's reserved-band
        math assumes this bar occupies. A taller CSS height than the
        reserved band expects pushes the bar's content out of vertical
@@ -2504,13 +2543,9 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     ".buffer-tab-dirty-active { color: #f0b840; }"
     ".buffer-tab-close { border-radius: 0px; }"
     ".buffer-tab-close:hover { background: rgba(220, 92, 106, 0.20); }"
-    /* Project tab strip and status bar are the app's two full-span chrome
-       bars (top and bottom) and must read as the same element repeated
-       twice: same surface tone/opacity, both flush full-width edge to
-       edge (deliberately not gutter-inset like the floating panels —
-       full width reads better for a window-spanning chrome bar). */
+    /* Toolbar and status bar share the full-span chrome surface tone. */
     ".project-tabs {"
-    "  height: 19px; padding: 1px 3px; gap: 1px; align-items: center;"
+    "  height: 28px; padding: 2px 8px; gap: 5px; align-items: center;"
     "  background: rgba(5, 12, 21, " SOL_UI_SURFACE_RAISED_ALPHA_CSS "); "
     "}"
     ".project-tab {"

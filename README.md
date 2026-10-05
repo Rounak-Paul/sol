@@ -2,7 +2,7 @@
 
 A modal-flow code editor written in C11, built on the [Causality](vendors/causality/) reactive UI library.
 
-> **Status:** Early development — core editing, split-pane workspace, command panel, and file tree are functional. File I/O from the UI is in progress; plugin and job systems are dormant.
+> **Status:** Early development — core editing, split-pane workspace, command panel, file tree, and plugins are functional.
 
 ---
 
@@ -15,6 +15,9 @@ A modal-flow code editor written in C11, built on the [Causality](vendors/causal
 - **Key bindings** — loaded from `~/.sol/bindings.conf`, auto-seeded on first launch
 - **File tree** — directory browser wired to the causality UI
 - **Reactive UI** — fine-grained signal/effect system (Solid.js-style) via Causality
+- **Workspace toolbar** — session selector with a plugin-owned action area
+- **CMake workflow** — detects CMake projects, discovers build and executable targets,
+  and configures, builds, or runs them in a project terminal
 
 ---
 
@@ -178,7 +181,7 @@ Causality (window, renderer, signals)
             ├── SolBufferSystem — split-pane layout + buffer registry
             ├── SolInputRouter  — Causality key events → Sol commands
             ├── SolJobSystem    — worker-thread pool (dormant)
-            └── SolPlugin       — dynamic plugin loader (dormant)
+            └── SolPlugin       — dynamic plugin loader
                     └── UI modules (workspace, text view, command panel, ...)
 ```
 

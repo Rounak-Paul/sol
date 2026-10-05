@@ -43,27 +43,27 @@
 #define SOL_UI_STATUS_TEXT_MAX_LEN    127u
 #define SOL_UI_MAX_STATUS_SEGMENTS    16u
 #define SOL_UI_MAX_SIDE_PANELS         8u
+#define SOL_UI_MAX_TOOLBAR_ITEMS       16u
 #define SOL_UI_MAX_CONTEXT_ACTIONS    16u
 #define SOL_UI_CONTEXT_PATH_MAX       4096u
 #define SOL_UI_MAX_GLASS_PANELS       64u
 #define SOL_UI_BUFFER_FIND_QUERY_MAX  256u
 #define SOL_UI_BUFFER_FIND_MAX_MATCHES 262144u
 
-/* Project tab strip height — kept in sync with .project-tabs in style.h
+/* Workspace toolbar height — kept in sync with .project-tabs in style.h
    so layout math (buffer-area rect, tree-sticky-host offset) doesn't
    re-parse the stylesheet to find it. */
-#define SOL_UI_PROJECT_TABS_HEIGHT    19.0f
+#define SOL_UI_PROJECT_TABS_HEIGHT    28.0f
 
 /* Causality manages the title and status strips; sol only declares the
    status-bar height it wants reserved. The title bar height is fixed by
    causality itself and not visible from sol's layout code.
    The reserved band holds the visible bar plus the gap above it, so the
-   bar reads as the mirror of the project tab strip at the top of the
-   window: same bar height, and the same panel margin separating it from
-   the workspace. The gap must come from the bar's own top margin — the
+   bar is separated from the workspace by the panel margin. The gap must
+   come from the bar's own top margin — the
    status bar is a root-level sibling of the workspace host, so the
    workspace's .workspace-main-content padding cannot reach it. */
-#define SOL_UI_STATUS_BAR_BAR_HEIGHT  SOL_UI_PROJECT_TABS_HEIGHT
+#define SOL_UI_STATUS_BAR_BAR_HEIGHT  19.0f
 #define SOL_UI_STATUS_BAR_GAP         8.0f   /* = SOL_UI_PANEL_MARGIN_PX */
 #define SOL_UI_STATUS_BAR_HEIGHT \
     (SOL_UI_STATUS_BAR_BAR_HEIGHT + SOL_UI_STATUS_BAR_GAP)
@@ -179,6 +179,15 @@ typedef struct SolUIRecentSession {
     char                path[4096];
 } SolUIRecentSession;
 
+typedef struct SolUIToolbarItem {
+    char id[64];
+    SolUIToolbarToken token;
+    SolUIToolbarRenderFn render;
+    void *user_data;
+    int order;
+    bool in_use;
+} SolUIToolbarItem;
+
 typedef struct SolFlowSuggestion {
     SolKeyCode      key;
     SolModifierMask modifiers;   /* Shift/Alt/Super only */
@@ -279,6 +288,9 @@ struct SolUISystem {
     Ca_Div           *project_tabs_host;
     void            (*project_tabs_builder)(Ca_Div *, void *);
     void             *project_tabs_data;
+    Ca_Div           *project_tabs_overlay_host;
+    void            (*project_tabs_overlay_builder)(Ca_Div *, void *);
+    void             *project_tabs_overlay_data;
     Ca_Div           *workspace_host;
     Ca_Div           *workspace_content_host;
     /* These two are kept as struct fields purely for tooling/debug
@@ -484,6 +496,8 @@ struct SolUISystem {
     void             *recent_session_user_data;
     SolUIMenuItem     menu_items[SOL_UI_MAX_MENU_ITEMS];
     uint32_t          menu_item_next_token;
+    SolUIToolbarItem toolbar_items[SOL_UI_MAX_TOOLBAR_ITEMS];
+    uint32_t toolbar_next_token;
 
     /* Ratio of the file-tree panel vs. the buffer area (0.0–1.0).
        Persisted here so ca_split_begin re-reads it each build and the

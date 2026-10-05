@@ -24,7 +24,8 @@
     ".pm-list,.fp-list,.search-results,.pm-right,.sw-right,.workspace-panel-chrome,.buffer-tabs-row,.term-header," \
     ".project-tabs,.scm-header,.scm-tabs,.scm-section-header{" \
     "border-top-width:1px;border-left-width:1px;border-bottom-width:1px;border-right-width:1px;border-radius:0px;}" \
-    ".buffer-tab,.term-tab,.project-tab,.scm-tab,.sw-tab-btn{border-radius:0px;border-width:0px;}" \
+    ".buffer-tab,.term-tab,.project-tab,.scm-tab,.sw-tab-btn,.toolbar-session-row,.toolbar-session-item{" \
+    "border-radius:0px;border-width:0px;}" \
     ".buffer-tab-active,.term-tab-active,.project-tab-active,.scm-tab-active,.sw-tab-btn-active{" \
     "border-top-width:1px;border-left-width:1px;border-bottom-width:1px;border-right-width:1px;border-radius:0px;}" \
     ".ca-popup-btn,.ca-titlebar-control,.ca-titlebar-menu-item,.pm-btn,.pm-btn-enable,.pm-btn-disable," \
@@ -33,6 +34,7 @@
     ".scm-header-action,.scm-action,.scm-icon-action,.scm-header-icon-action,.scm-header-close-action,.scm-action-icon," \
     ".scm-branch-create-from,.scm-section-action,.scm-primary-action,.scm-danger-action,.scm-remote-action," \
     ".buffer-tab-close,.term-tab-close,.term-tab-new,.project-tab-close,.project-tab-new,.status-bar-badge,.cf-row-key,.pm-badge,.sw-btn," \
+    ".toolbar-session-trigger,.toolbar-session-close,.toolbar-icon,.toolbar-cmake-group,.toolbar-target-select," \
     ".fp-new-folder-input,.search-input,.pm-search-input,.sw-scale-input,.sw-select,.sw-bind-input," \
     ".scm-commit-input,.scm-branch-input,.buffer-scrollbar,.buffer-hscrollbar," \
     ".buffer-scrollbar-thumb,.buffer-scrollbar-thumb-active,.buffer-hscrollbar-thumb,.buffer-hscrollbar-thumb-active{" \
@@ -43,17 +45,20 @@
     ".scm-action:active,.scm-primary-action:active,.scm-danger-action:active,.buffer-tab-close:active," \
     ".term-tab-close:active,.term-tab-new:active,.project-tab-close:active,.project-tab-new:active,.sw-btn:active{" \
     "border-top-width:1px;border-left-width:1px;border-bottom-width:1px;border-right-width:1px;}" \
+    ".toolbar-session-trigger:active,.toolbar-session-close:active,.toolbar-icon:active{" \
+    "border-top-width:1px;border-left-width:1px;border-bottom-width:1px;border-right-width:1px;}" \
     ".ca-popup-card,.ca-select-popup,.ca-context-menu,.ca-menubar-popup,.cf-panel,.fp-root,.search-root-window," \
     ".pm-root,.sw-root,.pm-left,.sw-left,.fp-toolbar,.fp-footer,.fp-colhdr,.search-header,.search-footer,.pm-search-row," \
-    ".scm-toolbar,.scm-repository,.scm-commit-box,.scm-section-header,.ca-titlebar{" \
+    ".scm-toolbar,.scm-repository,.scm-commit-box,.scm-section-header,.ca-titlebar,.toolbar-session-menu{" \
     "border-top-width:2px;border-left-width:2px;border-bottom-width:2px;border-right-width:2px;border-radius:0px;}" \
     ".status-bar{width:100%;margin:8px 0px 0px 0px;padding:0px 8px;flex-grow:0;flex-shrink:0;" \
     "border-top-width:1px;border-left-width:1px;border-bottom-width:1px;border-right-width:1px;border-radius:0px;}" \
-    ".ca-popup-card,.ca-select-popup,.ca-context-menu,.ca-menubar-popup,.cf-panel,.term-float-panel{" \
+    ".ca-popup-card,.ca-select-popup,.ca-context-menu,.ca-menubar-popup,.cf-panel,.term-float-panel,.toolbar-session-menu{" \
     "shadow-offset-y:2px;shadow-blur:0px;}" \
     ".tree-row,.tree-sticky-row,.fp-row,.search-result,.pm-item,.sess-item,.scm-file-row,.scm-commit-row," \
     ".scm-branch-row,.cf-row{border-radius:0px;border-width:0px;}" \
     ".fp-row-selected,.search-result-selected,.pm-item-selected,.sess-item-selected,.scm-branch-row-current," \
+    ".toolbar-session-row-active," \
     ".scm-submodule-row,.scm-submodule-card-clean,.scm-submodule-card-modified,.scm-submodule-card-warning," \
     ".scm-submodule-card-conflict,.scm-submodule-card-clean:hover,.scm-submodule-card-modified:hover," \
     ".scm-submodule-card-warning:hover,.scm-submodule-card-conflict:hover,.scm-submodule-row:active," \
@@ -95,12 +100,13 @@ static inline char *sol_retro_build_css(const SolThemeColors *colors)
         ".scm-header-action,.scm-action,.scm-icon-action,.scm-header-icon-action,.scm-header-close-action,.scm-action-icon,"
         ".scm-branch-create-from,.scm-section-action,.scm-primary-action,.scm-danger-action,.scm-remote-action,"
         ".buffer-tab-close,.term-tab-close,.term-tab-new,.project-tab-close,.project-tab-new,.status-bar-badge,.cf-row-key,.pm-badge,.sw-btn,"
+        ".toolbar-session-trigger,.toolbar-session-close,.toolbar-icon,.toolbar-cmake-group,.toolbar-target-select,"
         ".fp-new-folder-input,.search-input,.pm-search-input,.sw-scale-input,.sw-select,.sw-bind-input,.scm-commit-input,"
         ".scm-branch-input,.buffer-scrollbar,.buffer-hscrollbar,.buffer-scrollbar-thumb,.buffer-scrollbar-thumb-active,"
         ".buffer-hscrollbar-thumb,.buffer-hscrollbar-thumb-active,.ca-popup-card,.ca-select-popup,.ca-context-menu,"
-        ".ca-menubar-popup,.cf-panel,.fp-root,.search-root-window,.pm-root,.sw-root,.pm-left,.sw-left,.fp-toolbar,.fp-footer,"
+        ".ca-menubar-popup,.cf-panel,.fp-root,.search-root-window,.pm-root,.sw-root,.pm-left,.sw-left,.fp-toolbar,.fp-footer,.toolbar-session-menu,"
         ".fp-colhdr,.search-header,.search-footer,.pm-search-row,.scm-toolbar,.scm-repository,.scm-commit-box,.ca-titlebar,"
-        ".status-bar,.fp-row-selected,.search-result-selected,.pm-item-selected,.sess-item-selected,.scm-branch-row-current,"
+        ".status-bar,.fp-row-selected,.search-result-selected,.pm-item-selected,.sess-item-selected,.scm-branch-row-current,.toolbar-session-row-active,"
         ".scm-submodule-row,.scm-submodule-card-clean,.scm-submodule-card-modified,.scm-submodule-card-warning,"
         ".scm-submodule-card-conflict,.scm-tag,.scm-tag-branch,.scm-tag-clean,.scm-tag-modified,.scm-tag-warning,.scm-tag-conflict";
     const char *format = "%s%s{border-top-color:#%06x;border-left-color:#%06x;"

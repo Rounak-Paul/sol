@@ -220,6 +220,8 @@ struct SolProjectHost {
     bool create_pending;
     bool picker_open;
     SolProjectSwitcher *switcher;
+    bool sessions_open;
+    bool toolbar_refresh_pending;
     char recent_sessions[SOL_UI_RECENT_SESSION_LIMIT][4096];
     size_t recent_session_count;
     /* Last workspace arrangement any project reported; seeds every new
@@ -315,6 +317,7 @@ static void sol_recent_load(SolProjectHost *host)
 static bool sol_project_command(SolAppContext *app, const char *action);
 /** Render project tabs for the host shared by all project runtimes. */
 static void sol_project_tabs(Ca_Div *div, void *data);
+static void sol_project_sessions_overlay(Ca_Div *div, void *data);
 /** Open (or focus) the session switcher window listing every project. */
 static void sol_project_switcher_open(SolProjectHost *host);
 /** Advance the switcher window's lifecycle; reaps it once closed. */
@@ -2399,6 +2402,7 @@ static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
     app->ui = sol_ui_system_create(host->instance, host->window, app->buffers);
     if (!app->ui) goto fail;
     sol_ui_system_set_project_tabs(app->ui, sol_project_tabs, host);
+    sol_ui_system_set_project_tabs_overlay(app->ui, sol_project_sessions_overlay, host);
     sol_ui_system_set_file_open_callback(app->ui, sol_on_tree_file_open, app);
     sol_ui_system_set_focus_region_callback(app->ui, sol_on_ui_focus_region, app);
     sol_ui_system_set_terminal_focus_gain_callback(app->ui, sol_on_terminal_focus_gain, app);
@@ -2460,6 +2464,7 @@ static SolAppContext *sol_project_create(SolProjectHost *host, const char *path)
     sol_system_register_service(app->systems, "ca.instance", host->instance, NULL, NULL);
     sol_system_register_service(app->systems, "ca.window.primary", host->window, NULL, NULL);
     sol_system_register_service(app->systems, "sol.ui", app->ui, NULL, NULL);
+    sol_system_register_service(app->systems, "sol.terminal", app->terminal_mgr, NULL, NULL);
     sol_system_register_service(app->systems, "sol.bg_effect_registry", app->bg_effects, NULL, NULL);
     sol_plugin_manager_attach_ui(sol_system_plugins(app->systems), app->ui);
     sol_ui_system_set_plugin_manager(app->ui, sol_system_plugins(app->systems));
@@ -2588,19 +2593,15 @@ static bool sol_project_command(SolAppContext *app, const char *action)
     return false;
 }
 
-/** Select the project supplied as data after button dispatch completes. */
-static void sol_project_tab_clicked(Ca_Button *button, void *data)
-{
-    (void)button;
-    SolAppContext *app = data;
-    app->host->activate_pending = app;
-}
-
 /** Request closing the project supplied as data. */
 static void sol_project_tab_close(Ca_Button *button, void *data)
 {
     (void)button;
-    sol_project_command(data, "project.close");
+    SolAppContext *app = data;
+    app->host->sessions_open = false;
+    app->host->toolbar_refresh_pending = true;
+    sol_project_command(app, "project.close");
+    ca_instance_wake();
 }
 
 /** Open the host's new-project folder chooser. */
@@ -2609,6 +2610,34 @@ static void sol_project_tab_new(Ca_Button *button, void *data)
     (void)button;
     SolProjectHost *host = data;
     if (host->active) sol_project_command(host->active, "project.create");
+}
+
+static void sol_project_session_selected(Ca_Button *button, void *data)
+{
+    (void)button;
+    SolAppContext *app = data;
+    app->host->sessions_open = false;
+    app->host->activate_pending = app;
+    app->host->toolbar_refresh_pending = true;
+    ca_instance_wake();
+}
+
+static void sol_project_sessions_toggle(Ca_Button *button, void *data)
+{
+    (void)button;
+    SolProjectHost *host = data;
+    host->sessions_open = !host->sessions_open;
+    host->toolbar_refresh_pending = true;
+    ca_instance_wake();
+}
+
+static void sol_project_sessions_dismiss(Ca_Button *button, void *data)
+{
+    (void)button;
+    SolProjectHost *host = data;
+    host->sessions_open = false;
+    host->toolbar_refresh_pending = true;
+    ca_instance_wake();
 }
 
 /* ------------------------------------------------------------------ */
@@ -2949,59 +2978,102 @@ static void sol_project_switcher_tick(SolProjectHost *host)
     }
 }
 
-/** Render stable project tabs and their close controls for host. */
+/** Render the shared session selector and the active project's toolbar. */
 static void sol_project_tabs(Ca_Div *div, void *data)
 {
     (void)div;
     SolProjectHost *host = data;
-    for (SolAppContext *app = host->projects; app; app = app->next) {
-        const char *root = sol_ui_system_file_tree_root(app->ui);
-        const char *name = sol_project_display_name(root);
-        const bool tab_active = app == host->active;
-        char key[48];
-        snprintf(key, sizeof(key), "project-%llu", (unsigned long long)app->project_id);
-        Ca_Button *tab = ca_btn_begin(&(Ca_BtnDesc){
-            .id = key,
-            .style      = tab_active ? "project-tab project-tab-active" : "project-tab",
-            .direction  = CA_HORIZONTAL,
-            .background = 0u,
-            .on_click   = sol_project_tab_clicked,
-            .click_data = app,
-            .skip_keyboard_focus = true,
-        });
-        ca_text(&(Ca_TextDesc){
-            .text  = name ? name : "Empty project",
-            .style = "project-tab-label",
-        });
-        ca_tooltip_for_widget(tab, &(Ca_TooltipDesc){ .text = root ? root : "Empty project" });
-        ca_btn_begin(&(Ca_BtnDesc){
-            .style      = "project-tab-close",
-            .direction  = CA_HORIZONTAL,
-            .background = 0u,
-            .on_click   = sol_project_tab_close,
-            .click_data = app,
-            .skip_keyboard_focus = true,
-        });
-        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CLOSE, .style = "project-tab-close-icon" });
-        ca_btn_end();  /* project-tab-close */
-        ca_btn_end();  /* project-tab */
-    }
+    const char *root = host->active ? sol_ui_system_file_tree_root(host->active->ui) : NULL;
+    Ca_Button *sessions = ca_btn_begin(&(Ca_BtnDesc){
+        .style = host->sessions_open ? "toolbar-session-trigger toolbar-session-trigger-open"
+                                     : "toolbar-session-trigger",
+        .direction = CA_HORIZONTAL, .on_click = sol_project_sessions_toggle,
+        .click_data = host,
+    });
+    ca_text(&(Ca_TextDesc){ .text = root ? sol_project_display_name(root) : "Empty project",
+                             .style = "toolbar-session-name" });
+    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CHEVRON_DOWN,
+                             .style = "toolbar-session-caret" });
+    ca_btn_end();
+    ca_tooltip_for_widget(sessions, &(Ca_TooltipDesc){
+        .text = root ? root : "Empty project",
+    });
     ca_btn_begin(&(Ca_BtnDesc){
-        .style      = "project-tab-new",
+        .style      = "toolbar-icon",
         .direction  = CA_HORIZONTAL,
         .background = 0u,
         .on_click   = sol_project_tab_new,
         .click_data = host,
         .skip_keyboard_focus = true,
     });
-    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_FA_PLUS, .style = "project-tab-new-icon" });
+    ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_FA_PLUS, .style = "toolbar-icon-glyph" });
     ca_btn_end();
+    ca_div_begin(&(Ca_DivDesc){ .style = "toolbar-spacer" });
+    ca_div_end();
+    if (host->active) sol_ui_system_render_toolbar(host->active->ui);
+}
+
+static void sol_project_sessions_overlay(Ca_Div *div, void *data)
+{
+    (void)div;
+    SolProjectHost *host = data;
+    if (!host->sessions_open) return;
+    ca_div_begin(&(Ca_DivDesc){
+        .position = CA_POSITION_ABSOLUTE, .pos_x = 0.0f, .pos_y = 0.0f,
+        .z_index = 26, .style = "toolbar-session-backdrop",
+    });
+    ca_btn_begin(&(Ca_BtnDesc){
+        .style = "toolbar-session-dismiss", .on_click = sol_project_sessions_dismiss,
+        .click_data = host, .skip_keyboard_focus = true,
+    });
+    ca_btn_end();
+    ca_div_end();
+    size_t session_count = 0;
+    for (SolAppContext *app = host->projects; app; app = app->next) ++session_count;
+    float menu_height = (float)session_count * 29.0f + 3.0f;
+    if (menu_height > 292.0f) menu_height = 292.0f;
+    ca_div_begin(&(Ca_DivDesc){
+        .position = CA_POSITION_ABSOLUTE, .pos_x = 8.0f, .pos_y = 28.0f,
+        .width = 264.0f, .height = menu_height,
+        .direction = CA_VERTICAL, .z_index = 27, .style = "toolbar-session-menu",
+    });
+    for (SolAppContext *app = host->projects; app; app = app->next) {
+        const char *path = sol_ui_system_file_tree_root(app->ui);
+        ca_div_begin(&(Ca_DivDesc){
+            .direction = CA_HORIZONTAL,
+            .style = app == host->active ? "toolbar-session-row toolbar-session-row-active"
+                                         : "toolbar-session-row",
+        });
+        Ca_Button *item = ca_btn_begin(&(Ca_BtnDesc){
+            .style = "toolbar-session-item", .direction = CA_HORIZONTAL,
+            .on_click = sol_project_session_selected, .click_data = app,
+        });
+        ca_text(&(Ca_TextDesc){
+            .text = path ? sol_project_display_name(path) : "Empty project",
+            .style = "toolbar-session-item-name",
+        });
+        ca_btn_end();
+        ca_tooltip_for_widget(item, &(Ca_TooltipDesc){
+            .text = path ? path : "Empty project",
+        });
+        Ca_Button *close = ca_btn_begin(&(Ca_BtnDesc){
+            .style = "toolbar-session-close", .direction = CA_HORIZONTAL,
+            .on_click = sol_project_tab_close, .click_data = app,
+        });
+        ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CLOSE,
+                                 .style = "toolbar-session-close-icon" });
+        ca_btn_end();
+        ca_tooltip_for_widget(close, &(Ca_TooltipDesc){ .text = "Close session" });
+        ca_div_end();
+    }
+    ca_div_end();
 }
 
 /** Apply queued lifecycle operations at the host's frame boundary. */
 static void sol_project_apply_requests(SolProjectHost *host)
 {
     bool changed = host->create_pending || host->close_pending || host->activate_pending;
+    if (changed) host->sessions_open = false;
     if (host->create_pending) {
         host->create_pending = false;
         SolAppContext *created = sol_project_create(host, host->create_path);
@@ -3025,7 +3097,9 @@ static void sol_project_apply_requests(SolProjectHost *host)
         if (*link) *link = closing->next;
         sol_project_destroy(closing);
     }
-    if (changed) sol_ui_system_refresh_project_tabs(host->active->ui);
+    if ((changed || host->toolbar_refresh_pending) && host->active)
+        sol_ui_system_refresh_project_tabs(host->active->ui);
+    host->toolbar_refresh_pending = false;
 }
 
 /** Run one window with independently owned project runtimes. */

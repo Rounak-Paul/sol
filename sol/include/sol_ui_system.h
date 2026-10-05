@@ -20,6 +20,18 @@ typedef uint32_t SolUISidePanelToken;
 #define SOL_UI_SIDE_PANEL_TOKEN_INVALID 0u
 typedef uint32_t SolUIMenuItemToken;
 #define SOL_UI_MENU_ITEM_TOKEN_INVALID 0u
+typedef uint32_t SolUIToolbarToken;
+#define SOL_UI_TOOLBAR_TOKEN_INVALID 0u
+
+/* A workspace toolbar contribution. Render is called on the UI thread when
+ * the toolbar is rebuilt; contributors own any callback data they emit. */
+typedef void (*SolUIToolbarRenderFn)(void *user_data);
+typedef struct SolUIToolbarDesc {
+    const char *id;
+    SolUIToolbarRenderFn render;
+    void *user_data;
+    int order;
+} SolUIToolbarDesc;
 
 /* Render callback for a plugin-contributed workspace side panel. */
 typedef void (*SolUISidePanelRenderFn)(void *user_data);
@@ -152,8 +164,14 @@ bool sol_ui_system_set_active(SolUISystem *ui, bool active);
 bool sol_ui_system_is_active(const SolUISystem *ui);
 /** Set the project-tab builder and its host context before mounting the view. */
 void sol_ui_system_set_project_tabs(SolUISystem *ui, void (*build)(Ca_Div *, void *), void *data);
+/** Set the session menu builder in the workspace overlay layer. */
+void sol_ui_system_set_project_tabs_overlay(SolUISystem *ui,
+                                            void (*build)(Ca_Div *, void *), void *data);
 /** Rebuild the mounted project-tab strip after the host's project list changes. */
 void sol_ui_system_refresh_project_tabs(SolUISystem *ui);
+SolUIToolbarToken sol_ui_system_register_toolbar(SolUISystem *ui, const SolUIToolbarDesc *desc);
+void sol_ui_system_unregister_toolbar(SolUISystem *ui, SolUIToolbarToken token);
+void sol_ui_system_render_toolbar(SolUISystem *ui);
 void sol_ui_system_destroy(SolUISystem *ui);
 /** Cancel and destroy this project's auxiliary windows at a frame boundary. */
 void sol_ui_system_close_auxiliary_windows(SolUISystem *ui);

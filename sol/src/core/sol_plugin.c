@@ -31,6 +31,7 @@
 #include "sol_text_buffer.h"
 #include "sol_text_view.h"
 #include "sol_ui_system.h"
+#include "sol_terminal.h"
 
 #include <stdarg.h>
 #include <stdbool.h>
@@ -50,6 +51,7 @@
 #define SOL_PLUGIN_CTX_MAX_SERVICES       16u
 #define SOL_PLUGIN_CTX_MAX_STATUS_SEGS     8u
 #define SOL_PLUGIN_CTX_MAX_SIDE_PANELS     4u
+#define SOL_PLUGIN_CTX_MAX_TOOLBAR_ITEMS   8u
 #define SOL_PLUGIN_CTX_MAX_LANGUAGES       8u
 #define SOL_PLUGIN_CTX_MAX_THEMES         SOL_THEME_MAX
 /* Keep in sync with SOL_UI_MAX_ACTION_LEN in sol_ui_internal.h */
@@ -92,6 +94,8 @@ struct SolPluginCtx {
     /* Tracked side-panel tokens — auto-removed on cleanup */
     SolUISidePanelToken side_panel_tokens[SOL_PLUGIN_CTX_MAX_SIDE_PANELS];
     size_t              side_panel_token_count;
+    SolUIToolbarToken toolbar_tokens[SOL_PLUGIN_CTX_MAX_TOOLBAR_ITEMS];
+    size_t toolbar_token_count;
 
     /* Tracked language registrations — unregistered and buffer highlighters
      * invalidated before the plugin library is unloaded (dlclose). */
@@ -272,6 +276,8 @@ static void plugin_ctx_cleanup(SolPluginCtx *ctx)
             sol_ui_system_remove_status_segment(ui, ctx->status_tokens[i]);
         for (size_t i = 0u; i < ctx->side_panel_token_count; ++i)
             sol_ui_system_unregister_side_panel(ui, ctx->side_panel_tokens[i]);
+        for (size_t i = 0u; i < ctx->toolbar_token_count; ++i)
+            sol_ui_system_unregister_toolbar(ui, ctx->toolbar_tokens[i]);
         for (size_t i = 0u; i < ctx->theme_count; ++i)
             sol_ui_system_unregister_theme(ui, ctx->theme_ids[i]);
     }
@@ -1416,6 +1422,57 @@ static size_t sol_plugin_side_panel_index(const SolPluginCtx *ctx,
         if (ctx->side_panel_tokens[i] == token) return i;
     }
     return SIZE_MAX;
+}
+
+SolPluginToolbarToken sol_plugin_register_toolbar(SolPluginCtx *ctx,
+                                                   const SolPluginToolbarDesc *desc)
+{
+    if (!ctx || !desc || ctx->toolbar_token_count >= SOL_PLUGIN_CTX_MAX_TOOLBAR_ITEMS)
+        return SOL_PLUGIN_TOOLBAR_TOKEN_INVALID;
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (!ui) return SOL_PLUGIN_TOOLBAR_TOKEN_INVALID;
+    SolUIToolbarToken token = sol_ui_system_register_toolbar(ui, &(SolUIToolbarDesc){
+        .id = desc->id, .render = desc->render,
+        .user_data = desc->user_data, .order = desc->order,
+    });
+    if (token != SOL_UI_TOOLBAR_TOKEN_INVALID)
+        ctx->toolbar_tokens[ctx->toolbar_token_count++] = token;
+    return token;
+}
+
+void sol_plugin_unregister_toolbar(SolPluginCtx *ctx, SolPluginToolbarToken token)
+{
+    if (!ctx || !token) return;
+    for (size_t i = 0; i < ctx->toolbar_token_count; ++i) {
+        if (ctx->toolbar_tokens[i] != token) continue;
+        SolUISystem *ui = sol_plugin_ui(ctx);
+        if (ui) sol_ui_system_unregister_toolbar(ui, token);
+        ctx->toolbar_tokens[i] = ctx->toolbar_tokens[--ctx->toolbar_token_count];
+        return;
+    }
+}
+
+void sol_plugin_notify_toolbar(SolPluginCtx *ctx)
+{
+    SolUISystem *ui = ctx ? sol_plugin_ui(ctx) : NULL;
+    if (ui) sol_ui_system_refresh_project_tabs(ui);
+}
+
+bool sol_plugin_run_in_terminal(SolPluginCtx *ctx, const char *cwd,
+                                const char *command)
+{
+    if (!ctx || !command || !command[0]) return false;
+    SolTerminalManager *mgr = sol_plugin_get_service(ctx, "sol.terminal", 0u);
+    SolUISystem *ui = sol_plugin_ui(ctx);
+    if (!mgr || !ui) return false;
+    SolTerminal *term = sol_terminal_manager_new_tab(mgr, cwd);
+    if (!term) return false;
+    sol_terminal_manager_set_visible(mgr, true);
+    sol_ui_system_terminal_set_focused(ui, true);
+    sol_ui_system_terminal_notify(ui);
+    sol_terminal_send_text(term, command, strlen(command));
+    sol_terminal_send_text(term, "\n", 1u);
+    return true;
 }
 
 /* Register a workspace side panel and track it for automatic cleanup. */

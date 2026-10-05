@@ -11,10 +11,12 @@
  *   - Event subscriptions     — auto-cleaned on unload
  *   - Command registration    — auto-cleaned on unload
  *   - Title-bar menu items    — auto-cleaned on unload
+ *   - Workspace toolbar items — auto-cleaned on unload
  *   - Key binding registration — auto-cleaned on unload
  *   - Status bar segments     — auto-cleaned on unload
  *   - Buffer operations (open, focus, read, write, cursor)
  *   - Async job submission
+ *   - Project terminal commands
  *   - Versioned service registry
  *   - Logging
  *
@@ -78,6 +80,24 @@ typedef uint32_t SolPluginSidePanelToken;
 #define SOL_PLUGIN_SIDE_PANEL_TOKEN_INVALID 0u
 typedef uint32_t SolPluginMenuItemToken;
 #define SOL_PLUGIN_MENU_ITEM_TOKEN_INVALID 0u
+typedef uint32_t SolPluginToolbarToken;
+#define SOL_PLUGIN_TOOLBAR_TOKEN_INVALID 0u
+typedef void (*SolPluginToolbarRenderFn)(void *user_data);
+typedef struct SolPluginToolbarDesc {
+    const char *id;
+    SolPluginToolbarRenderFn render;
+    void *user_data;
+    int order;
+} SolPluginToolbarDesc;
+
+/* Add content to the right side of the workspace toolbar. Auto-removed on unload. */
+SOL_API SolPluginToolbarToken sol_plugin_register_toolbar(SolPluginCtx *ctx,
+                                                           const SolPluginToolbarDesc *desc);
+SOL_API void sol_plugin_unregister_toolbar(SolPluginCtx *ctx, SolPluginToolbarToken token);
+SOL_API void sol_plugin_notify_toolbar(SolPluginCtx *ctx);
+/* Run a command in a fresh project terminal tab with the given working directory. */
+SOL_API bool sol_plugin_run_in_terminal(SolPluginCtx *ctx, const char *cwd,
+                                        const char *command);
 
 /* Register a complete CSS theme; automatically removed on plugin unload. */
 SOL_API bool sol_plugin_register_theme(SolPluginCtx *ctx,
