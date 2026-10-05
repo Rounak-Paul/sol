@@ -1795,9 +1795,8 @@ SolUISystem *sol_ui_system_create(Ca_Instance *instance, Ca_Window *window,
     ui->term_cursor_blink_on = true;
 
     /* ---- Reactive state ----
-       All signals are owned by the instance and freed in
-       ca_instance_destroy; sol never calls ca_signal_destroy. Created
-       BEFORE the window so the layout builder can safely subscribe.
+       All signals are owned by the instance (ca_signal_create/destroy).
+       Created BEFORE the window so the layout builder can safely subscribe.
 
        The buffer system's revision signal is created here and attached
        to ui->buffers; from this point every successful sol_buffer_*
@@ -2791,7 +2790,11 @@ static void sol_ui_rebuild_title_bar_menus(SolUISystem *ui)
             .item_count = (int)groups[i].item_count,
         };
     }
-    ca_instance_set_app_menus(ui->instance, menus, (int)group_count);
+    /* Causality removed the instance-wide app-menu API; menus are now
+       installed per window. Sol's main menu belongs on the primary
+       window only — auxiliary windows (search/settings/plugin/ssh)
+       keep their own chrome. */
+    ca_window_set_title_bar_menus(ui->primary_window, menus, (int)group_count);
     free(groups);
 }
 

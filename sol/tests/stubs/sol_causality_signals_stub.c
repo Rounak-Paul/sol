@@ -14,5 +14,5 @@
 /* Ca_Signal is opaque; forward-declare just enough for the ABI. */
 typedef struct Ca_Signal Ca_Signal;
 
-uint32_t ca_signal_get_u32(const Ca_Signal *sig) { (void)sig; return 0u; }
+uint32_t ca_signal_get_u32(Ca_Signal *sig) { (void)sig; return 0u; }
 void     ca_signal_set_u32(Ca_Signal *sig, uint32_t value) { (void)sig; (void)value; }

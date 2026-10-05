@@ -353,8 +353,10 @@ struct SolUISystem {
      * paths read). There are no "invalidate" helpers — the data layer
      * self-notifies and the UI layer notifies on UI-only state.
      *
-     * Signals are owned by `instance` and freed in ca_instance_destroy;
-     * sol never calls ca_signal_destroy directly.
+     * Signals are owned by `instance` (ca_signal_* create/destroy).
+     * sol_ui_system_destroy detaches borrowed pointers (buffer/file-tree
+     * rev) before destroying the signals; destroyed handles are invalid
+     * and NULL is a no-op per the causality reactive contract.
      *
      *   sig_buffer_rev        — u32 revision counter attached to
      *                           ui->buffers. Bumped by every successful

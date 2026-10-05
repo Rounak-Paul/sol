@@ -43,6 +43,17 @@
  * tonal separation, compact spacing, and restrained blue accents.
  * ------------------------------------------------------------------ */
 static const char *SOL_UI_DEFAULT_THEME_CSS =
+    /* Causality palette: system chrome that Sol does not explicitly
+       restyle (hr, select, tab.active, node-graph, scrollbar/tooltip
+       fallbacks) resolves these --ca-* vars. Values are Sol's glass
+       hues so the palette matches the theme without extra overrides. */
+    ":root {"
+    "  --ca-bg-void: #0c0c10; --ca-bg-base: #101014; --ca-bg-elevated: #12121a;"
+    "  --ca-bg-surface: #22222c; --ca-bg-overlay: #2e2e38; --ca-separator: #1c1c28;"
+    "  --ca-text-bright: #d7e0ea; --ca-text-medium: #aab4c2; --ca-text-muted: #98a5b7; --ca-text-dim: #585868;"
+    "  --ca-accent: #60a5fa; --ca-on-accent: #06080f;"
+    "  --ca-success: #4aaa68; --ca-warning: #e0a030; --ca-danger: #ff8b8b; --ca-on-danger: #0d0d0d;"
+    "}"
     "* {"
     "  scrollbar-width: 8px; scrollbar-radius: 0px;"
     "  scrollbar-track-color: rgba(7, 10, 15, 0.28);"
