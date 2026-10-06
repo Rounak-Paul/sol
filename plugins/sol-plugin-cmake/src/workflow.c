@@ -528,7 +528,6 @@ static void render_toolbar(void *data)
     ca_btn_end();
     ca_tooltip_for_widget(configure, &(Ca_TooltipDesc){ .text = "Configure CMake project" });
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "toolbar-cmake-group" });
-    ca_text(&(Ca_TextDesc){ .text = "Build", .style = "toolbar-label" });
     Ca_Select *build_target = ca_select(&(Ca_SelectDesc){
         .id = "cmake-build-target", .style = "toolbar-target-select",
         .options = w->build_options, .option_count = w->target_count + 1,
@@ -548,7 +547,6 @@ static void render_toolbar(void *data)
     ca_tooltip_for_widget(build, &(Ca_TooltipDesc){ .text = "Build selected target" });
     ca_div_end();
     ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "toolbar-cmake-group" });
-    ca_text(&(Ca_TextDesc){ .text = "Run", .style = "toolbar-label" });
     static const char *const no_executable[] = { "No executable" };
     Ca_Select *run_target = ca_select(&(Ca_SelectDesc){
         .id = "cmake-run-target", .style = "toolbar-target-select",

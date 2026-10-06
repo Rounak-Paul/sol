@@ -269,6 +269,23 @@ static bool build_theme_css(const ThemePalette *theme, ThemeCssBuilder *css)
         ".project-tab-new-icon,.term-tab-new-icon{color:%s;}",
         chrome, panel, hover, selected, theme->muted, theme->text,
         hover, theme->muted);
+    css_append(css,
+        ".toolbar-session-trigger,.toolbar-icon{background:%s;}"
+        ".toolbar-session-trigger:hover,.toolbar-session-trigger-open,.toolbar-icon:hover{background:%s;}"
+        ".toolbar-session-name,.toolbar-icon-glyph{color:%s;}"
+        ".toolbar-session-caret,.toolbar-label{color:%s;}"
+        ".toolbar-cmake-group{background:transparent;}"
+        ".toolbar-target-select{background:%s;color:%s;}"
+        ".toolbar-target-select:hover{background:%s;}"
+        ".toolbar-session-menu{background:%s;border-color:%s;}"
+        ".toolbar-session-row:hover{background:%s;}"
+        ".toolbar-session-row-active{background:%s;}"
+        ".toolbar-session-item-name{color:%s;}"
+        ".toolbar-session-close-icon{color:%s;}"
+        ".toolbar-session-close:hover{background:%s;}",
+        hover, selected, theme->text, theme->muted,
+        panel, theme->text, hover, raised, selected,
+        hover, selected, theme->text, theme->muted, hover);
 
     css_append(css,
         ".tree-panel,.plugin-side-panel{background:%s;}"

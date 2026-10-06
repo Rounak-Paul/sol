@@ -222,7 +222,7 @@ static bool point_in_active_buffer_leaf(SolInputRouter *r,
  * constants by hand — those manual formulas drift out of sync with the
  * renderer any time a layout constant changes on one side only (this is
  * what caused the original left/top hit-test offset: input_router.c assumed
- * a 28px header when .term-header is actually 19px, and re-inverted the
+ * a 28px header when .term-header is actually 20px, and re-inverted the
  * split-ratio math with its own copy of the panel gap instead of asking
  * Causality where the panel actually landed). This mirrors how buttons are
  * already hit-tested against their real laid-out node rect, and how the

@@ -53,25 +53,25 @@
 /* Workspace toolbar height — kept in sync with .project-tabs in style.h
    so layout math (buffer-area rect, tree-sticky-host offset) doesn't
    re-parse the stylesheet to find it. */
-#define SOL_UI_PROJECT_TABS_HEIGHT    28.0f
+#define SOL_UI_PROJECT_TABS_HEIGHT    20.0f
 
-/* Causality manages the title and status strips; sol only declares the
-   status-bar height it wants reserved. The title bar height is fixed by
-   causality itself and not visible from sol's layout code.
+/* Causality manages the title and status strips; sol declares the
+   status-bar height it wants reserved. The title bar height is set by
+   .ca-titlebar in style.h to match the visible status bar.
    The reserved band holds the visible bar plus the gap above it, so the
    bar is separated from the workspace by the panel margin. The gap must
    come from the bar's own top margin — the
    status bar is a root-level sibling of the workspace host, so the
    workspace's .workspace-main-content padding cannot reach it. */
-#define SOL_UI_STATUS_BAR_BAR_HEIGHT  19.0f
+#define SOL_UI_STATUS_BAR_BAR_HEIGHT  20.0f
 #define SOL_UI_STATUS_BAR_GAP         8.0f   /* = SOL_UI_PANEL_MARGIN_PX */
 #define SOL_UI_STATUS_BAR_HEIGHT \
     (SOL_UI_STATUS_BAR_BAR_HEIGHT + SOL_UI_STATUS_BAR_GAP)
 
 /* File-tree panel layout constants — kept in sync with the CSS in style.h
    so C code can compute geometry without re-parsing the stylesheet. */
-#define SOL_UI_TREE_SECTION_H         28.0f   /* .tree-section-header height */
-#define SOL_UI_TREE_ROOT_ROW_H        24.0f   /* .tree-root-row height        */
+#define SOL_UI_TREE_SECTION_H         20.0f   /* .tree-section-header height */
+#define SOL_UI_TREE_ROOT_ROW_H        20.0f   /* .tree-root-row height        */
 #define SOL_UI_TREE_ROW_H             22.0f   /* .tree-row height             */
 #define SOL_UI_TREE_STICKY_TOP        (SOL_UI_TREE_SECTION_H + SOL_UI_TREE_ROOT_ROW_H)
 #define SOL_UI_TREE_STICKY_MAX        8
@@ -83,7 +83,7 @@
  * generic leaf fallback of 20 * ui_scale. */
 #define SOL_UI_TERM_CELL_H_PX         16.0f   /* .term-line row height        */
 #define SOL_UI_TERM_CELL_W_PX          8.0f   /* per-cell glyph width         */
-#define SOL_UI_TERM_HEADER_PX         19.0f   /* .term-header height (style.h .term-header) */
+#define SOL_UI_TERM_HEADER_PX         20.0f   /* .term-header height (style.h .term-header) */
 #define SOL_UI_TERM_PAD_V_PX           4.0f   /* .term-viewport padding-top/bottom */
 #define SOL_UI_TERM_PAD_H_PX           6.0f   /* .term-viewport padding-left/right */
 /* Caps a single wheel/trackpad callback's terminal scrollback jump. Without
