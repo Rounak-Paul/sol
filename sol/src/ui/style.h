@@ -334,7 +334,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     /* ===== Buffer panes ===== */
     ".buffer-pane {"
     "  background: rgba(21, 21, 24, 0.82);"
-    "  padding: 3px 0px 0px 0px;"
+    "  padding: 0px;"
     "  gap: 0px;"
     "  width: 100%;"
     "  height: 100%;"
@@ -2064,7 +2064,7 @@ static const char *SOL_UI_DEFAULT_THEME_CSS =
     "  flex-grow: 1;"
     "  flex-shrink: 1;"
     "  background: #0e0e10;"
-    "  padding: 3px 0px 0px 0px;"
+    "  padding: 0px;"
     "  gap: 0px;"
     "  align-items: stretch;"
     "  overflow: hidden;"

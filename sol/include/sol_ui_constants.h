@@ -51,6 +51,7 @@
    full opacity for every fragment inside the shape (the Gaussian
    falloff only applies outside it), so a centered "glow" shadow paints
    as a solid rectangle rather than a soft ring. */
+#define SOL_UI_FOCUS_BORDER_WIDTH_PX 1.0f
 #define SOL_UI_FOCUS_BORDER_WIDTH_PX_CSS "1px"
 #define SOL_UI_FOCUS_BORDER_COLOR_CSS "rgba(255, 140, 0, 0.95)"
 

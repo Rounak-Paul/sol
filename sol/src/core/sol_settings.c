@@ -10,6 +10,7 @@
 
 #include "sol_settings.h"
 #include "sol_config.h"     /* sol_config_path() */
+#include "sol_ui_constants.h"
 #include "sol_platform.h"   /* sol_platform_replace_file() */
 
 #include <ctype.h>
@@ -644,6 +645,17 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
     float tblur   = settings->titlebar_blur;
     float op      = settings->panel_opacity;
     float control_radius = fminf(cr * 0.5f, 10.0f);
+    /* Children of a focused panel sit inside its inset border, so their
+       outer corners follow the border's inner curve (radius minus width). */
+    float inner_radius   = fmaxf(cr - SOL_UI_FOCUS_BORDER_WIDTH_PX, 0.0f);
+    float tag_radius     = fminf(control_radius, 8.0f);
+    /* Tab strips pad 1px from the border, so their first/last tab must
+       clear the corner arc at that height or the curve slices through it. */
+    float strip_top      = SOL_UI_FOCUS_BORDER_WIDTH_PX + 1.0f;
+    float arc_inset      = cr > strip_top
+        ? cr - sqrtf(cr * cr - (cr - strip_top) * (cr - strip_top)) + 1.0f
+        : 0.0f;
+    float strip_pad_x    = fmaxf(arc_inset, 4.0f);
 
     int written = snprintf(buf, (size_t)bufsz,
         "/* sol appearance overlay */"
@@ -667,13 +679,14 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         " width: 100%%; border-radius: %.1fpx; }"
         ".buffer-hscrollbar-thumb, .buffer-hscrollbar-thumb-active {"
         " height: 100%%; border-radius: %.1fpx; }"
-        ".buffer-tabs-row { border-top-left-radius: %.1fpx;"
-        " border-top-right-radius: %.1fpx; overflow: hidden; }"
+        ".buffer-tabs-row, .term-header { border-top-left-radius: %.1fpx;"
+        " border-top-right-radius: %.1fpx; padding: 1px %.1fpx; overflow: hidden; }"
         ".project-tabs { border-radius: %.1fpx; overflow: hidden; }"
         ".workspace-panel-well, .buffer-body, .buffer-scroll-row { border-bottom-left-radius: %.1fpx;"
         " border-bottom-right-radius: %.1fpx; }"
         ".buffer-body, .buffer-scroll-row { overflow: hidden; }"
         ".buffer-gutter-col { border-bottom-left-radius: %.1fpx; }"
+        ".scm-tag { border-radius: %.1fpx; }"
         /* Buffer panes + side panel: corner-radius, backdrop blur, opacity.
            .project-tabs and .status-bar are the app's two full-span chrome
            bars (top/bottom) and share this rule so they stay visually
@@ -770,13 +783,27 @@ int sol_settings_build_appearance_css(const SolSettings *settings,
         ".welcome-btn,"
         ".welcome-btn-primary,"
         ".scm-tab,"
-        ".scm-tab-active"
+        ".scm-tab-active,"
+        ".scm-submodule-row,"
+        ".scm-icon-action,"
+        ".scm-header-icon-action,"
+        ".scm-header-close-action,"
+        ".scm-action-icon,"
+        ".scm-remote-action,"
+        ".scm-branch-create-from,"
+        ".scm-file-row,"
+        ".scm-commit-row,"
+        ".sess-item,"
+        ".sw-btn,"
+        ".sw-bind-input,"
+        ".tree-root-row"
         " { border-radius: %.1fpx; }",
         (double)sw, (double)sr,
         (double)sw, (double)sr,
         (double)sw, (double)sw, (double)sr, (double)sr,
-        (double)cr, (double)cr, (double)cr,
-        (double)cr, (double)cr, (double)cr,
+        (double)inner_radius, (double)inner_radius, (double)strip_pad_x, (double)cr,
+        (double)inner_radius, (double)inner_radius, (double)inner_radius,
+        (double)tag_radius,
         (double)cr, (double)pblur, (double)op,
         (double)pblur, (double)op,
         (double)tblur,
