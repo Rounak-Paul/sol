@@ -676,8 +676,6 @@ static CaretBlinkState *caret_state_for_leaf(SolBufferNodeId leaf_id)
     return slot;
 }
 
-/* Call once per frame with the current cursor position.  Returns true
- * when the caret should be drawn (on-phase or just moved). */
 /*
  * Determine whether the caret should be visible this frame.  Resets the blink
  * phase when the cursor position changes and holds the caret solid for
@@ -687,9 +685,11 @@ static CaretBlinkState *caret_state_for_leaf(SolBufferNodeId leaf_id)
  *           each track their own blink phase independently.
  * cur_line  Current cursor line index.
  * cur_col   Current cursor column index.
+ * next_change_ms  Out: milliseconds until the returned visibility flips.
  * Returns   true when the caret should be drawn.
  */
-static bool caret_blink_visible(SolBufferNodeId leaf_id, size_t cur_line, size_t cur_col)
+static bool caret_blink_visible(SolBufferNodeId leaf_id, size_t cur_line, size_t cur_col,
+                                uint64_t *next_change_ms)
 {
     CaretBlinkState *st = caret_state_for_leaf(leaf_id);
     const uint64_t now = monotonic_ms();
@@ -698,11 +698,14 @@ static bool caret_blink_visible(SolBufferNodeId leaf_id, size_t cur_line, size_t
         st->prev_col     = cur_col;
         st->last_move_ms = now;
     }
+    const uint64_t elapsed = now - st->last_move_ms;
+    /* Phase boundaries sit on multiples of the half-period after the move;
+       the solid window ends before the first one, so it never adds one. */
+    *next_change_ms = SOL_CARET_BLINK_HALF_MS - (elapsed % SOL_CARET_BLINK_HALF_MS);
     /* Always solid immediately after movement. */
-    if (now - st->last_move_ms < SOL_CARET_SOLID_MS) return true;
+    if (elapsed < SOL_CARET_SOLID_MS) return true;
     /* Periodic blink phase relative to last move. */
-    const uint64_t phase = (now - st->last_move_ms)
-                           % (SOL_CARET_BLINK_HALF_MS * 2u);
+    const uint64_t phase = elapsed % (SOL_CARET_BLINK_HALF_MS * 2u);
     return phase < SOL_CARET_BLINK_HALF_MS;
 }
 
@@ -1514,8 +1517,13 @@ void sol_text_view_render(const SolBuffer *buffer,
              * CSS px before handing off to Ca_DivDesc. */
             const float adv = glyph_advance_px_for(caret_win) / ui_scale;
             const float caret_x = (float)cp_count * adv;
-            const bool  visible = !sol_ui_system_caret_blink_enabled(ui) ||
-                caret_blink_visible(args ? args->leaf_id : 0u, cur_line, cur_col);
+            bool visible = true;
+            if (sol_ui_system_caret_blink_enabled(ui)) {
+                uint64_t next_change_ms = SOL_CARET_BLINK_HALF_MS;
+                visible = caret_blink_visible(args ? args->leaf_id : 0u,
+                                              cur_line, cur_col, &next_change_ms);
+                sol_ui_system_schedule_caret_phase(ui, next_change_ms);
+            }
 
             /* Fallbacks in layout space (matching what ca_font_line_metrics
              * would return if a font were already loaded). */

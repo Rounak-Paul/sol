@@ -1389,19 +1389,20 @@ static void sol_ui_on_frame(void *user_data)
         ui->bg_next_render_ns = 0u;
     }
 
-    /* Drive caret blink: while a buffer is focused, bump sig_buffer_rev
-     * so the workspace-content builder re-runs every tick and evaluates
-     * the current blink phase.  Then wake the instance so the next tick
-     * fires even from glfwWaitEvents mode.
-     *
-     * on_frame is called at ctx depth=-1 (between layout and paint),
-     * which is the safe window for triggering a reactive flush via
-     * sol_ui_bump_u32 without overflowing the widget stack. */
-    if (ui->buffers && sol_buffer_active_buffer(ui->buffers) != 0 &&
-        sol_ui_system_caret_blink_enabled(ui)) {
-        sol_ui_bump_u32(ui->sig_buffer_rev);
-        if (bg_frame_interval <= 0.0)
-            ca_instance_wake();
+    /* Drive caret blink: the buffer builder records when the drawn caret
+     * next changes phase. Rebuild only once that time has passed and sleep
+     * until then, so an idle focused buffer costs one frame per phase
+     * change instead of a render per loop iteration. */
+    if (ui->caret_next_phase_ns != 0u) {
+        const uint64_t now_ns = sol_platform_now_monotonic_ns();
+        if (now_ns >= ui->caret_next_phase_ns) {
+            ui->caret_next_phase_ns = 0u;
+            sol_ui_bump_u32(ui->sig_buffer_rev);
+        } else {
+            ca_instance_request_frame_after(
+                ui->instance,
+                (double)(ui->caret_next_phase_ns - now_ns) * 1e-9);
+        }
     }
 
     /* Drain PTY output and rebuild on actual cell changes.
@@ -1426,9 +1427,9 @@ static void sol_ui_on_frame(void *user_data)
                 s_last_blink_toggle_ms   = now_ms;
                 needs_rebuild            = true;
             }
-            /* Keep event loop alive so next blink fires on schedule. */
-            if (bg_frame_interval <= 0.0)
-                ca_instance_wake();
+            ca_instance_request_frame_after(
+                ui->instance,
+                (double)(530u - (now_ms - s_last_blink_toggle_ms)) * 1e-3);
         } else {
             /* Cursor always shown when terminal is not focused. */
             ui->term_cursor_blink_on = true;
@@ -3186,6 +3187,24 @@ void sol_ui_system_apply_preferences(SolUISystem *ui)
     sol_ui_bump_u32(ui->sig_buffer_rev);
     sol_ui_bump_u32(ui->sig_prefs_rev);
     sol_ui_system_refresh_title_bar_menus(ui);
+}
+
+/*
+ * Record that the drawn caret changes blink phase delay_ms from now.
+ *
+ * Keeps the earliest pending phase change across all visible carets and
+ * arms a timed frame for it.
+ *
+ * ui        The UI system (may be NULL).
+ * delay_ms  Milliseconds until the caret's next phase change.
+ */
+void sol_ui_system_schedule_caret_phase(SolUISystem *ui, uint64_t delay_ms)
+{
+    if (!ui || !ui->instance) return;
+    const uint64_t due_ns = sol_platform_now_monotonic_ns() + delay_ms * 1000000ull;
+    if (ui->caret_next_phase_ns == 0u || due_ns < ui->caret_next_phase_ns)
+        ui->caret_next_phase_ns = due_ns;
+    ca_instance_request_frame_after(ui->instance, (double)delay_ms * 1e-3);
 }
 
 /*

@@ -356,6 +356,12 @@ struct SolUISystem {
        spike this prevents. */
     uint64_t          bg_next_render_ns;
 
+    /* Monotonic-ns time at which the earliest drawn caret changes blink
+       phase; zero when no blinking caret is on screen. Written by the
+       buffer builder, consumed by on_frame, which bumps sig_buffer_rev once
+       the time has passed so an idle editor sleeps between phase changes. */
+    uint64_t          caret_next_phase_ns;
+
     /* ---- Reactive state (causality fine-grained signals) ----
      *
      * In the idiomatic causality design, state IS the signal: every

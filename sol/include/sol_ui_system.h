@@ -470,6 +470,10 @@ void sol_ui_system_apply_preferences(SolUISystem *ui);
 /* True when the text caret should blink (the default without settings). */
 bool sol_ui_system_caret_blink_enabled(const SolUISystem *ui);
 
+/* Ask for the buffer view to be rebuilt delay_ms from now so the caret's
+   next blink phase is drawn. Keeps the earliest pending request. */
+void sol_ui_system_schedule_caret_phase(SolUISystem *ui, uint64_t delay_ms);
+
 /* Forward declarations — include sol_ssh_config.h / sol_ssh_window.h for
  * the full types. */
 typedef struct SolSshConnection SolSshConnection;
