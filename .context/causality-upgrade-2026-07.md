@@ -45,3 +45,10 @@ run includes three upstream suites (`causality_array_tests`,
 
 Verified: full build clean, 14/14 ctest pass, `bin/sol` runs a live render
 loop and shuts down cleanly.
+
+## Upgrade to `783c048` (2026-10-18)
+
+Source-compatible: Sol builds with zero changes (no removed/renamed API Sol used). New surface is additive and unused so far: dock component (`ca_dock.h`), closable/draggable tabs (`ca_tabs_tab_rect`, `ca_tabs_set_active`), `native_frame`/`fullscreen`/`no_focus` window flags, `ca_window_capture`, `ca_window_get_rect`/`set_position`, file-drop handler, `ca_window_mouse_mods`, horizontal scroll signal/wheel, splitter fixed pane (`CA_SPLIT_FIXED_*`, `ca_split_set_fixed`, `ca_split_get_pane_size`, `ca_split_is_dragging`), `ca_window_content_div`, `ca_window_set_title_bar_visible`.
+
+## Terminal idle GPU investigation (same date)
+Instrumented tick counter + auto-open terminal. Not reproduced as a rising load: idle ~1 tick/s without terminal, ~2/s with focused terminal (530 ms cursor blink -> sig_terminal_rev bump -> full rebuild+frame incl. panel blur). Startup shell init bursts ~100 ticks/s for ~2 s. Unfocused terminal adds no wakes. Global ioreg GPU % too noisy to attribute.
