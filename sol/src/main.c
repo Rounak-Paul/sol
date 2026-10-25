@@ -152,6 +152,7 @@ typedef struct SolAppContext {
     SolProjectHost       *host;
     struct SolAppContext *next;
     uint64_t             project_id;
+    bool                 startup_placeholder;
     SolSystemManager     *systems;
     SolEventBus          *events;
     SolBufferSystem      *buffers;
@@ -2510,7 +2511,7 @@ static void sol_project_activate(SolProjectHost *host, SolAppContext *app)
     sol_ui_system_set_active(app->ui, true);
     const char *root = sol_ui_system_file_tree_root(app->ui);
     char title[4200];
-    snprintf(title, sizeof(title), "Sol — %s", root ? root : "Empty project");
+    snprintf(title, sizeof(title), "Sol — %s", root ? root : "No project open");
     ca_window_set_title(host->window, title);
 }
 
@@ -2797,7 +2798,7 @@ static void sol_switcher_content_builder(Ca_Div *div, void *data)
         });
         ca_div_end();
         ca_text(&(Ca_TextDesc){
-            .text = name ? name : "Empty project",
+            .text = name ? name : "No project open",
             .style = "pm-item-name",
         });
         ca_div_end(); /* sess-item-name-row */
@@ -2818,7 +2819,7 @@ static void sol_switcher_content_builder(Ca_Div *div, void *data)
     if (selected_app) {
         const char *root = sol_ui_system_file_tree_root(selected_app->ui);
         const char *name = sol_project_display_name(root);
-        ca_text(&(Ca_TextDesc){ .text = name ? name : "Empty project", .style = "pm-detail-name" });
+        ca_text(&(Ca_TextDesc){ .text = name ? name : "No project open", .style = "pm-detail-name" });
 
         ca_div_begin(&(Ca_DivDesc){ .direction = CA_HORIZONTAL, .style = "pm-badge-row" });
         const bool is_active = selected_app == w->host->active;
@@ -2990,13 +2991,13 @@ static void sol_project_tabs(Ca_Div *div, void *data)
         .direction = CA_HORIZONTAL, .on_click = sol_project_sessions_toggle,
         .click_data = host,
     });
-    ca_text(&(Ca_TextDesc){ .text = root ? sol_project_display_name(root) : "Empty project",
+    ca_text(&(Ca_TextDesc){ .text = root ? sol_project_display_name(root) : "No project open",
                              .style = "toolbar-session-name" });
     ca_text(&(Ca_TextDesc){ .text = CA_ICON_NF_COD_CHEVRON_DOWN,
                              .style = "toolbar-session-caret" });
     ca_btn_end();
     ca_tooltip_for_widget(sessions, &(Ca_TooltipDesc){
-        .text = root ? root : "Empty project",
+        .text = root ? root : "No project open",
     });
     ca_btn_begin(&(Ca_BtnDesc){
         .style      = "toolbar-icon",
@@ -3049,12 +3050,12 @@ static void sol_project_sessions_overlay(Ca_Div *div, void *data)
             .on_click = sol_project_session_selected, .click_data = app,
         });
         ca_text(&(Ca_TextDesc){
-            .text = path ? sol_project_display_name(path) : "Empty project",
+            .text = path ? sol_project_display_name(path) : "No project open",
             .style = "toolbar-session-item-name",
         });
         ca_btn_end();
         ca_tooltip_for_widget(item, &(Ca_TooltipDesc){
-            .text = path ? path : "Empty project",
+            .text = path ? path : "No project open",
         });
         Ca_Button *close = ca_btn_begin(&(Ca_BtnDesc){
             .style = "toolbar-session-close", .direction = CA_HORIZONTAL,
@@ -3077,7 +3078,22 @@ static void sol_project_apply_requests(SolProjectHost *host)
     if (host->create_pending) {
         host->create_pending = false;
         SolAppContext *created = sol_project_create(host, host->create_path);
-        if (created) host->activate_pending = created;
+        if (created) {
+            SolAppContext *placeholder = host->active;
+            host->activate_pending = created;
+            if (placeholder && placeholder->startup_placeholder && !host->switcher &&
+                host->close_pending != placeholder &&
+                !sol_ui_system_file_tree_root(placeholder->ui) &&
+                sol_buffer_count(placeholder->buffers) == 0u &&
+                sol_terminal_manager_count(placeholder->terminal_mgr) == 0u) {
+                sol_project_activate(host, created);
+                host->activate_pending = NULL;
+                SolAppContext **link = &host->projects;
+                while (*link && *link != placeholder) link = &(*link)->next;
+                if (*link) *link = placeholder->next;
+                sol_project_destroy(placeholder);
+            }
+        }
         else if (host->active) sol_show_error(host->active, "Could not create the project.");
     }
     if (host->activate_pending) {
@@ -3127,11 +3143,10 @@ int main(int argc, char **argv)
     });
     if (!host.window) { ca_instance_destroy(host.instance); return 1; }
     ca_window_set_app_keyboard(host.window, true);
-    char home[4096];
-    const char *path = argc > 1 ? argv[1] :
-        (sol_platform_get_user_home(home, sizeof(home)) ? home : NULL);
+    const char *path = argc > 1 ? argv[1] : NULL;
     SolAppContext *first = sol_project_create(&host, path);
     if (!first) { ca_instance_destroy(host.instance); return 1; }
+    first->startup_placeholder = path == NULL;
     sol_project_activate(&host, first);
     while (ca_window_is_open(host.window)) {
         for (SolAppContext *app = host.projects; app; app = app->next) {
